@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="420" viewBox="0 0 1280 420" role="img" aria-labelledby="title desc">
+  <title id="title">AnimeTV</title>
+  <desc id="desc">A dark cinematic AnimeTV banner with cyan, violet, and gold accents.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#070914"/>
+      <stop offset="0.48" stop-color="#11162a"/>
+      <stop offset="1" stop-color="#050710"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00d2ff"/>
+      <stop offset="0.52" stop-color="#8a5cff"/>
+      <stop offset="1" stop-color="#f2bb46"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="30%" cy="20%" r="70%">
+      <stop offset="0" stop-color="#00d2ff" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#00d2ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="78%" cy="64%" r="60%">
+      <stop offset="0" stop-color="#8a5cff" stop-opacity="0.44"/>
+      <stop offset="1" stop-color="#8a5cff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#000000" flood-opacity="0.42"/>
+    </filter>
+  </defs>
+  <rect width="1280" height="420" rx="36" fill="url(#bg)"/>
+  <rect width="1280" height="420" rx="36" fill="url(#glowA)"/>
+  <rect width="1280" height="420" rx="36" fill="url(#glowB)"/>
+  <path d="M0 320 C180 250 300 385 500 314 C760 222 895 230 1280 142 L1280 420 L0 420 Z" fill="#050710" opacity="0.68"/>
+  <g transform="translate(92 76)" filter="url(#shadow)">
+    <rect x="0" y="0" width="164" height="164" rx="38" fill="url(#accent)"/>
+    <rect x="28" y="31" width="108" height="78" rx="10" fill="#101528" stroke="#f7f7ff" stroke-width="7"/>
+    <path d="M72 55 L72 87 L101 71 Z" fill="#40dfc2"/>
+    <path d="M42 126 H122" stroke="#f7f7ff" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="137" cy="31" r="10" fill="#f2bb46"/>
+    <circle cx="28" cy="137" r="10" fill="#ff5ec4"/>
+  </g>
+  <g transform="translate(300 112)">
+    <text x="0" y="72" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="84" font-weight="900" fill="#f7f7ff" letter-spacing="-1">AnimeTV</text>
+    <text x="4" y="126" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="28" font-weight="700" fill="#b9c0d8">Multi-source anime hub for Web and Android TV</text>
+    <g transform="translate(4 162)" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="800">
+      <rect width="170" height="42" rx="21" fill="#172033" stroke="#00d2ff" stroke-opacity="0.42"/>
+      <text x="22" y="28" fill="#eaf8ff">JP Audio</text>
+      <rect x="188" width="186" height="42" rx="21" fill="#172033" stroke="#8a5cff" stroke-opacity="0.5"/>
+      <text x="210" y="28" fill="#f1edff">Spanish Subs</text>
+      <rect x="392" width="182" height="42" rx="21" fill="#172033" stroke="#f2bb46" stroke-opacity="0.46"/>
+      <text x="414" y="28" fill="#fff8dd">Android TV</text>
+    </g>
+  </g>
+</svg>

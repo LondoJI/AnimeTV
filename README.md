@@ -1,16 +1,52 @@
 # AnimeTV
 
-Modern anime TV web app and Android TV wrapper with multi-source catalogs, embedded playback, Japanese audio preference, and Spanish subtitle preference.
+![AnimeTV repository banner](docs/branding/animetv-banner.svg)
 
-## Features
+<p align="center">
+  <strong>A modern anime hub for Web and Android TV with multi-source playback, Japanese audio preference, and Spanish subtitle support.</strong>
+</p>
 
-- TV-first interface with remote-friendly focus states and compact sidebar navigation.
-- Multi-source catalogs: AniList/Jikan metadata, AniPub iframe catalog, JIMOV/TioAnime, Anime1v proxy, and custom local addons.
-- Embedded playback for direct video files and safe iframe embeds.
-- Source chooser for playable episodes when multiple servers are available.
-- Favorites, watch history, resume positions, settings, light/dark theme, language preferences, and daily API refresh.
-- Android TV WebView wrapper with bundled assets and debug APK build.
-- Supervised Windows launcher that starts AnimeTV, tries to start Anime1v, checks health, and restarts crashed services.
+<p align="center">
+  <a href="https://animetv-umber.vercel.app">Live Demo</a>
+  ·
+  <a href="docs/API.md">API Docs</a>
+  ·
+  <a href="docs/ANDROID_TV.md">Android TV</a>
+  ·
+  <a href="docs/TROUBLESHOOTING.md">Troubleshooting</a>
+</p>
+
+<p align="center">
+  <img alt="Node.js" src="https://img.shields.io/badge/Node.js-18%2B-40dfc2?style=for-the-badge&logo=node.js&logoColor=white">
+  <img alt="Android TV" src="https://img.shields.io/badge/Android%20TV-ready-8a5cff?style=for-the-badge&logo=android&logoColor=white">
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-f2bb46?style=for-the-badge">
+  <img alt="Playback" src="https://img.shields.io/badge/Playback-multi--source-00d2ff?style=for-the-badge">
+</p>
+
+## Highlights
+
+- TV-first interface with compact sidebar navigation and remote-friendly focus states.
+- Multi-source catalogs: AniList/Jikan metadata, AniPub, JIMOV/TioAnime, Anime1v, RapidAPI, and custom addons.
+- Server picker per episode, with AniPub first when available and other playable sources added automatically.
+- Embedded iframe playback and direct `<video>` playback stay separated for safety.
+- Japanese audio and Spanish subtitles are the default playback preference.
+- English subtitle tracks can be translated into Spanish for direct subtitle files.
+- Favorites, watch history, resume positions, settings, light/dark theme, daily refresh, and Android TV wrapper.
+- Windows launcher can supervise AnimeTV and Anime1v, restarting services after crashes.
+
+## Live Deployment
+
+Production is deployed on Vercel:
+
+```text
+https://animetv-umber.vercel.app
+```
+
+The app is also runnable locally at:
+
+```text
+http://127.0.0.1:4173
+```
 
 ## Quick Start
 
@@ -18,23 +54,11 @@ Modern anime TV web app and Android TV wrapper with multi-source catalogs, embed
 npm start
 ```
 
-Open [http://127.0.0.1:4173](http://127.0.0.1:4173).
-
-For Android TV on the same network, use the computer LAN IP instead of `127.0.0.1`, for example:
-
-```text
-http://192.168.1.25:4173
-```
-
-## Start All Servers On Windows
-
-Use the supervised launcher:
+For the full local setup with server monitoring:
 
 ```powershell
 .\start-all.bat
 ```
-
-It starts AnimeTV, starts Anime1v if found at `C:\anime1v-api` or a nearby `anime1v-api` folder, monitors both services, restarts them after crashes, and opens AnimeTV.
 
 Useful options:
 
@@ -58,33 +82,39 @@ android\app\build\outputs\apk\debug\app-debug.apk
 
 ## Sources
 
-| Source | Playback | Notes |
-| --- | --- | --- |
-| AniList + Jikan | Metadata only | High quality titles, images, scores, descriptions, and schedules. |
-| AniPub | Iframe embeds | Iframe URLs stay in the embedded iframe player and never enter the `<video>` element. |
-| JIMOV/TioAnime | Spanish subtitle source | Used as a Spanish-friendly addon source when available. |
-| Anime1v | Direct video when quota allows | Local API at `http://localhost:3001`; AnimeTV pauses it automatically if the daily quota is reached. |
-| Custom sources | Direct video or iframe | Add JSON sources through `sources.json` or the Sources screen. |
+| Source | Type | Playback | Notes |
+| --- | --- | --- | --- |
+| AniList + Jikan | Metadata | No video | High quality titles, images, scores, descriptions, and schedules. |
+| AniPub | Online addon | Iframe | First fallback option when a matching episode exists. |
+| Anime1v | Local API | Direct or iframe | Japanese audio + Spanish subtitle friendly when quota/providers allow. |
+| JIMOV/TioAnime | Online addon | Direct or iframe | Spanish-friendly TioAnime connector. |
+| RapidAPI Anime Streaming | API addon | Direct HLS/M3U8 when available | Requires `RAPIDAPI_ANIME_HOST` and `RAPIDAPI_ANIME_KEY`. |
+| Custom sources | User configured | Direct or iframe | Add normalized JSON sources from the Sources screen. |
 
-## Safe Playback Rules
+## Playback Safety
 
 AnimeTV only sends direct `.mp4`, `.m3u8`, `videoUrl`, `streamUrl`, or `file` values to the main `<video>` player.
 
-Iframe embeds are treated separately:
+Iframe embeds are handled separately:
 
 - Server returns `externalUrl` + `externalType: "iframe"`.
 - Client detects iframe episodes before direct playback.
 - Iframe embeds render inside the AnimeTV embedded iframe container.
 - Direct video and iframe playback paths stay separate.
 
-## Language Preferences
+## Environment Variables
 
-Default playback preference:
+Copy `.env.example` to `.env.local` for local development.
 
-- Audio: Japanese
-- Subtitles: Spanish
-
-For direct text subtitle tracks, AnimeTV can translate an English subtitle track into Spanish in the browser when the translated Spanish option is selected. Cross-origin iframe subtitles cannot be rewritten directly, so iframe players receive best-effort language hints and keep their native controls.
+```text
+PORT=4173
+ANIME1V_API=http://localhost:3001
+ANIME1V_AUTO_START=true
+RAPIDAPI_ANIME_HOST=your-rapidapi-host.p.rapidapi.com
+RAPIDAPI_ANIME_KEY=your-rapidapi-key
+RAPIDAPI_ANIME_TIMEOUT_MS=28000
+UPDATE_REPO_URL=https://github.com/JSolanoDev/AnimeTV
+```
 
 ## API
 
@@ -99,29 +129,39 @@ GET /api/anime1v/health
 GET /api/anime1v/trending
 GET /api/anime1v/search?q=naruto
 GET /api/jimov/tioanime/catalog
+GET /api/rapid-anime/health
+GET /api/rapid-anime/catalog
 GET /api/refresh-daily?background=1
 ```
 
 More details are in [docs/API.md](docs/API.md).
 
-## Repository Setup
-
-This folder is ready to publish as:
+## Project Structure
 
 ```text
-https://github.com/JSolanoDev/AnimeTV
+AnimeTV/
+├── animetv-local.js      # Local server entrypoint
+├── animetv-server.js     # Shared API/server handler
+├── client.js             # Frontend app
+├── styles.css            # TV UI styling
+├── sources.json          # Default source configuration
+├── api/[...path].js      # Vercel API bridge
+├── android/              # Android TV wrapper
+├── docs/                 # Documentation and branding assets
+└── scripts/              # Build helpers
 ```
 
-Create the empty GitHub repository first, then from this folder run:
+## Development
 
 ```powershell
-git init
-git add .
-git commit -m "Initial AnimeTV release"
-git branch -M main
-git remote add origin https://github.com/JSolanoDev/AnimeTV.git
-git push -u origin main
+npm run check
+npm run vercel-build
+npm run android:build
 ```
+
+## Maintainer
+
+Built by [JSolanoDev](https://github.com/JSolanoDev).
 
 ## License
 
