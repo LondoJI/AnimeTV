@@ -10,6 +10,7 @@ logs/
 .update-backup/
 downloads/
 dist/
+public/
 *.apk
 *.aab
 screen.png

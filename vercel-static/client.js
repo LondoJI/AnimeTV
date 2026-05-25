@@ -660,13 +660,19 @@ function withSourcePage(source, page) {
 
 function resolveSourceEndpoint(endpoint) {
   if (!endpoint || location.protocol === "file:") return endpoint;
+  if (String(endpoint).startsWith("/")) return new URL(endpoint, location.origin).toString();
   try {
     const url = new URL(endpoint);
     const appHost = location.hostname;
     const sourceIsLoopback = ["127.0.0.1", "localhost", "::1"].includes(url.hostname);
     const appIsLoopback = ["127.0.0.1", "localhost", "::1"].includes(appHost);
     if (sourceIsLoopback && !appIsLoopback) {
+      if (url.pathname.startsWith("/api/")) {
+        return new URL(`${url.pathname}${url.search}${url.hash}`, location.origin).toString();
+      }
       url.hostname = appHost;
+      url.port = location.port;
+      url.protocol = location.protocol;
     }
     return url.toString();
   } catch (error) {
@@ -2470,7 +2476,7 @@ function renderSources() {
         <span>${state.apiStatus.metadata}</span>
       </div>
       <p>Local server endpoint that merges AniList and Jikan before the TV app renders. If it is unavailable, the app falls back to direct public API calls.</p>
-      <code>${location.origin && location.protocol !== "file:" ? `${location.origin}/api/catalog` : "Run server.js to enable /api/catalog"}</code>
+      <code>${location.origin && location.protocol !== "file:" ? `${location.origin}/api/catalog` : "Run animetv-local.js to enable /api/catalog"}</code>
     </article>
     <article class="source-card source-card-feature">
       <div>
@@ -2829,31 +2835,44 @@ async function openShow(id, target = {}) {
   state.activeEpisode = null;
   state.activeDetailTab = "anime";
   state.activeSeasonIndex = 0;
+  const openToken = `${show.id || getShowKey(show)}:${Date.now()}`;
+  state.activeOpenToken = openToken;
   resetVideoFrame();
-  if (isAniPubShow(show)) {
-    await hydrateAniPubEpisodes(show);
-  }
-  if (isAnime1vShow(show)) {
-    await hydrateAnime1vEpisodes(show);
-  }
-  if (isJimovShow(show)) {
-    await hydrateJimovEpisodes(show);
-  }
-  if (isRapidAnimeShow(show)) {
-    await hydrateRapidAnimeEpisodes(show);
-  }
   applyOpenTarget(show, target);
-  if (state.activeEpisode?.episode) {
-    await attachPlaybackSourceOptions(show, state.activeEpisode.episode, state.activeEpisode?.season?.season || state.activeSeasonIndex + 1 || 1);
-  }
   renderEpisodeList(show);
   syncWatchHeading(show);
   document.querySelector("#watchDescription").textContent = show.description;
   favoriteButton.textContent = state.favorites.includes(show.id) ? t("favorited") : t("favorite");
   overlay.hidden = false;
-  if (state.activeEpisode) playActiveShow();
   refreshFocusables();
   closeOverlay.focus();
+  hydrateOpenShowDetails(show, target, openToken);
+}
+
+async function hydrateOpenShowDetails(show, target = {}, openToken = "") {
+  try {
+    await Promise.allSettled([
+      isAniPubShow(show) ? hydrateAniPubEpisodes(show) : Promise.resolve(show),
+      isAnime1vShow(show) ? hydrateAnime1vEpisodes(show) : Promise.resolve(show),
+      isJimovShow(show) ? hydrateJimovEpisodes(show) : Promise.resolve(show),
+      isRapidAnimeShow(show) ? hydrateRapidAnimeEpisodes(show) : Promise.resolve(show)
+    ]);
+    if (state.activeOpenToken !== openToken || state.activeShow?.id !== show.id) return;
+    applyOpenTarget(show, target);
+    if (state.activeEpisode?.episode) {
+      await attachPlaybackSourceOptions(show, state.activeEpisode.episode, state.activeEpisode?.season?.season || state.activeSeasonIndex + 1 || 1);
+      if (state.activeOpenToken !== openToken || state.activeShow?.id !== show.id) return;
+    }
+    renderEpisodeList(show);
+    syncWatchHeading(show);
+    const descriptionNode = document.querySelector("#watchDescription");
+    if (descriptionNode) descriptionNode.textContent = show.description;
+    favoriteButton.textContent = state.favorites.includes(show.id) ? t("favorited") : t("favorite");
+    if (state.activeEpisode) playActiveShow();
+    refreshFocusables();
+  } catch (error) {
+    console.warn("Anime details continued without remote episode hydration:", error);
+  }
 }
 
 async function hydrateAnime1vEpisodes(show) {

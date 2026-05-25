@@ -33,7 +33,7 @@ const ANIME1V_QUOTA_BACKOFF_MS = Math.max(1000 * 60 * 60, Number(process.env.ANI
 const RAPIDAPI_ANIME_KEY = process.env.RAPIDAPI_ANIME_KEY || process.env.X_RAPIDAPI_KEY || "";
 const RAPIDAPI_ANIME_HOST = process.env.RAPIDAPI_ANIME_HOST || process.env.X_RAPIDAPI_HOST || "";
 const RAPIDAPI_ANIME_BASE = process.env.RAPIDAPI_ANIME_BASE || (RAPIDAPI_ANIME_HOST ? `https://${RAPIDAPI_ANIME_HOST}` : "");
-const RAPIDAPI_ANIME_TIMEOUT_MS = Math.max(5000, Number(process.env.RAPIDAPI_ANIME_TIMEOUT_MS || 15000));
+const RAPIDAPI_ANIME_TIMEOUT_MS = Math.max(5000, Number(process.env.RAPIDAPI_ANIME_TIMEOUT_MS || 28000));
 const RAPIDAPI_ANIME_CATALOG_LIMIT = Math.max(25, Number(process.env.RAPIDAPI_ANIME_CATALOG_LIMIT || 300));
 const JIMOV_DEFAULT_CATALOG_LIMIT = Math.max(80, Number(process.env.JIMOV_DEFAULT_CATALOG_LIMIT || 400));
 const JIMOV_MAX_CATALOG_LIMIT = Math.max(JIMOV_DEFAULT_CATALOG_LIMIT, Number(process.env.JIMOV_MAX_CATALOG_LIMIT || 2000));
@@ -121,8 +121,14 @@ function loadLocalEnv() {
   });
 }
 
-const server = http.createServer((request, response) => {
+function handleRequest(request, response) {
   const url = new URL(request.url, `http://${request.headers.host}`);
+
+  if (url.pathname === "/" && !fs.existsSync(path.join(root, "index.html"))) {
+    response.writeHead(307, { Location: "/index.html" });
+    response.end();
+    return;
+  }
 
   if (url.pathname === "/api/health") {
     sendJson(response, { ok: true, app: "AnimeTV", api: "ready", dailyRefresh: lastDailyRefreshResult || { status: "waiting" } });
@@ -318,23 +324,35 @@ const server = http.createServer((request, response) => {
     });
     response.end(data);
   });
-});
+}
 
-server.listen(port, host, () => {
-  console.log(`AnimeTV running at http://localhost:${port}`);
-  console.log(`For Android TV, open http://YOUR-COMPUTER-IP:${port}`);
-  console.log(`Metadata API ready at http://localhost:${port}/api/catalog`);
-  ensureAnime1vServer();
-  setInterval(ensureAnime1vServer, ANIME1V_RESTART_INTERVAL_MS);
-  setTimeout(() => refreshDailyApis({ reason: "startup" }).catch((error) => {
-    console.warn(`Daily API refresh failed on startup: ${error.message}`);
-  }), DAILY_REFRESH_START_DELAY_MS);
-  setInterval(() => refreshDailyApis({ reason: "scheduled" }).catch((error) => {
-    console.warn(`Daily API refresh failed: ${error.message}`);
-  }), DAILY_REFRESH_INTERVAL_MS);
-});
+function startLocalServer() {
+  const server = http.createServer(handleRequest);
+  server.listen(port, host, () => {
+    console.log(`AnimeTV running at http://localhost:${port}`);
+    console.log(`For Android TV, open http://YOUR-COMPUTER-IP:${port}`);
+    console.log(`Metadata API ready at http://localhost:${port}/api/catalog`);
+    ensureAnime1vServer();
+    setInterval(ensureAnime1vServer, ANIME1V_RESTART_INTERVAL_MS);
+    setTimeout(() => refreshDailyApis({ reason: "startup" }).catch((error) => {
+      console.warn(`Daily API refresh failed on startup: ${error.message}`);
+    }), DAILY_REFRESH_START_DELAY_MS);
+    setInterval(() => refreshDailyApis({ reason: "scheduled" }).catch((error) => {
+      console.warn(`Daily API refresh failed: ${error.message}`);
+    }), DAILY_REFRESH_INTERVAL_MS);
+  });
 
-checkAniPubHealth();
+  checkAniPubHealth();
+  return server;
+}
+
+if (require.main === module) {
+  startLocalServer();
+}
+
+module.exports = handleRequest;
+module.exports.handleRequest = handleRequest;
+module.exports.startLocalServer = startLocalServer;
 setInterval(checkAniPubHealth, 1000 * 60 * 60);
 
 async function handleDailyRefresh(url, response) {
@@ -1413,7 +1431,12 @@ async function handleRapidAnimeCatalog(reqUrl, response) {
     });
   } catch (error) {
     sendJson(response, {
-      ...rapidAnimeUnavailablePayload(),
+      ok: false,
+      source: "RapidAPI Anime Streaming",
+      host: RAPIDAPI_ANIME_HOST,
+      count: 0,
+      totalResults: 0,
+      items: [],
       error: error.message
     }, 502);
   }
@@ -1443,7 +1466,10 @@ async function handleRapidAnimeSearch(reqUrl, response) {
     });
   } catch (error) {
     sendJson(response, {
-      ...rapidAnimeUnavailablePayload(),
+      ok: false,
+      source: "RapidAPI Anime Streaming",
+      count: 0,
+      items: [],
       error: error.message
     }, 502);
   }
@@ -1548,7 +1574,12 @@ async function fetchRapidAnimeJson(pathname, params = {}) {
     const body = await upstream.text().catch(() => "");
     throw new Error(`RapidAPI HTTP ${upstream.status}${body ? `: ${body.slice(0, 180)}` : ""}`);
   }
-  return upstream.json();
+  const payload = await upstream.json();
+  const upstreamError = payload?.error || payload?.message?.error || payload?.data?.error;
+  if (upstreamError && !extractRapidAnimeItems(payload).length) {
+    throw new Error(String(upstreamError).slice(0, 240));
+  }
+  return payload;
 }
 
 function unwrapRapidAnimeData(payload) {

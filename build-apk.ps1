@@ -8,7 +8,7 @@ New-Item -ItemType Directory -Force -Path $assetsDir | Out-Null
 Copy-Item -Force `
   (Join-Path $root "index.html"), `
   (Join-Path $root "styles.css"), `
-  (Join-Path $root "app.js"), `
+  (Join-Path $root "client.js"), `
   (Join-Path $root "manifest.webmanifest"), `
   (Join-Path $root "sources.json"), `
   (Join-Path $root "icon.svg") `

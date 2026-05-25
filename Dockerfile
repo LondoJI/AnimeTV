@@ -9,4 +9,4 @@ COPY . .
 
 EXPOSE 4173
 
-CMD ["node", "server.js"]
+CMD ["node", "animetv-local.js"]

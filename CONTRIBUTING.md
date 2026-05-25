@@ -5,7 +5,7 @@ Thanks for helping improve AnimeTV.
 ## Local Setup
 
 1. Install Node.js 18 or newer.
-2. Start AnimeTV with `start-all.bat` on Windows or `node server.js`.
+2. Start AnimeTV with `start-all.bat` on Windows or `node animetv-local.js`.
 3. Optional: run Anime1v at `http://localhost:3001` for Japanese audio and Spanish subtitle sources.
 
 ## Pull Requests

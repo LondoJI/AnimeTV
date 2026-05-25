@@ -1,8 +1,11 @@
 {
   "buildCommand": "npm run vercel-build",
   "outputDirectory": "dist",
-  "cleanUrls": true,
-  "trailingSlash": false,
+  "functions": {
+    "api/**/*.js": {
+      "maxDuration": 30
+    }
+  },
   "headers": [
     {
       "source": "/(.*)",
@@ -15,6 +18,14 @@
     }
   ],
   "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/"
+    },
+    {
+      "source": "/",
+      "destination": "/index.html"
+    },
     {
       "source": "/(.*)",
       "destination": "/index.html"

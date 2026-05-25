@@ -5,11 +5,17 @@ $aliasDomain = "animetv-umber.vercel.app"
 Write-Host "Building AnimeTV static bundle..." -ForegroundColor Cyan
 npm run vercel-build
 
-Write-Host "Deploying static bundle to Vercel..." -ForegroundColor Cyan
-$deployOutput = vercel deploy --prod --yes dist 2>&1
+Write-Host "Preparing Vercel build output..." -ForegroundColor Cyan
+vercel build --prod --yes
+if ($LASTEXITCODE -ne 0) {
+  throw "Vercel build failed."
+}
+
+Write-Host "Deploying AnimeTV web app and API routes to Vercel..." -ForegroundColor Cyan
+$deployOutput = vercel deploy --prebuilt --prod --yes 2>&1
 $deployOutput | ForEach-Object { Write-Host $_ }
 
-$deploymentUrl = ($deployOutput | Select-String -Pattern "https://dist-[^\s]+" | Select-Object -First 1).Matches.Value
+$deploymentUrl = ($deployOutput | Select-String -Pattern "https://animetv-[^\s]+" | Select-Object -First 1).Matches.Value
 if (-not $deploymentUrl) {
   $deploymentUrl = ($deployOutput | Select-String -Pattern "https://[a-z0-9-]+-juankisantiago-5844s-projects\.vercel\.app" | Select-Object -First 1).Matches.Value
 }

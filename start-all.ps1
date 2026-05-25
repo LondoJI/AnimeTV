@@ -99,7 +99,7 @@ function Ensure-AnimeTV {
     Stop-Process -Id $script:animeTvProcess.Id -Force -ErrorAction SilentlyContinue
   }
 
-  $script:animeTvProcess = Start-ManagedNode -Name "AnimeTV" -WorkingDirectory $AnimeTVPath -ScriptPath "server.js" -LogPrefix "animetv"
+  $script:animeTvProcess = Start-ManagedNode -Name "AnimeTV" -WorkingDirectory $AnimeTVPath -ScriptPath "animetv-local.js" -LogPrefix "animetv"
 }
 
 function Invoke-DailyRefresh {

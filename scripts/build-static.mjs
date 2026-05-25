@@ -5,7 +5,6 @@ const files = [
   "index.html",
   "offline.html",
   "styles.css",
-  "app.js",
   "update-manager.js",
   "manifest.webmanifest",
   "sources.json",
@@ -13,13 +12,18 @@ const files = [
   "service-worker.js"
 ];
 
-const outDir = "dist";
+const outDirs = ["dist", "public"];
 const sourceDir = existsSync("vercel-static") ? "vercel-static" : ".";
-rmSync(outDir, { recursive: true, force: true });
-mkdirSync(outDir, { recursive: true });
 
-for (const file of files) {
-  copyFileSync(join(sourceDir, file), join(outDir, file));
+for (const outDir of outDirs) {
+  rmSync(outDir, { recursive: true, force: true });
+  mkdirSync(outDir, { recursive: true });
+
+  for (const file of files) {
+    copyFileSync(join(sourceDir, file), join(outDir, file));
+  }
+
+  copyFileSync(join(sourceDir, "client.js"), join(outDir, "client.js"));
 }
 
-console.log(`AnimeTV static build ready in ${outDir}`);
+console.log(`AnimeTV static build ready in ${outDirs.join(" and ")}`);
