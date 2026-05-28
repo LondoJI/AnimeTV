@@ -4112,37 +4112,40 @@ body.player-cinema-open .close-button {
 
 /* ══════════════════════════════════════════════════════════════════════════
    Cinema mode — full-screen overlay
-   Layout: flex column so the stage grows to fill available height.
-   Chrome (topbar, controls, X button) overlays the stage with position:absolute.
+   Strategy: the STAGE is positioned fixed directly (same containing block
+   as the cinema container — .watch-overlay via backdrop-filter).  This
+   bypasses any flex/grid height-distribution issues: the stage always covers
+   exactly the same viewport rectangle as .watch-overlay (inset: 0).
    ══════════════════════════════════════════════════════════════════════════ */
 
 .vidstream-player.is-cinema {
+  /* Provides the black background and the CSS class hook.
+     overflow: visible so the fixed stage isn't clipped. */
   position: fixed;
   inset: 0;
   z-index: 10050;
-  display: flex;            /* ← flex column: stage gets all remaining height */
-  flex-direction: column;
-  width: 100%;
-  height: 100dvh;
+  display: block;
   padding: 0;
   border: 0;
   border-radius: 0;
   background: #000;
-  overflow: hidden;
+  overflow: visible;
   transition: none;
 }
 
-/* Stage: flex child that fills all space inside the cinema overlay.
-   position:relative makes it the containing block for the absolutely-
-   positioned video, topbar, and controls inside it. */
+/* Stage: pinned directly to the viewport via position:fixed.
+   Because .watch-overlay has backdrop-filter, it is the containing block
+   for all position:fixed descendants — so this stage fills watch-overlay
+   (= the viewport) independently of the cinema container's own layout. */
 .vidstream-player.is-cinema .vid-player-stage {
-  position: relative;      /* ← containing block for absolute children */
-  flex: 1 1 0;             /* ← grow/shrink to fill the cinema overlay */
-  min-height: 0;           /* ← allow flex to shrink below content size */
+  position: fixed;
+  inset: 0;
+  z-index: 1;              /* above cinema container's own bg inside its ctx */
   display: block;
-  width: 100%;
+  min-height: 0;
   overflow: hidden;
   border-radius: 0;
+  background: #000;        /* letterbox areas */
 }
 
 /* Video stretches to fill the entire stage */
