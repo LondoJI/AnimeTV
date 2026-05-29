@@ -128,7 +128,7 @@ function normalizeEpisodes(item, parentSeason = "") {
         defaultAudio: episode.defaultAudio || "",
         defaultSubs: episode.defaultSubs || episode.defaultSubtitles || "",
         server: episode.server || episode.provider || episode.source || "",
-        locked: episode.locked ?? (!url && !streamResolver)
+        locked: episode.locked ?? (!url && !externalUrl && !streamResolver)
       };
     })
     .filter(Boolean);

@@ -1153,7 +1153,7 @@ body:not([data-route="home"]) .section-heading h2 {
   --rail-gap: clamp(0.85rem, 1.4vw, 1.35rem);
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: calc((100% - (6 * var(--rail-gap))) / 7);
+  grid-auto-columns: calc((100% - (4 * var(--rail-gap))) / 5);
   grid-template-rows: repeat(2, auto);
   grid-template-columns: none;
   gap: var(--rail-gap);
@@ -5860,11 +5860,18 @@ body.player-cinema-open .close-button {
 /* Poster rails use two rows everywhere, like a TV streaming shelf. */
 .rail-shell .poster-grid {
   grid-auto-flow: column;
-  grid-auto-columns: calc((100% - (6 * var(--rail-gap))) / 7);
+  grid-auto-columns: calc((100% - (4 * var(--rail-gap))) / 5);
   grid-template-columns: none;
   grid-template-rows: repeat(2, auto);
   grid-column: 2;
   grid-row: 1;
+}
+
+/* Responsive column counts — must come AFTER the base rule above */
+@media (max-width: 1150px) {
+  .rail-shell .poster-grid {
+    grid-auto-columns: calc((100% - (3 * var(--rail-gap))) / 4);
+  }
 }
 
 @media (max-width: 760px) {

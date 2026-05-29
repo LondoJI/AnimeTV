@@ -1713,12 +1713,12 @@ def validate(catalog: dict, require_episodes: bool = False) -> tuple:
 def save_catalog(catalog: dict) -> None:
     if OUTPUT_JSON.exists():
         shutil.copy2(OUTPUT_JSON, PREV_JSON)
-        log.info("[save] Backed up → %s", PREV_JSON.name)
+        log.info("[save] Backed up to %s", PREV_JSON.name)
     clean_items = [_strip_internal(i) for i in catalog["items"]]
     catalog_to_save = {**catalog, "items": clean_items}
     with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
         json.dump(catalog_to_save, f, ensure_ascii=False, indent=2)
-    log.info("[save] ✓ Wrote %s  (%d items, %d episode URLs)",
+    log.info("[save] Wrote %s  (%d items, %d episode URLs)",
              OUTPUT_JSON.name, catalog["totalResults"], catalog.get("episodeCount", 0))
 
 
@@ -1731,7 +1731,7 @@ def save_csv(items: list) -> None:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
         w.writerows(items)
-    log.info("[save] ✓ Wrote %s", OUTPUT_CSV.name)
+    log.info("[save] Wrote %s", OUTPUT_CSV.name)
 
 
 def load_previous_catalog() -> Optional[dict]:
@@ -1893,7 +1893,7 @@ def run(
     save_catalog(catalog)
     save_csv(all_items)
 
-    print(f"\n  ✓ Done")
+    print("\n  OK Done")
     print(f"    Anime          : {catalog['totalResults']}")
     print(f"    Episode URLs   : {catalog.get('episodeCount', 0)}")
     print(f"    Sources used   : {', '.join(catalog.get('sources') or [])}")
