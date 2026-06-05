@@ -1,16 +1,22 @@
 {
-  "name": "AnimeTV",
-  "short_name": "AnimeTV",
+  "name": "ZenkaiTV",
+  "short_name": "ZenkaiTV",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#111026",
-  "theme_color": "#282145",
+  "background_color": "#0D1B2A",
+  "theme_color": "#0D1B2A",
   "orientation": "landscape",
   "icons": [
     {
-      "src": "icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "logo-mark-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "logo-mark-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any maskable"
     }
   ]

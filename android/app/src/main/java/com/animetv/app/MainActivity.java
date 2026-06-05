@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.os.Message;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.WebResourceRequest;
@@ -17,7 +18,17 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
 public class MainActivity extends Activity {
+    // ── Backend configuration ────────────────────────────────────────────────
+    // Set SITE_URL to your deployed ZenkaiTV website to get FULL functionality on
+    // the TV (TioAnime / AnimeAV1 / AniPub sources need the hosted Node backend).
+    //   e.g. private static final String SITE_URL = "https://zenkaitv.onrender.com";
+    // Leave it empty ("") to run the bundled offline build, which shows the full
+    // AniList/Jikan catalog but cannot load proxied playback sources from file://.
+    private static final String SITE_URL = "";
+
     private WebView webView;
+    private View customView;
+    private WebChromeClient.CustomViewCallback customViewCallback;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -31,6 +42,26 @@ public class MainActivity extends Activity {
         webView.setFocusableInTouchMode(true);
         webView.setWebViewClient(new WebViewClient());
         webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onShowCustomView(View view, CustomViewCallback callback) {
+                if (customView != null) {
+                    callback.onCustomViewHidden();
+                    return;
+                }
+                customView = view;
+                customViewCallback = callback;
+                setContentView(customView, new ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                ));
+                applyImmersiveMode(customView);
+            }
+
+            @Override
+            public void onHideCustomView() {
+                hideCustomView();
+            }
+
             @Override
             public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
                 WebView popup = new WebView(MainActivity.this);
@@ -68,8 +99,19 @@ public class MainActivity extends Activity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
+        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        settings.setLoadsImagesAutomatically(true);
 
-        webView.setSystemUiVisibility(
+        applyImmersiveMode(webView);
+
+        setContentView(webView);
+        // Load the hosted site when configured (full playback), else the bundled build.
+        webView.loadUrl(SITE_URL.isEmpty() ? "file:///android_asset/index.html" : SITE_URL);
+    }
+
+    private void applyImmersiveMode(View view) {
+        if (view == null) return;
+        view.setSystemUiVisibility(
             View.SYSTEM_UI_FLAG_FULLSCREEN
                 | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                 | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
@@ -77,9 +119,17 @@ public class MainActivity extends Activity {
                 | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
                 | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         );
+    }
 
+    private void hideCustomView() {
+        if (customView == null) return;
+        customView = null;
         setContentView(webView);
-        webView.loadUrl("file:///android_asset/index.html");
+        if (customViewCallback != null) {
+            customViewCallback.onCustomViewHidden();
+            customViewCallback = null;
+        }
+        applyImmersiveMode(webView);
     }
 
     private void openExternalUrl(String url) {
@@ -95,7 +145,9 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
+        if (customView != null) {
+            hideCustomView();
+        } else if (webView != null && webView.canGoBack()) {
             webView.goBack();
         } else {
             super.onBackPressed();

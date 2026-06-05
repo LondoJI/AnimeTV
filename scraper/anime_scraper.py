@@ -38,6 +38,7 @@ import re
 import shutil
 import sys
 import time
+import unicodedata
 from datetime import datetime, timezone
 from itertools import cycle
 from pathlib import Path
@@ -76,6 +77,8 @@ MAX_RETRIES     = 2
 CATALOG_DELAY   = 1.0   # seconds between catalog page requests
 EPISODE_DELAY   = 0.8   # seconds between episode page requests
 SEARCH_DELAY    = 0.8
+TIOANIME_SLUG_CATALOG_PAGES = 120
+_TIOANIME_SLUG_INDEX: Optional[dict] = None
 
 # When catalog HTML scraping yields nothing, fall back to search API with broad terms
 BROAD_TERMS = [
@@ -281,6 +284,25 @@ def _ajax_get_json(url: str, params=None, referer: str = "", label: str = ""):
 
 def clean(v) -> str:
     return re.sub(r"\s+", " ", str(v or "")).strip()
+
+
+def normalize_lookup_title(value: str) -> str:
+    text = unicodedata.normalize("NFD", str(value or "").lower())
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    text = re.sub(r"\b(season|part|tv|ova|ona|the|a|an)\b", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def strip_season_words(title: str) -> str:
+    return clean(
+        re.sub(
+            r"\b(?:season|part|cour)\s*\d+\b|\b\d+(?:st|nd|rd|th)\s*season\b",
+            " ",
+            str(title or ""),
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def abs_url(href: str, base: str) -> str:
@@ -886,6 +908,73 @@ def fetch_catalog_tioanime(catalog_pages: int = 3) -> list:
     return results
 
 
+def _tioanime_slug_title_keys(title: str, slug: str = "") -> list:
+    keys = []
+    for value in [title, strip_season_words(title), slug.replace("-", " ")]:
+        key = normalize_lookup_title(value)
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def _ensure_tioanime_slug_index(max_pages: int = TIOANIME_SLUG_CATALOG_PAGES) -> dict:
+    """
+    Build a title -> slug map from TioAnime's full directory.
+    This is used before AJAX search so metadata/Jikan titles can resolve to
+    exact /anime/<slug> values from tioanime.com.
+    """
+    global _TIOANIME_SLUG_INDEX
+    if _TIOANIME_SLUG_INDEX is not None:
+        return _TIOANIME_SLUG_INDEX
+
+    by_title = {}
+    seen = set()
+    log.info("[TioAnime] Building full slug index (%d directory pages max)", max_pages)
+
+    def _add(items: list) -> int:
+        added = 0
+        for item in items:
+            slug = item.get("_slug") or item.get("slug") or ""
+            title = item.get("title") or ""
+            if not slug or not title:
+                continue
+            if slug not in seen:
+                seen.add(slug)
+                added += 1
+            for key in _tioanime_slug_title_keys(title, slug):
+                by_title.setdefault(key, slug)
+        return added
+
+    for page in range(1, max_pages + 1):
+        url = f"{TIOANIME_BASE}/directorio?p={page}" if page > 1 else f"{TIOANIME_BASE}/directorio"
+        html = get_html(url, delay=CATALOG_DELAY, label="TioAnime", referer=TIOANIME_BASE)
+        if not html:
+            break
+        parsed = _parse_catalog_html(html, TIOANIME_BASE, "TioAnime")
+        added = _add(parsed)
+        if not parsed or (page > 1 and added == 0):
+            break
+
+    html = get_html(f"{TIOANIME_BASE}/emision", delay=CATALOG_DELAY, label="TioAnime", referer=TIOANIME_BASE)
+    if html:
+        _add(_parse_catalog_html(html, TIOANIME_BASE, "TioAnime"))
+
+    _TIOANIME_SLUG_INDEX = by_title
+    log.info("[TioAnime] Slug index ready: %d title keys for %d slugs", len(by_title), len(seen))
+    return _TIOANIME_SLUG_INDEX
+
+
+def _tioanime_find_slug_by_catalog(show: dict) -> str:
+    index = _ensure_tioanime_slug_index()
+    for title in _search_titles(show):
+        for value in [title, strip_season_words(title)]:
+            slug = index.get(normalize_lookup_title(value))
+            if slug:
+                log.debug("[TioAnime] slug-index hit: '%s' → %s", title[:40], slug)
+                return slug
+    return ""
+
+
 def _tioanime_find_slug_by_search(show: dict) -> str:
     """
     Search TioAnime by title to find the correct slug when the item's own
@@ -896,6 +985,10 @@ def _tioanime_find_slug_by_search(show: dict) -> str:
 
     Returns the best-matching slug string, or "" if nothing found.
     """
+    indexed = _tioanime_find_slug_by_catalog(show)
+    if indexed:
+        return indexed
+
     queries = _search_titles(show)[:3]
     main_title = show.get("title") or ""
 

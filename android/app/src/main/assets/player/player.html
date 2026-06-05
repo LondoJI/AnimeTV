@@ -1,0 +1,239 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AnimeTV Video Player</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    video-js,
+    .video-js,
+    .vjs-tech,
+    video {
+      position: absolute !important;
+      inset: 0 !important;
+      display: block !important;
+      width: 100% !important;
+      height: 100% !important;
+      overflow: hidden;
+      background: #000;
+    }
+
+    * {
+      pointer-events: none !important;
+      user-select: none !important;
+    }
+
+    video-js div,
+    video-js div * {
+      display: none !important;
+    }
+
+    video {
+      z-index: 99999 !important;
+    }
+
+    .scale-0 video,
+    .scale-0 .vjs-tech { object-fit: contain !important; }
+    .scale-1 video,
+    .scale-1 .vjs-tech { object-fit: cover !important; }
+    .scale-2 video,
+    .scale-2 .vjs-tech { object-fit: fill !important; }
+  </style>
+  <script>window.HELP_IMPROVE_VIDEOJS = false;</script>
+  <script src="./video.min.js"></script>
+</head>
+<body>
+  <video-js id="player"></video-js>
+  <script>
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var uri = params.get("src") || "";
+      if (!uri) return;
+
+      function send(command, value) {
+        parent.postMessage(JSON.stringify({ vcmd: command, val: value }), "*");
+      }
+
+      function streamTypeFromUrl(url) {
+        var clean = String(url || "").split("?")[0].split("#")[0].toLowerCase();
+        if (clean.endsWith(".mpd")) return "application/dash+xml";
+        if (clean.endsWith(".mp4") || clean.endsWith(".m4v") || clean.endsWith(".webm") || clean.endsWith(".mov")) return "video/mp4";
+        return "application/x-mpegURL";
+      }
+
+      function streamProxyHost(url) {
+        try {
+          var host = new URL(url).host.toLowerCase();
+          if (/owocdn\.top|uwucdn\.top|kwik\.cx/i.test(host)) return "kwik.cx";
+          if (/mewstream\.buzz|prxy\.miruro\.to|ultracloud\.cc/i.test(host)) return "www.miruro.tv";
+          if (/cinewave|streamzone/i.test(host)) return "megaplay.buzz";
+          if (/anime-dunya/i.test(host)) return "anime-dunya.com";
+          if (/watching\.onl|vidwish\.live|anivideo\.sbs|cloudbuzz\.lol|trycloud\.pro/i.test(host)) return "vidwish.live";
+          if (/mp4upload\.com/i.test(host)) return "mp4upload.com";
+          return host;
+        } catch (error) {
+          return "";
+        }
+      }
+
+      function proxyUrl(url) {
+        if (!/^https?:\/\//i.test(url)) return url;
+        var proxied = new URL("../api/source", location.href);
+        proxied.searchParams.set("url", url);
+        var host = streamProxyHost(url);
+        if (host) proxied.searchParams.set("refererHost", host);
+        return proxied.toString();
+      }
+
+      var originalHost = streamProxyHost(uri);
+      var sourceUrl = streamTypeFromUrl(uri) === "video/mp4" ? proxyUrl(uri) : uri;
+      var player = videojs("player", {
+        fluid: true,
+        controls: false,
+        autoplay: true,
+        preload: "auto",
+        responsive: true,
+        sources: [{ src: sourceUrl, type: streamTypeFromUrl(uri) }]
+      });
+
+      if (videojs.Vhs && videojs.Vhs.xhr) {
+        videojs.Vhs.xhr.beforeRequest = function (options) {
+          options.headers = options.headers || {};
+          if (originalHost) options.headers["X-Stream-Prox"] = originalHost;
+          if (options.uri && options.uri.indexOf("/api/source?") === -1 && /^https?:\/\//i.test(options.uri)) {
+            options.uri = proxyUrl(options.uri);
+          }
+          return options;
+        };
+      }
+
+      var vars = {
+        res: "",
+        quality: Number(params.get("quality") || 0),
+        lang: params.get("audio") || "",
+        langavail: "-"
+      };
+
+      function timing() {
+        return {
+          position: player.currentTime() || 0,
+          duration: player.duration() || 0,
+          buffer: player.bufferedEnd ? player.bufferedEnd() : 0
+        };
+      }
+
+      function resolution() {
+        return player.videoWidth() + "," + player.videoHeight();
+      }
+
+      function setQuality(value) {
+        var ql = player.qualityLevels && player.qualityLevels();
+        if (!ql || !ql.length) return;
+        var heights = [];
+        for (var i = 0; i < ql.length; i++) heights.push(ql[i].height);
+        heights.sort(function (a, b) { return b - a; });
+        var selected = value > 0 && heights.length >= value ? heights[value - 1] : 0;
+        for (var j = 0; j < ql.length; j++) {
+          ql[j].enabled = value === 0 || ql[j].height === selected;
+        }
+        send("qualities", heights);
+        vars.res = "";
+      }
+
+      function setAudioLanguage(value, retry) {
+        retry = retry || 0;
+        try {
+          var tracks = player.audioTracks_ || [];
+          var available = [""];
+          var matched = false;
+          if (tracks.length > 1) {
+            var wanted = String(value || "").toLowerCase().slice(0, 3);
+            for (var i = 1; i < tracks.length; i++) {
+              var label = String(tracks[i].label || "").toLowerCase().slice(0, 3);
+              available.push(label);
+              if (wanted && label === wanted) {
+                tracks[i].enabled = true;
+                matched = true;
+              }
+            }
+            if (!matched && tracks[0]) tracks[0].enabled = true;
+          } else if (!tracks.length && retry < 120) {
+            setTimeout(function () { setAudioLanguage(vars.lang, retry + 1); }, 160);
+            return;
+          }
+          var joined = available.join(",");
+          if (vars.langavail !== joined) {
+            vars.langavail = joined;
+            send("langavail", joined);
+          }
+        } catch (error) {}
+      }
+
+      function command(command, value) {
+        if (command === "play") player.play();
+        else if (command === "pause") player.pause();
+        else if (command === "seek") player.currentTime(parseFloat(value) || 0);
+        else if (command === "speed") player.playbackRate(Number(value) || 1);
+        else if (command === "volume") player.volume(Math.max(0, Math.min(1, Number(value) || 0)));
+        else if (command === "muted") player.muted(Boolean(value));
+        else if (command === "quality") {
+          vars.quality = Number(value) || 0;
+          setQuality(vars.quality);
+        } else if (command === "audiolang") {
+          vars.lang = value || "";
+          setAudioLanguage(vars.lang);
+        } else if (command === "scale") {
+          document.documentElement.className = "scale-" + value;
+        }
+      }
+
+      window.addEventListener("message", function (event) {
+        try {
+          var data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+          if (data && data.vcmd) command(data.vcmd, data.val);
+        } catch (error) {}
+      });
+
+      player.on("ready", function () {
+        send("ready", timing());
+        setQuality(vars.quality);
+        setAudioLanguage(vars.lang);
+      });
+      player.on("loadedmetadata", function () {
+        send("loadedmetadata", timing());
+        setQuality(vars.quality);
+        setAudioLanguage(vars.lang);
+      });
+      player.on("play", function () { send("play", 1); });
+      player.on("pause", function () { send("pause", 0); });
+      player.on("waiting", function () { send("waiting", timing()); });
+      player.on("canplay", function () { send("canplay", timing()); });
+      player.on("playing", function () { send("playing", timing()); });
+      player.on("seeking", function () { send("seek", timing()); });
+      player.on("error", function () { send("error", player.error && player.error()); });
+      player.on("ended", function () { send("complete", timing()); });
+      player.on("timeupdate", function () {
+        var res = resolution();
+        if (vars.res !== res) {
+          vars.res = res;
+          send("resolution", res);
+        }
+        send("time", timing());
+      });
+
+      send("initializing", 1);
+      window._vid = player;
+    })();
+  </script>
+</body>
+</html>

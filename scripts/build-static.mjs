@@ -8,7 +8,11 @@ const files = [
   "update-manager.js",
   "manifest.webmanifest",
   "sources.json",
-  "icon.svg",
+  "logo-mark.png",
+  "logo-mark-192.png",
+  "logo-mark-512.png",
+  "logo-mark-transparent.png",
+  "logo-wordmark.png",
   "service-worker.js"
 ];
 
@@ -41,4 +45,4 @@ for (const outDir of outDirs) {
   copyDir(join(sourceDir, "js"), join(outDir, "js"));
 }
 
-console.log(`AnimeTV static build ready in ${outDirs.join(" and ")}`);
+console.log(`ZenkaiTV static build ready in ${outDirs.join(" and ")}`);

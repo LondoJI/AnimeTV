@@ -17,6 +17,8 @@ function normalizeExternalShow(item, source, index) {
     finder: item.finder || item.slug || "",
     malId: item.malId || item.idMal || item.mal_id || null,
     anilistId: item.anilistId || item.idAnilist || item.anilist_id || null,
+    nativeTitle: item.nativeTitle || item.titleNative || item.title_native || "",
+    romajiTitle: item.romajiTitle || item.titleRomaji || item.title_romaji || "",
     aliases: item.aliases || item.titles || [],
     title,
     episode: item.episode || item.episodeNumber || item.latestEpisode || "?",
@@ -26,6 +28,10 @@ function normalizeExternalShow(item, source, index) {
     time: item.time || item.airTime || "",
     colors: item.colors || ["#40dfc2", "#251d47"],
     score: item.score || null,
+    status: item.status || item.airingStatus || "",
+    format: item.format || item.type || "",
+    duration: item.duration || item.durationMinutes || item.episodeDuration || "",
+    year: item.year || item.seasonYear || item.releaseYear || "",
     source: source.name || "Local Source",
     image: item.image || item.poster || item.cover || item.thumbnail || "",
     banner: item.banner || item.backdrop || "",
@@ -60,7 +66,51 @@ function normalizeSeasons(item) {
       .filter((season) => season.episodes.length);
   }
 
-  return groupEpisodesBySeason(normalizeEpisodes(item));
+  const normalized = normalizeEpisodes(item);
+  if (normalized.length) return groupEpisodesBySeason(normalized);
+
+  // No episodes array — generate numbered placeholders from the episode count so
+  // scraped/metadata-only catalog items (e.g. scrapled-catalog) have selectable
+  // episode buttons even before a playback source is resolved.
+  const totalEps = Math.min(
+    2000,
+    Math.max(0, Number(item.episode || item.episodeNumber || item.latestEpisode || item.total_episodes || item.episodeCount || 0))
+  );
+  if (totalEps > 0) {
+    return [{
+      season: 1,
+      title: "Season 1",
+      episodes: Array.from({ length: totalEps }, (_, i) => ({
+        id: `${item.id || item.title || "ep"}-s1-e${i + 1}`,
+        title: `Episode ${i + 1}`,
+        season: 1,
+        episode: i + 1,
+        number: i + 1,
+        videoUrl: "",
+        server: "Auto",
+        locked: true
+      }))
+    }];
+  }
+
+  return [];
+}
+
+// Extract a numeric episode number from varied title formats:
+//   "Episode 01", "E3", "Ep. 12", "Capitulo 5", "Capítulo 05", "EP. 12", 42, "42"
+function parseEpisodeNumber(value, fallback = null) {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+  const str = String(value || "");
+  // Bare integer string
+  const bare = str.match(/^0*(\d+)$/);
+  if (bare) return Number(bare[1]);
+  // Prefixed: E3, Ep.12, Episode 01, EP. 5, Capitulo 3, Cap. 3
+  const prefixed = str.match(/(?:ep(?:isode)?|cap(?:ítulo|itulo)?|e)[\s.\-#]*0*(\d+)/i);
+  if (prefixed) return Number(prefixed[1]);
+  // Trailing number: "Titulo 12", "Title - 04"
+  const trailing = str.match(/\b0*(\d+)\s*$/);
+  if (trailing) return Number(trailing[1]);
+  return fallback;
 }
 
 function normalizeEpisodes(item, parentSeason = "") {
@@ -85,11 +135,16 @@ function normalizeEpisodes(item, parentSeason = "") {
       const streamResolver = episode.streamResolver || episode.resolver || null;
       const externalUrl = episode.externalUrl || episode.embedUrl || episode.iframeUrl || "";
       const subtitles = normalizeSubtitleTracks(episode);
+      // Parse episode number robustly — never leave it as a string that sorts lexically
+      const rawEpNum = episode.episode ?? episode.number;
+      const epNum = parseEpisodeNumber(rawEpNum) ??
+                    parseEpisodeNumber(episode.title) ??
+                    (index + 1);
       return {
         id: episode.id || episode.slug || `${item.id || item.title || "episode"}-${index}`,
-        title: episode.title || episode.name || `Episode ${episode.episode || episode.number || index + 1}`,
-        season: episode.season || episode.seasonNumber || fallbackSeason,
-        episode: episode.episode || episode.number || index + 1,
+        title: episode.title || episode.name || `Episode ${epNum}`,
+        season: Number(episode.season || episode.seasonNumber || fallbackSeason) || fallbackSeason,
+        episode: epNum,
         videoUrl: url,
         streamResolver,
         externalUrl,
@@ -101,7 +156,7 @@ function normalizeEpisodes(item, parentSeason = "") {
         defaultAudio: episode.defaultAudio || "",
         defaultSubs: episode.defaultSubs || episode.defaultSubtitles || "",
         server: episode.server || episode.provider || episode.source || "",
-        locked: episode.locked ?? (!url && !streamResolver)
+        locked: episode.locked ?? (!url && !externalUrl && !streamResolver)
       };
     })
     .filter(Boolean);
@@ -110,7 +165,7 @@ function normalizeEpisodes(item, parentSeason = "") {
 function groupEpisodesBySeason(episodes = []) {
   const bySeason = new Map();
   episodes.forEach((episode) => {
-    const seasonNumber = episode.season || 1;
+    const seasonNumber = Number(episode.season || episode.seasonNumber || 1) || 1;
     if (!bySeason.has(seasonNumber)) {
       bySeason.set(seasonNumber, {
         season: seasonNumber,
@@ -122,8 +177,8 @@ function groupEpisodesBySeason(episodes = []) {
   });
   return [...bySeason.values()].map((season) => ({
     ...season,
-    episodes: season.episodes.sort((a, b) => Number(a.episode || 0) - Number(b.episode || 0))
-  }));
+    episodes: season.episodes.sort((a, b) => Number(a.episode || a.number || 0) - Number(b.episode || b.number || 0))
+  })).sort((a, b) => Number(a.season || 0) - Number(b.season || 0));
 }
 
 function pickPlayableUrl(item) {
@@ -277,18 +332,30 @@ function normalizeAniListShow(entry) {
   const time = airingDate ? airingDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "TBA";
   const genre = pickGenre(entry.genres);
   const color = entry.coverImage?.color || "#40dfc2";
+  const nextAiringEp = entry.nextAiringEpisode?.episode;
+  const latestAiredEp = nextAiringEp && nextAiringEp > 1 ? nextAiringEp - 1 : null;
 
   return {
     id: `anilist-${entry.id}`,
     malId: entry.idMal,
+    anilistId: entry.id,
+    nativeTitle: entry.title.native || "",
+    romajiTitle: entry.title.romaji || "",
     title: entry.title.english || entry.title.romaji || entry.title.native || "Untitled Anime",
-    episode: entry.nextAiringEpisode?.episode || entry.episodes || "?",
+    episode: latestAiredEp ?? (nextAiringEp === 1 ? "?" : nextAiringEp) ?? entry.episodes ?? "?",
+    totalEpisodes: entry.episodes || null,
+    latestAiredEp,
+    nextAiringEpisodeNumber: nextAiringEp || null,
     genre,
     genres: entry.genres || [genre],
     day,
     time,
     colors: [color, "#211942"],
     score: entry.averageScore,
+    status: entry.status || "",
+    format: entry.format || "",
+    duration: entry.duration || "",
+    year: entry.seasonYear || entry.startDate?.year || "",
     source: "AniList",
     image: entry.coverImage?.extraLarge || entry.coverImage?.large || "",
     banner: entry.bannerImage || "",
@@ -306,14 +373,22 @@ function normalizeJikanShow(entry, source) {
   return {
     id: `jikan-${entry.mal_id}`,
     malId: entry.mal_id,
+    anilistId: null,
+    nativeTitle: entry.title_japanese || "",
+    romajiTitle: entry.title || "",
     title: entry.title_english || entry.title || "Untitled Anime",
     episode: entry.episodes || "?",
+    totalEpisodes: entry.episodes || null,
     genre,
     genres,
     day: broadcast.day?.replace("s", "").slice(0, 3) || "TBA",
     time: broadcast.time || "TBA",
     colors: ["#58a8ff", "#2b1d47"],
     score: entry.score ? Math.round(entry.score * 10) : null,
+    status: entry.status || "",
+    format: entry.type || "",
+    duration: entry.duration || "",
+    year: entry.year || entry.aired?.prop?.from?.year || "",
     source,
     image: entry.images?.webp?.large_image_url || entry.images?.jpg?.large_image_url || "",
     banner: "",

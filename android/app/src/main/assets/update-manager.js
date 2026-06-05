@@ -37,7 +37,7 @@ class UpdateManager {
       if (data.updateAvailable) this.showUpdateNotification(data);
       return data;
     } catch (error) {
-      console.warn("AnimeTV update check failed:", error);
+      console.warn("ZenkaiTV update check failed:", error);
       return null;
     }
   }
@@ -101,7 +101,7 @@ class UpdateManager {
       banner.classList.add("is-loading");
       try {
         await this.applyUpdate(await this.downloadUpdate(data.manifest || data));
-        banner.querySelector("span").textContent = "Update applied. Restarting AnimeTV...";
+        banner.querySelector("span").textContent = "Update applied. Restarting ZenkaiTV...";
         window.setTimeout(() => location.reload(), 900);
       } catch (error) {
         banner.classList.remove("is-loading");

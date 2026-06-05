@@ -1,4 +1,4 @@
-const CACHE_NAME = "animetv-v164";
+const CACHE_NAME = "zenkaitv-v214";
 const ASSETS = [
   "./",
   "./index.html",
@@ -8,7 +8,13 @@ const ASSETS = [
   "./update-manager.js",
   "./manifest.webmanifest",
   "./sources.json",
-  "./icon.svg"
+  "./logo-mark.png",
+  "./logo-mark-192.png",
+  "./logo-mark-512.png",
+  "./logo-mark-transparent.png",
+  "./logo-wordmark.png",
+  "./player/player.html",
+  "./player/video.min.js"
 ];
 
 self.addEventListener("install", (event) => {

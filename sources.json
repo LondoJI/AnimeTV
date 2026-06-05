@@ -1,19 +1,9 @@
 {
   "sources": [
     {
-      "id": "scrapled-catalog",
-      "name": "AnimeAV1 · TioAnime · AnimeFLV",
-      "enabled": true,
-      "type": "online-addon",
-      "endpoint": "/api/scraped-catalog?limit=200&page=1",
-      "pageSize": 200,
-      "paginated": true,
-      "description": "Daily-updated catalog scraped directly from AnimeAV1, TioAnime, and AnimeFLV. Includes anime metadata, episode lists, and video/embed URLs. Updated automatically via GitHub Actions every day at 06:00 UTC. Jikan is optional enrichment only. The last valid catalog is always kept as a fallback so the source never goes empty."
-    },
-    {
       "id": "consumet-kickassanime",
       "name": "Consumet KickAssAnime (JP + Spanish Subs)",
-      "enabled": true,
+      "enabled": false,
       "type": "online-addon",
       "endpoint": "/api/consumet/kickassanime/catalog?limit=360&page=1&pages=6",
       "episodeEndpoint": "/api/consumet/kickassanime/info",
@@ -32,12 +22,25 @@
       "lazyLoad": true,
       "paginated": true,
       "pageSize": 100,
-      "description": "Online AniPub catalog addon loaded from all AniPub catalog pages with /api/info/:id gap filling. Direct mp4/m3u8 links use the main player; iframe links play inside AnimeTV with the embedded player."
+      "description": "Online AniPub catalog addon loaded from all AniPub catalog pages with /api/info/:id gap filling. Direct mp4/m3u8 links use the main player; iframe links play inside ZenkaiTV with the embedded player."
+    },
+    {
+      "id": "local-finder",
+      "name": "Local Finder",
+      "enabled": true,
+      "type": "playback-addon",
+      "endpoint": "/api/scraped-catalog?limit=500&page=1",
+      "pageSize": 500,
+      "paginated": true,
+      "hidden": true,
+      "playbackOnly": true,
+      "noCache": true,
+      "description": "Hidden playback source for anime_finder.py / scraper anime_metadata.json results. It unlocks the source picker when an exact season and episode has a playable URL, iframe, resolver, or source option."
     },
     {
       "id": "anime1v-spanish",
       "name": "Anime1v (Japanese + Spanish Subs)",
-      "enabled": true,
+      "enabled": false,
       "type": "online-addon",
       "endpoint": "/api/anime1v/trending?limit=1200&page=1&pages=30&perPage=100",
       "episodeEndpoint": "/api/anime1v/episodes",
@@ -45,24 +48,12 @@
       "healthEndpoint": "/api/anime1v/health",
       "pageSize": 300,
       "paginated": true,
-      "description": "Anime1v-compatible proxy for Japanese audio with Spanish subtitles when available. Use a public ANIME1V_API URL for Vercel/online mode, or http://localhost:3001 for local PC mode. Providers: AnimeAV1, TioAnime, MonosChinos, AnimeFLV, JKAnime."
-    },
-    {
-      "id": "jimov-tioanime",
-      "name": "JIMOV TioAnime (JP + Spanish Subs)",
-      "enabled": true,
-      "type": "online-addon",
-      "endpoint": "/api/jimov/tioanime/catalog?limit=400",
-      "episodeEndpoint": "/api/jimov/tioanime/info",
-      "healthEndpoint": "/api/jimov/tioanime/health",
-      "pageSize": 200,
-      "paginated": false,
-      "description": "JIMOV open-source TioAnime connector. Uses Japanese audio with Spanish subtitles when available. Direct file_url plays in the main player; embed servers stay in the embedded player."
+      "description": "Anime1v-compatible proxy for Japanese audio with Spanish subtitles when available. Use a public ANIME1V_API URL for Vercel/online mode, or http://localhost:3001 for local PC mode."
     },
     {
       "id": "rapidapi-anime-streaming",
       "name": "RapidAPI Anime Streaming (JP + Spanish Subs)",
-      "enabled": true,
+      "enabled": false,
       "type": "online-addon",
       "endpoint": "/api/rapid-anime/catalog?mode=recent&limit=300&page=1",
       "episodeEndpoint": "/api/rapid-anime/info",
@@ -70,7 +61,7 @@
       "healthEndpoint": "/api/rapid-anime/health",
       "pageSize": 100,
       "paginated": true,
-      "description": "RapidAPI Anime Streaming source for direct HLS/M3U8 streams. AnimeTV prefers Japanese audio and Spanish subtitles; if only English subtitle files are returned, the player can use Spanish translation mode."
+      "description": "RapidAPI Anime Streaming source for direct HLS/M3U8 streams. ZenkaiTV prefers Japanese audio and Spanish subtitles; if only English subtitle files are returned, the player can use Spanish translation mode."
     }
   ]
 }

@@ -175,9 +175,9 @@ button {
   gap: 0.75rem;
   color: #ffffff;
   background:
-    radial-gradient(circle at 50% 40%, rgba(138, 92, 255, 0.18), transparent 17rem),
-    radial-gradient(circle at 52% 55%, rgba(0, 210, 255, 0.13), transparent 22rem),
-    linear-gradient(180deg, rgba(8, 10, 19, 0.98), rgba(8, 10, 19, 0.94));
+    radial-gradient(circle at 50% 42%, rgba(59, 130, 246, 0.2), transparent 18rem),
+    radial-gradient(circle at 52% 58%, rgba(37, 99, 235, 0.14), transparent 22rem),
+    linear-gradient(180deg, #0D1B2A, #081320 96%);
   transition: opacity 180ms ease, visibility 180ms ease;
 }
 
@@ -188,9 +188,9 @@ button {
   margin-top: 0.45rem;
   border-radius: 999rem;
   background:
-    linear-gradient(90deg, rgba(138, 92, 255, 0), rgba(138, 92, 255, 0.9), rgba(0, 210, 255, 0.9), rgba(0, 210, 255, 0));
+    linear-gradient(90deg, rgba(59, 130, 246, 0), rgba(92, 155, 255, 0.95), rgba(59, 130, 246, 0.95), rgba(59, 130, 246, 0));
   background-size: 180% 100%;
-  box-shadow: 0 0 1.3rem rgba(0, 210, 255, 0.22);
+  box-shadow: 0 0 1.3rem rgba(59, 130, 246, 0.28);
   animation: loader-fill 1.15s ease-in-out infinite;
 }
 
@@ -200,49 +200,61 @@ button {
   pointer-events: none;
 }
 
+/* ── ZenkaiTV app loader ──────────────────────────────────────────────────── */
 .loader-mark {
   position: relative;
   display: grid;
   place-items: center;
-  width: 4.8rem;
-  height: 4.8rem;
-  border-radius: 1.25rem;
-  background:
-    linear-gradient(135deg, rgba(138, 92, 255, 0.78), rgba(0, 210, 255, 0.78)),
-    rgba(17, 16, 38, 0.7);
-  box-shadow: 0 1.2rem 2.4rem rgba(0, 0, 0, 0.34), 0 0 2rem rgba(0, 210, 255, 0.14);
-  animation: loader-breathe 1.8s ease-in-out infinite;
+  width: 5.6rem;
+  height: 5.6rem;
+  border-radius: 1.6rem;
+  background: #0D1B2A;
+  box-shadow:
+    0 1.3rem 2.8rem rgba(0, 0, 0, 0.42),
+    0 0 2.4rem rgba(59, 130, 246, 0.3),
+    inset 0 0 0 0.08rem rgba(92, 155, 255, 0.22);
+  overflow: hidden;
+  animation: loader-breathe 2.4s ease-in-out infinite;
 }
 
+/* rotating loading ring */
 .loader-mark::before {
   content: "";
   position: absolute;
-  inset: -0.32rem;
-  border-radius: 1.55rem;
-  border: 0.12rem solid rgba(255, 255, 255, 0.12);
-  border-top-color: rgba(0, 210, 255, 0.78);
-  border-right-color: rgba(138, 92, 255, 0.72);
-  animation: loader-spin 1.25s linear infinite;
+  inset: -0.42rem;
+  border-radius: 2rem;
+  border: 0.17rem solid rgba(92, 155, 255, 0.14);
+  border-top-color: #3B82F6;
+  border-right-color: rgba(59, 130, 246, 0.5);
+  animation: loader-spin 1.05s linear infinite;
 }
 
-.loader-screen {
+/* light sweep across the logo */
+.loader-mark::after {
+  content: "";
   position: absolute;
-  width: 2.72rem;
-  height: 2rem;
-  border: 0.16rem solid rgba(255, 255, 255, 0.9);
-  border-radius: 0.28rem;
-  background: rgba(6, 8, 18, 0.56);
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  background: linear-gradient(115deg, transparent 40%, rgba(180, 210, 255, 0.42) 50%, transparent 60%);
+  transform: translateX(-130%);
+  animation: logo-shimmer 3.4s ease-in-out infinite;
+  pointer-events: none;
 }
 
-.loader-mark span:last-child {
+.loader-logo {
   position: relative;
-  width: 0;
-  height: 0;
-  margin-left: 0.22rem;
-  border-top: 0.46rem solid transparent;
-  border-bottom: 0.46rem solid transparent;
-  border-left: 0.7rem solid #83ffdf;
-  filter: drop-shadow(0 0.4rem 0.8rem rgba(0, 0, 0, 0.28));
+  z-index: 1;
+  width: 72%;
+  height: 72%;
+  object-fit: contain;
+  filter: drop-shadow(0 0 0.7rem rgba(59, 130, 246, 0.42));
+  animation: loader-logo-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes loader-logo-pulse {
+  0%, 100% { transform: scale(0.96); }
+  50%      { transform: scale(1.05); }
 }
 
 .app-loader strong {
@@ -277,7 +289,7 @@ button {
   padding: 0 0 0 5.9rem;
   background:
     linear-gradient(180deg, rgba(8, 10, 19, 0) 0%, rgba(8, 10, 19, 0.5) 66%, #050710 100%);
-  transition: padding-left 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: padding-left 360ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .topbar {
@@ -298,7 +310,7 @@ button {
   box-shadow: none;
   backdrop-filter: blur(14px) saturate(1.08);
   animation: topbar-enter 520ms ease both;
-  transition: width 260ms cubic-bezier(0.2, 0.8, 0.2, 1), padding 260ms cubic-bezier(0.2, 0.8, 0.2, 1), background 260ms ease;
+  transition: width 360ms cubic-bezier(0.22, 1, 0.36, 1), padding 360ms cubic-bezier(0.22, 1, 0.36, 1), background 260ms ease;
 }
 
 .brand {
@@ -314,71 +326,176 @@ button {
   position: relative;
   display: grid;
   place-items: center;
-  width: 3.85rem;
-  height: 3.85rem;
-  border-radius: 1.08rem;
-  background: linear-gradient(135deg, #8a5cff, #00d2ff 52%, #ff4fd8);
-  box-shadow: 0 0.9rem 1.7rem rgba(64, 223, 194, 0.18);
+  width: 4.1rem;
+  height: 4.1rem;
+  border-radius: 1.35rem;
+  background: #0D1B2A;
+  box-shadow:
+    0 1rem 1.8rem rgba(59, 130, 246, 0.22),
+    0 0 1.1rem rgba(59, 130, 246, 0.16),
+    inset 0 0 0 0.08rem rgba(92, 155, 255, 0.22);
+  overflow: hidden;
+  transition: transform 180ms ease, box-shadow 180ms ease,
+              width 360ms cubic-bezier(0.22, 1, 0.36, 1), height 360ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: logo-breathe 3.6s ease-in-out infinite;
 }
 
 .brand-mark::before {
   content: "";
   position: absolute;
-  inset: 0.35rem;
-  border-radius: 0.78rem;
-  background: #111026;
+  inset: -24%;
+  z-index: 0;
+  background: radial-gradient(circle at 50% 50%, rgba(59, 130, 246, 0.55), rgba(37, 99, 235, 0.32) 55%, transparent 72%);
+  opacity: 0.5;
+  filter: blur(0.5rem);
+  animation: logo-breathe-halo 3.6s ease-in-out infinite;
 }
 
-.brand-screen {
-  position: relative;
+/* Faint light sweep that passes over the icon */
+.brand-mark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
   z-index: 2;
-  width: 2.55rem;
-  height: 1.85rem;
-  border: 0.18rem solid #ffffff;
-  border-radius: 0.35rem;
+  border-radius: inherit;
+  background: linear-gradient(115deg, transparent 38%, rgba(180, 210, 255, 0.35) 50%, transparent 62%);
+  transform: translateX(-130%);
+  animation: logo-shimmer 6s ease-in-out infinite;
+  pointer-events: none;
 }
+
+.brand-logo {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+  filter: drop-shadow(0 0 0.7rem rgba(59, 130, 246, 0.3));
+}
+
+@keyframes logo-breathe {
+  0%, 100% {
+    box-shadow:
+      0 1rem 1.8rem rgba(59, 130, 246, 0.20),
+      0 0 1rem rgba(59, 130, 246, 0.14),
+      inset 0 0 0 0.08rem rgba(92, 155, 255, 0.22);
+  }
+  50% {
+    box-shadow:
+      0 1.1rem 2.1rem rgba(59, 130, 246, 0.34),
+      0 0 1.7rem rgba(59, 130, 246, 0.30),
+      inset 0 0 0 0.08rem rgba(92, 155, 255, 0.34);
+  }
+}
+
+@keyframes logo-breathe-halo {
+  0%, 100% { opacity: 0.4; transform: scale(0.97); }
+  50%      { opacity: 0.7; transform: scale(1.04); }
+}
+
+@keyframes logo-shimmer {
+  0%, 72%, 100% { transform: translateX(-130%); }
+  84%           { transform: translateX(130%); }
+}
+
+/* ── Logo reaction synced with the sidebar collapse/expand ─────────────────── */
+/* When collapsing, the mark dips left then springs back (follows the slide-in). */
+@keyframes logo-react-collapse {
+  0%   { transform: translateX(0) scale(1) rotate(0deg); }
+  38%  { transform: translateX(-0.18rem) scale(0.8) rotate(-12deg); }
+  72%  { transform: translateX(0) scale(1.08) rotate(5deg); }
+  100% { transform: translateX(0) scale(1) rotate(0deg); }
+}
+/* When expanding, it leans out then settles (follows the slide-out). */
+@keyframes logo-react-expand {
+  0%   { transform: scale(0.9) rotate(0deg); }
+  40%  { transform: scale(1.12) rotate(10deg); }
+  72%  { transform: scale(0.97) rotate(-3deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+body.is-collapsing .brand-logo {
+  animation: logo-react-collapse 600ms cubic-bezier(0.34, 1.4, 0.5, 1);
+}
+body.is-expanding .brand-logo {
+  animation: logo-react-expand 600ms cubic-bezier(0.34, 1.4, 0.5, 1);
+}
+/* Flare the surrounding glow during the toggle so the motion feels integrated. */
+body.is-toggling .brand-mark::before {
+  animation: logo-toggle-flare 600ms ease-out;
+}
+@keyframes logo-toggle-flare {
+  0%   { opacity: 0.45; transform: scale(1); }
+  40%  { opacity: 0.95; transform: scale(1.18); }
+  100% { opacity: 0.45; transform: scale(1); }
+}
+
+/* ── Coordinated sidebar open/close: nav items ripple + icons pulse ────────── */
+@keyframes nav-item-collapse {
+  0%   { opacity: 1; transform: translateX(0); }
+  45%  { opacity: 0.55; transform: translateX(-0.32rem) scale(0.95); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+@keyframes nav-item-expand {
+  0%   { opacity: 0.35; transform: translateX(-0.55rem); }
+  60%  { opacity: 1; transform: translateX(0.12rem); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+@keyframes nav-icon-pulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.2); }
+}
+body.is-collapsing .main-nav .nav-link { animation: nav-item-collapse 440ms cubic-bezier(0.34, 1.2, 0.5, 1) both; }
+body.is-expanding  .main-nav .nav-link { animation: nav-item-expand 480ms cubic-bezier(0.34, 1.3, 0.5, 1) both; }
+/* Stagger so the items ripple in sequence (top → bottom) */
+body.is-toggling .main-nav .nav-link:nth-child(1) { animation-delay: 0ms; }
+body.is-toggling .main-nav .nav-link:nth-child(2) { animation-delay: 35ms; }
+body.is-toggling .main-nav .nav-link:nth-child(3) { animation-delay: 70ms; }
+body.is-toggling .main-nav .nav-link:nth-child(4) { animation-delay: 105ms; }
+body.is-toggling .main-nav .nav-link:nth-child(5) { animation-delay: 140ms; }
+body.is-toggling .main-nav .nav-link:nth-child(6) { animation-delay: 175ms; }
+body.is-toggling .main-nav .nav-link span { animation: nav-icon-pulse 440ms cubic-bezier(0.34, 1.3, 0.5, 1); }
 
 .brand-screen::before {
   content: "";
   position: absolute;
-  left: 0.64rem;
-  top: 0.42rem;
-  width: 0;
-  height: 0;
-  border-top: 0.38rem solid transparent;
-  border-bottom: 0.38rem solid transparent;
-  border-left: 0.64rem solid #40dfc2;
+  display: none;
 }
 
 .brand-screen::after {
   content: "";
   position: absolute;
-  left: 0.55rem;
-  right: 0.55rem;
-  bottom: -0.55rem;
-  height: 0.18rem;
-  border-radius: 2rem;
-  background: #ffffff;
+  display: none;
 }
 
 .brand-spark {
   position: absolute;
   z-index: 2;
-  width: 0.38rem;
-  height: 0.38rem;
+  top: 1.48rem;
+  width: 0.4rem;
+  height: 0.4rem;
   border-radius: 50%;
-  background: #f2bb46;
+  background: #83ffdf;
+  box-shadow: 0 0 0.65rem rgba(131, 255, 223, 0.72);
 }
 
 .brand-spark-one {
-  right: 0.6rem;
-  top: 0.65rem;
+  right: 1.23rem;
 }
 
 .brand-spark-two {
-  left: 0.65rem;
-  bottom: 0.65rem;
-  background: #ef5bb8;
+  left: 1.23rem;
+  background: #ff7adf;
+  box-shadow: 0 0 0.65rem rgba(255, 122, 223, 0.72);
+}
+
+.brand:is(:hover, :focus-visible, .is-tv-focused) .brand-mark {
+  transform: translateY(-0.06rem) scale(1.03);
+  box-shadow:
+    0 1.15rem 2rem rgba(0, 210, 255, 0.23),
+    0 0 1.35rem rgba(255, 79, 216, 0.22),
+    inset 0 0 0 0.08rem rgba(255, 255, 255, 0.25);
 }
 
 .brand-copy {
@@ -443,12 +560,24 @@ button {
   flex-direction: column;
   font-size: 0.64rem;
   line-height: 1;
-  transition: min-height 220ms ease, font-size 220ms ease, background 180ms ease, color 180ms ease, box-shadow 180ms ease;
+  transition:
+    min-height 360ms cubic-bezier(0.22, 1, 0.36, 1),
+    font-size 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    letter-spacing 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 180ms ease, color 220ms ease, box-shadow 180ms ease;
 }
+
+/* Staggered wave: labels collapse/expand in sequence for a fluid feel */
+.main-nav .nav-link:nth-child(1) { transition-delay: 0ms; }
+.main-nav .nav-link:nth-child(2) { transition-delay: 24ms; }
+.main-nav .nav-link:nth-child(3) { transition-delay: 48ms; }
+.main-nav .nav-link:nth-child(4) { transition-delay: 72ms; }
+.main-nav .nav-link:nth-child(5) { transition-delay: 96ms; }
+.main-nav .nav-link:nth-child(6) { transition-delay: 120ms; }
 
 .nav-link span {
   font-size: 1.42rem;
-  transition: font-size 220ms ease, transform 220ms ease, color 180ms ease, filter 180ms ease;
+  transition: font-size 360ms cubic-bezier(0.22, 1, 0.36, 1), transform 360ms cubic-bezier(0.34, 1.3, 0.5, 1), color 180ms ease, filter 180ms ease;
 }
 
 .nav-link[data-route="home"] {
@@ -524,34 +653,39 @@ button {
   box-shadow: inset 0 0 0 0.08rem rgba(255, 255, 255, 0.035);
 }
 
+/* Compact (collapsed) = narrow icon rail. The content + footer slide WITH the
+   rail (push-drawer) on a unified easing, so opening/closing feels integrated.
+   Default state is compact; expanding widens the rail and pushes content right. */
 body.sidebar-collapsed .app-shell {
-  padding-left: 4.55rem;
+  padding-left: 4.2rem;
 }
 
 body.sidebar-collapsed .topbar {
-  width: 4.55rem;
-  padding-left: 0.45rem;
-  padding-right: 0.45rem;
+  width: 4.2rem;
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
   background:
-    linear-gradient(90deg, rgba(8, 10, 19, 0.38), rgba(8, 10, 19, 0.12) 76%, transparent);
+    linear-gradient(90deg, rgba(8, 10, 19, 0.42), rgba(8, 10, 19, 0.12) 76%, transparent);
 }
 
 body.sidebar-collapsed .bottom-bar {
-  margin-left: -4.55rem;
-  padding-left: calc(4.55rem + clamp(1.4rem, 3.2vw, 3.4rem));
+  margin-left: -4.2rem;
+  padding-left: calc(4.2rem + clamp(1.4rem, 3.2vw, 3.4rem));
 }
 
 body.sidebar-collapsed .bottom-bar::before {
-  left: 4.55rem;
+  left: 4.2rem;
 }
 
 body.sidebar-collapsed .brand-mark {
-  width: 3.35rem;
-  height: 3.35rem;
+  width: 3.1rem;
+  height: 3.1rem;
 }
 
-body.sidebar-collapsed .brand-screen {
-  transform: scale(0.84);
+/* The mark itself resizes (width/height), so the logo just fills it — no static
+   scale here, which keeps the toggle reaction animation settling cleanly. */
+body.sidebar-collapsed .brand-logo {
+  transform: scale(1);
 }
 
 body.sidebar-collapsed .main-nav {
@@ -569,8 +703,9 @@ body.sidebar-collapsed .nav-link span {
   transform: translateY(0);
 }
 
+/* Chevron rotates 180° when collapsed — smooth via the span's transform transition */
 body.sidebar-collapsed .sidebar-toggle span {
-  transform: rotate(0deg);
+  transform: rotate(180deg);
 }
 
 .search-box input {
@@ -615,18 +750,19 @@ main {
   min-height: clamp(7.3rem, 8.8vh, 8.6rem);
   margin: 0 0 calc(-1 * var(--footer-bleed)) -5.9rem;
   padding: var(--footer-pad-y) clamp(1.4rem, 3.2vw, 3.4rem) calc(var(--footer-pad-y) + env(safe-area-inset-bottom)) calc(5.9rem + clamp(1.4rem, 3.2vw, 3.4rem));
-  border-top: 0.08rem solid rgba(178, 186, 255, 0.1);
-  color: rgba(246, 243, 255, 0.84);
+  border-top: 0.08rem solid rgba(92, 155, 255, 0.14);
+  color: rgba(228, 238, 255, 0.84);
   background:
-    radial-gradient(circle at 42% 0%, rgba(0, 210, 255, 0.16), transparent 24rem),
-    radial-gradient(circle at 62% 110%, rgba(181, 122, 255, 0.14), transparent 23rem),
-    linear-gradient(90deg, rgba(8, 10, 19, 0.96) 0 5.9rem, rgba(8, 10, 19, 0.9) 5.9rem, rgba(8, 10, 19, 0.82) 100%),
-    linear-gradient(180deg, rgba(13, 17, 31, 0.92), #050710 92%, #050710);
+    radial-gradient(circle at 42% 0%, rgba(59, 130, 246, 0.18), transparent 24rem),
+    radial-gradient(circle at 62% 110%, rgba(37, 99, 235, 0.14), transparent 23rem),
+    linear-gradient(90deg, rgba(9, 16, 28, 0.96) 0 5.9rem, rgba(9, 16, 28, 0.9) 5.9rem, rgba(9, 16, 28, 0.82) 100%),
+    linear-gradient(180deg, rgba(13, 22, 38, 0.94), #070E18 92%, #070E18);
   box-shadow:
     inset 0 0.08rem 0 rgba(255, 255, 255, 0.055),
     inset 0 1rem 2.5rem rgba(0, 210, 255, 0.025),
     0 -1.2rem 3rem rgba(0, 0, 0, 0.14);
   overflow: hidden;
+  transition: margin 360ms cubic-bezier(0.22, 1, 0.36, 1), padding 360ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .bottom-bar::before {
@@ -636,7 +772,7 @@ main {
   right: 0;
   top: 0;
   height: 0.12rem;
-  background: linear-gradient(90deg, transparent, rgba(0, 210, 255, 0.24), rgba(181, 122, 255, 0.18), transparent);
+  background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.45), rgba(92, 155, 255, 0.3), transparent);
   background-size: 180% 100%;
   animation: footer-line-flow 7s ease-in-out infinite;
   pointer-events: none;
@@ -663,48 +799,57 @@ main {
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  gap: 0.48rem;
+  gap: 0.62rem;
   width: 100%;
   text-align: center;
 }
 
-.footer-logo {
-  position: relative;
+.footer-wordmark {
+  display: block;
+  width: min(22rem, 56vw);
+  max-height: clamp(2.6rem, 4.4vw, 3.6rem);
+  object-fit: contain;
+  filter:
+    drop-shadow(0 0.6rem 1.4rem rgba(0, 0, 0, 0.3))
+    drop-shadow(0 0 1.1rem rgba(59, 130, 246, 0.22));
+  transition: transform 220ms ease, filter 220ms ease;
+}
+
+.footer-wordmark:hover {
+  transform: translateY(-0.1rem);
+  filter:
+    drop-shadow(0 0.8rem 1.7rem rgba(0, 0, 0, 0.34))
+    drop-shadow(0 0 1.5rem rgba(59, 130, 246, 0.4));
+}
+
+.footer-tagline {
+  margin: 0;
+  color: rgba(196, 214, 245, 0.66);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.footer-meta {
   display: inline-flex;
   align-items: center;
-  gap: 0.58rem;
-  color: rgba(245, 247, 255, 0.96);
-  font-size: clamp(2rem, 2.75vw, 3rem);
-  font-weight: 950;
-  line-height: 1;
-  letter-spacing: 0;
-  text-shadow:
-    0 0 1.8rem rgba(0, 210, 255, 0.16),
-    0 0.6rem 1.4rem rgba(0, 0, 0, 0.34);
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
-.footer-logo::before {
-  content: "";
-  width: 0.82rem;
-  height: 0.82rem;
+.footer-dot {
+  width: 0.28rem;
+  height: 0.28rem;
   border-radius: 999rem;
-  background: linear-gradient(135deg, #22d7ff, #f2bb46);
-  box-shadow:
-    0 0 0 0.42rem rgba(0, 210, 255, 0.08),
-    0 0 1.2rem rgba(0, 210, 255, 0.32);
-  animation: footer-dot-pulse 2.8s ease-in-out infinite;
+  background: rgba(92, 155, 255, 0.55);
 }
 
-.footer-logo::after {
-  content: "";
-  position: absolute;
-  left: 1.4rem;
-  right: 0;
-  bottom: -0.48rem;
-  height: 0.12rem;
-  border-radius: 999rem;
-  background: linear-gradient(90deg, transparent, rgba(0, 210, 255, 0.65), rgba(242, 187, 70, 0.48), transparent);
-  opacity: 0.72;
+.footer-credit {
+  color: rgba(176, 196, 230, 0.56);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .footer-status {
@@ -713,13 +858,13 @@ main {
   justify-content: center;
   min-height: 1.95rem;
   padding: 0 0.95rem;
-  border: 0.08rem solid rgba(0, 210, 255, 0.16);
+  border: 0.08rem solid rgba(59, 130, 246, 0.28);
   border-radius: 999rem;
-  color: rgba(220, 224, 255, 0.74);
+  color: rgba(214, 228, 255, 0.82);
   background:
-    linear-gradient(135deg, rgba(0, 210, 255, 0.07), rgba(181, 122, 255, 0.04)),
-    rgba(17, 16, 38, 0.36);
-  font-size: 0.78rem;
+    linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(37, 99, 235, 0.05)),
+    rgba(13, 22, 38, 0.42);
+  font-size: 0.74rem;
   font-weight: 900;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -750,6 +895,11 @@ main {
   height: 8rem;
   pointer-events: none;
   background: linear-gradient(180deg, transparent, rgba(8, 10, 19, 0.74) 58%, var(--bg));
+}
+
+.hero:has(.carousel-stage.is-loading) {
+  min-height: clamp(19rem, 35vh, 25rem);
+  margin-bottom: -2.4rem;
 }
 
 .eyebrow {
@@ -1150,7 +1300,7 @@ body:not([data-route="home"]) .section-heading h2 {
 }
 
 .poster-grid {
-  --rail-gap: clamp(0.85rem, 1.4vw, 1.35rem);
+  --rail-gap: clamp(0.65rem, 1vw, 0.95rem);
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: calc((100% - (6 * var(--rail-gap))) / 7);
@@ -1164,6 +1314,18 @@ body:not([data-route="home"]) .section-heading h2 {
   scroll-snap-type: x mandatory;
   scroll-padding-inline: 0;
   scrollbar-width: none;
+}
+
+.poster-grid.is-skeleton-loading {
+  grid-auto-flow: column;
+  grid-template-rows: repeat(2, auto);
+  grid-auto-columns: calc((100% - (6 * var(--rail-gap))) / 7);
+  overflow: hidden;
+  padding-bottom: 0.4rem;
+}
+
+.poster-grid.is-skeleton-loading .show-card > span:not(.thumb-art) {
+  min-height: 2.2rem;
 }
 
 .rail-arrow {
@@ -1358,9 +1520,9 @@ body:not([data-route="home"]) .section-heading h2 {
   min-width: 0;
   margin: 0;
   color: #f9f7ff;
-  font-size: clamp(0.97rem, 1.05vw, 1.08rem);
+  font-size: clamp(0.95rem, 0.9vw, 1.08rem);
   font-weight: 900;
-  line-height: 1.24;
+  line-height: 1.12;
   text-shadow: none;
   overflow-wrap: anywhere;
   word-break: normal;
@@ -1375,8 +1537,8 @@ body:not([data-route="home"]) .section-heading h2 {
   min-width: 0;
   align-items: center;
   color: var(--muted);
-  font-size: 0.85rem;
-  font-weight: 800;
+  font-size: 0.78rem;
+  font-weight: 850;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1455,6 +1617,13 @@ body:not([data-route="home"]) .section-heading h2 {
 .schedule-day-rail {
   display: grid;
   gap: 0.8rem;
+}
+
+.schedule-empty {
+  font-size: 0.78rem;
+  color: rgba(246, 243, 255, 0.3);
+  padding: 0.4rem 0;
+  margin: 0;
 }
 
 .schedule-item {
@@ -1820,9 +1989,10 @@ body:not([data-route="home"]) .section-heading h2 {
 .settings-choice.is-selected,
 .settings-choice:is(:hover, :focus-visible, .is-tv-focused) {
   outline: 0;
-  color: #07111d;
-  background: linear-gradient(135deg, var(--cyan), var(--blue));
-  box-shadow: 0 0.7rem 1.4rem rgba(0, 0, 0, 0.22);
+  color: #ffffff;
+  background: linear-gradient(135deg, #5C9BFF, #2563EB);
+  box-shadow: 0 0.7rem 1.4rem rgba(37, 99, 235, 0.3);
+  transform: translateY(-0.06rem);
 }
 
 .settings-field {
@@ -1835,13 +2005,20 @@ body:not([data-route="home"]) .section-heading h2 {
   max-width: none;
   min-height: 3.05rem;
   padding: 0 2.4rem 0 1rem;
-  border: 0.08rem solid rgba(0, 210, 255, 0.16);
+  border: 0.08rem solid rgba(59, 130, 246, 0.28);
   border-radius: 0.95rem;
   color: var(--text);
   background:
-    linear-gradient(135deg, rgba(0, 210, 255, 0.12), rgba(181, 122, 255, 0.08)),
-    rgba(8, 10, 19, 0.64);
+    linear-gradient(135deg, rgba(59, 130, 246, 0.12), rgba(37, 99, 235, 0.06)),
+    rgba(9, 16, 28, 0.7);
   box-shadow: inset 0 0 0 0.08rem rgba(255, 255, 255, 0.04);
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+
+.settings-field .language-select:focus {
+  outline: 0;
+  border-color: rgba(59, 130, 246, 0.6);
+  box-shadow: 0 0 0 0.16rem rgba(59, 130, 246, 0.16);
 }
 
 .language-select option {
@@ -1891,17 +2068,17 @@ body:not([data-route="home"]) .section-heading h2 {
 }
 
 .settings-grid:has(.settings-rail) {
-  grid-template-columns: minmax(10rem, 14rem) minmax(0, 48rem);
+  grid-template-columns: minmax(10rem, 14rem) minmax(0, 54rem);
   align-items: start;
-  max-width: 80rem;
+  max-width: 86rem;
   min-height: min(42rem, 74vh);
   padding: 0;
   overflow: hidden;
-  border-color: rgba(255, 255, 255, 0.07);
+  border-color: rgba(92, 155, 255, 0.1);
   border-radius: 1.2rem;
   background:
-    radial-gradient(circle at 88% 0%, rgba(138, 92, 255, 0.16), transparent 24rem),
-    linear-gradient(135deg, rgba(12, 15, 29, 0.96), rgba(16, 14, 40, 0.9));
+    radial-gradient(circle at 88% 0%, rgba(59, 130, 246, 0.18), transparent 24rem),
+    linear-gradient(135deg, rgba(11, 18, 30, 0.97), rgba(13, 22, 38, 0.92));
 }
 
 .settings-rail {
@@ -1919,6 +2096,9 @@ body:not([data-route="home"]) .section-heading h2 {
 }
 
 .settings-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   min-height: 3.3rem;
   padding: 0 1rem;
   border: 0.08rem solid transparent;
@@ -1929,18 +2109,25 @@ body:not([data-route="home"]) .section-heading h2 {
   font-weight: 900;
   text-align: left;
   cursor: pointer;
+  transition: color 150ms, background 150ms, border-color 150ms, transform 200ms cubic-bezier(0.34, 1.3, 0.5, 1), box-shadow 150ms;
 }
 
-.settings-rail-item:is(:hover, :focus-visible, .is-tv-focused, .is-selected) {
+.settings-rail-item:is(:hover, :focus-visible, .is-tv-focused) {
   outline: 0;
   color: #ffffff;
-  border-color: rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(92, 155, 255, 0.28);
+  background: rgba(59, 130, 246, 0.1);
   box-shadow: inset 0 0 0 0.04rem rgba(255, 255, 255, 0.04);
+  transform: translateX(0.18rem);
 }
 
 .settings-rail-item.is-selected {
-  border-color: rgba(255, 255, 255, 0.52);
+  color: #ffffff;
+  border-color: rgba(59, 130, 246, 0.5);
+  background:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.26), rgba(37, 99, 235, 0.2)),
+    rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 0.04rem rgba(92, 155, 255, 0.22), 0 0.5rem 1.2rem rgba(37, 99, 235, 0.16);
 }
 
 .settings-version {
@@ -1955,8 +2142,10 @@ body:not([data-route="home"]) .section-heading h2 {
 
 .settings-console {
   display: grid;
-  gap: 1.2rem;
-  max-height: min(74vh, 48rem);
+  align-content: start;
+  gap: 1rem;
+  height: min(74vh, 48rem);
+  max-height: none;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
@@ -1967,13 +2156,18 @@ body:not([data-route="home"]) .section-heading h2 {
 .settings-panel {
   display: grid;
   gap: 0.65rem;
+  min-height: min(64vh, 40rem);
+  align-content: start;
   padding: 0.95rem 0 1.35rem;
-  border-bottom: 0.08rem solid rgba(255, 255, 255, 0.07);
   scroll-margin-top: 1rem;
 }
 
-.settings-panel:last-child {
-  border-bottom: 0;
+.settings-panel[hidden] {
+  display: none;
+}
+
+.settings-panel.is-active {
+  animation: settingsPanelIn 180ms ease both;
 }
 
 .settings-panel-head {
@@ -1981,7 +2175,9 @@ body:not([data-route="home"]) .section-heading h2 {
   grid-template-columns: 2.3rem minmax(0, 1fr);
   align-items: center;
   gap: 0.8rem;
-  margin-bottom: 0.3rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.8rem;
+  border-bottom: 0.08rem solid rgba(255, 255, 255, 0.07);
 }
 
 .settings-panel-head h3 {
@@ -1998,14 +2194,33 @@ body:not([data-route="home"]) .section-heading h2 {
   font-weight: 750;
 }
 
+@keyframes settingsPanelIn {
+  from {
+    opacity: 0;
+    transform: translateY(0.35rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .settings-line {
   display: grid;
   grid-template-columns: minmax(12rem, 1fr) minmax(10rem, auto);
   align-items: center;
   gap: 0.9rem;
   min-height: 3.4rem;
+  padding: 0 0.85rem;
+  margin: 0 -0.85rem;
+  border-radius: 0.85rem;
   color: rgba(246, 243, 255, 0.86);
   font-weight: 850;
+  transition: background 180ms ease;
+}
+
+.settings-line:hover {
+  background: rgba(92, 155, 255, 0.06);
 }
 
 .settings-line > span {
@@ -2029,8 +2244,15 @@ body:not([data-route="home"]) .section-heading h2 {
   height: 1.72rem;
   border: 0;
   border-radius: 999rem;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 0.06rem rgba(255, 255, 255, 0.06);
   cursor: pointer;
+  transition: background 240ms ease, box-shadow 240ms ease;
+}
+
+.settings-switch:is(:hover, :focus-visible, .is-tv-focused) {
+  outline: 0;
+  box-shadow: inset 0 0 0 0.06rem rgba(92, 155, 255, 0.3);
 }
 
 .settings-switch b {
@@ -2041,11 +2263,13 @@ body:not([data-route="home"]) .section-heading h2 {
   height: 1.22rem;
   border-radius: 50%;
   background: #ffffff;
-  transition: transform 180ms ease;
+  box-shadow: 0 0.2rem 0.5rem rgba(0, 0, 0, 0.35);
+  transition: transform 260ms cubic-bezier(0.34, 1.4, 0.5, 1);
 }
 
 .settings-switch.is-on {
-  background: #22cf83;
+  background: linear-gradient(135deg, #5C9BFF, #2563EB);
+  box-shadow: inset 0 0 0 0.06rem rgba(92, 155, 255, 0.4), 0 0 0.9rem rgba(59, 130, 246, 0.35);
 }
 
 .settings-switch.is-on b {
@@ -2088,6 +2312,220 @@ body:not([data-route="home"]) .section-heading h2 {
   font: inherit;
   font-size: 0.78rem;
   font-weight: 950;
+}
+
+/* ── Settings Rail Icon ──────────────────────────────────────────────── */
+.rail-icon {
+  display: inline-block;
+  width: 1.4em;
+  opacity: 0.7;
+}
+
+.settings-rail-item.is-selected .rail-icon {
+  opacity: 1;
+}
+
+/* ── Settings Group Label & Divider ──────────────────────────────────── */
+.settings-group-label {
+  margin: 0.65rem 0 0.1rem;
+  color: rgba(92, 155, 255, 0.85);
+  font-size: 0.7rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.settings-divider {
+  height: 0.08rem;
+  margin: 0.5rem 0 0.2rem;
+  border: none;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.settings-line > span small {
+  display: block;
+  margin-top: 0.18rem;
+  color: rgba(246, 243, 255, 0.42);
+  font-size: 0.76rem;
+  font-weight: 750;
+}
+
+/* ── Volume Slider ────────────────────────────────────────────────────── */
+.settings-volume-line.settings-line {
+  display: grid;
+  gap: 0.55rem;
+  min-height: unset;
+  padding: 0.6rem 0;
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+.settings-volume-label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.settings-volume-label > span {
+  color: rgba(246, 243, 255, 0.78);
+  font-weight: 850;
+}
+
+.settings-volume-value {
+  margin-left: auto;
+  color: rgba(0, 210, 255, 0.9);
+  font-size: 0.82rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  transition: color 120ms;
+}
+
+.settings-volume-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.settings-volume-icon {
+  font-size: 1rem;
+  opacity: 0.65;
+  flex-shrink: 0;
+}
+
+.settings-volume-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 0.38rem;
+  border-radius: 999rem;
+  outline: none;
+  cursor: pointer;
+  background: linear-gradient(
+    to right,
+    var(--cyan) 0%,
+    var(--cyan) var(--vol-pct, 10%),
+    rgba(255, 255, 255, 0.12) var(--vol-pct, 10%),
+    rgba(255, 255, 255, 0.12) 100%
+  );
+  transition: opacity 160ms;
+}
+
+.settings-volume-slider:focus-visible {
+  box-shadow: 0 0 0 0.15rem rgba(0, 210, 255, 0.5);
+}
+
+.settings-volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0.1rem 0.6rem rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: transform 160ms, background 160ms;
+}
+
+.settings-volume-slider::-moz-range-thumb {
+  width: 1.15rem;
+  height: 1.15rem;
+  border: none;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0.1rem 0.6rem rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+.settings-volume-slider:hover::-webkit-slider-thumb,
+.settings-volume-slider:focus::-webkit-slider-thumb {
+  background: var(--cyan);
+  transform: scale(1.2);
+}
+
+.settings-volume-slider:hover::-moz-range-thumb,
+.settings-volume-slider:focus::-moz-range-thumb {
+  background: var(--cyan);
+  transform: scale(1.2);
+}
+
+/* ── Settings Sources Tab ─────────────────────────────────────────────── */
+.settings-source-summary {
+  margin: 0 0 0.4rem;
+  padding: 0.55rem 0.8rem;
+  border-radius: 0.65rem;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(246, 243, 255, 0.58);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.settings-sources-grid {
+  display: grid;
+  gap: 0.7rem;
+}
+
+/* ── Legal Tab ────────────────────────────────────────────────────────── */
+.settings-legal-tabs {
+  display: flex;
+  gap: 0.45rem;
+  padding: 0.3rem;
+  border: 0.08rem solid rgba(255, 255, 255, 0.08);
+  border-radius: 999rem;
+  background: rgba(2, 4, 12, 0.38);
+  width: fit-content;
+  margin-bottom: 0.6rem;
+}
+
+.settings-legal-content {
+  max-height: 28rem;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+  padding-right: 0.5rem;
+}
+
+.settings-legal-section {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.settings-legal-section h4 {
+  margin: 0.6rem 0 0.1rem;
+  color: rgba(0, 210, 255, 0.85);
+  font-size: 0.78rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-legal-section h4:first-child {
+  margin-top: 0;
+}
+
+.settings-legal-section p {
+  margin: 0;
+  color: rgba(246, 243, 255, 0.64);
+  font-size: 0.84rem;
+  font-weight: 750;
+  line-height: 1.65;
+}
+
+.settings-legal-section ul {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: rgba(246, 243, 255, 0.6);
+  font-size: 0.84rem;
+  font-weight: 750;
+  line-height: 1.7;
+}
+
+.settings-legal-section a {
+  color: rgba(0, 210, 255, 0.9);
+  text-decoration: none;
+}
+
+.settings-legal-section a:hover {
+  text-decoration: underline;
 }
 
 body[data-theme="light"] .settings-grid {
@@ -2246,12 +2684,21 @@ body.soft-focus .is-tv-focused {
   position: fixed;
   inset: 0;
   z-index: 50;
-  display: grid;
-  place-items: center;
-  padding: 2rem;
+  /* always center the panel both axes */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(0.75rem, 2vw, 2rem);
   background: rgba(6, 5, 16, 0.82);
   backdrop-filter: blur(12px);
   animation: overlay-fade 200ms ease both;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.watch-overlay::-webkit-scrollbar {
+  display: none;
 }
 
 .watch-overlay[hidden] {
@@ -2261,30 +2708,47 @@ body.soft-focus .is-tv-focused {
 .watch-panel {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(26rem, 0.8fr) minmax(28rem, 0.9fr);
-  gap: 1.5rem;
-  width: min(104rem, 96vw);
+  grid-template-columns: minmax(24rem, 0.8fr) minmax(26rem, 0.9fr);
+  align-items: stretch;
+  gap: 1.2rem;
+  width: min(102rem, 100%);
+  /* Explicit height so grid items can use min-height: 0 and scroll correctly */
+  height: min(calc(100dvh - clamp(1.5rem, 4vw, 4rem)), 54rem);
   padding: 1rem;
   border: 0.08rem solid var(--line);
   border-radius: 1.15rem;
   background: #101321;
   box-shadow: var(--shadow);
+  overflow: hidden;
   animation: modal-rise 260ms ease both;
+  margin: auto;
 }
 
 .close-button {
   position: absolute;
-  right: 0.8rem;
-  top: 0.8rem;
-  z-index: 3;
+  top: 1rem;
+  right: 1rem;
+  z-index: 60;
+  flex-shrink: 0;
   width: 3rem;
   height: 3rem;
-  border-radius: 50%;
+  border: 0;
+  border-radius: 999rem;
   color: #ffffff;
-  background: rgba(255, 255, 255, 0.14);
-  font-size: 2rem;
+  background: rgba(56, 58, 72, 0.92);
+  font-size: 1.65rem;
+  font-weight: 850;
   line-height: 1;
   cursor: pointer;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 0.8rem 1.7rem rgba(0, 0, 0, 0.24);
+  transition: transform 160ms ease, background 160ms ease;
+}
+
+.close-button:is(:hover, :focus-visible) {
+  transform: scale(1.04);
+  background: rgba(78, 80, 96, 0.96);
+  outline: 0;
 }
 
 .video-frame {
@@ -2292,7 +2756,7 @@ body.soft-focus .is-tv-focused {
   display: grid;
   place-items: center;
   align-content: center;
-  min-height: 30rem;
+  min-height: 0;
   padding: 2rem;
   border-radius: 0.5rem;
   overflow: hidden;
@@ -2328,11 +2792,88 @@ body.soft-focus .is-tv-focused {
 }
 
 .watch-art,
+.watch-ready-state,
+.source-picker,
 .video-frame p,
 .video-frame video {
   position: relative;
   z-index: 2;
 }
+
+/* Source picker fills the entire video-frame edge-to-edge */
+.video-frame:has(.source-picker) {
+  padding: 0;
+  align-content: stretch;
+  place-items: stretch;
+}
+
+.video-frame .source-picker {
+  height: 100%;
+}
+
+/* ── Rich "ready" state shown before an episode is selected ─────────────── */
+.watch-ready-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  padding: 1.5rem 1rem 0.5rem;
+}
+
+.watch-ready-poster-wrap {
+  width: min(17.5rem, 50%);
+  min-width: 11rem;
+  aspect-ratio: 2 / 3;
+  filter: drop-shadow(0 1.4rem 2.8rem rgba(0, 0, 0, 0.58));
+  animation: watchPosterIn 0.35s ease both;
+}
+
+@keyframes watchPosterIn {
+  from { opacity: 0; transform: translateY(0.6rem) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.watch-ready-cta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.32rem;
+  text-align: center;
+  animation: watchPosterIn 0.42s 0.1s ease both;
+}
+
+.watch-ready-source {
+  display: inline-block;
+  padding: 0.18rem 0.7rem;
+  border-radius: 2rem;
+  background: rgba(59, 130, 246, 0.22);
+  color: rgba(160, 195, 255, 0.95);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.watch-ready-hint {
+  color: rgba(246, 243, 255, 0.62);
+  font-size: 0.84rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.watch-ready-arrow {
+  font-size: 1.3rem;
+  color: rgba(138, 92, 255, 0.65);
+  animation: watchArrowBounce 1.6s ease-in-out infinite;
+  line-height: 1;
+}
+
+@keyframes watchArrowBounce {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(5px); }
+}
+/* ─────────────────────────────────────────────────────────────────────────── */
 
 .watch-art {
   display: grid;
@@ -2446,17 +2987,42 @@ body.soft-focus .is-tv-focused {
 }
 
 .watch-info {
-  max-height: calc(92vh - 2rem);
-  overflow: auto;
+  /* min-height: 0 lets the grid item shrink to the panel's height */
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   min-width: 0;
-  padding: 3.8rem 4.4rem 1rem 0;
+  padding: 1rem 1rem 1.5rem 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.watch-info::-webkit-scrollbar {
+  display: none;
+}
+
+.watch-panel,
+.watch-info,
+.episode-buttons,
+.source-picker-options,
+.detail-tabs {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.watch-panel::-webkit-scrollbar,
+.watch-info::-webkit-scrollbar,
+.episode-buttons::-webkit-scrollbar,
+.source-picker-options::-webkit-scrollbar,
+.detail-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .watch-info h2 {
   max-width: 100%;
   margin: 0 0 0.8rem;
-  font-size: clamp(1.8rem, 2.5vw, 2.7rem);
-  line-height: 1.05;
+  font-size: clamp(1.35rem, 2vw, 2.05rem);
+  line-height: 1.08;
   overflow-wrap: anywhere;
   word-break: normal;
   hyphens: auto;
@@ -2612,6 +3178,47 @@ body.soft-focus .is-tv-focused {
   margin: 0 0 0.5rem;
 }
 
+.anime-metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.2rem, 1fr));
+  gap: 0.45rem;
+  margin: 0.55rem 0 0.65rem;
+}
+
+.anime-metadata-item {
+  display: grid;
+  gap: 0.12rem;
+  min-height: 3.1rem;
+  padding: 0.48rem 0.58rem;
+  border: 0.08rem solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.45rem;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.anime-metadata-label {
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 0.66rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.anime-metadata-value {
+  color: #ffffff;
+  font-size: 0.84rem;
+  font-weight: 850;
+  line-height: 1.18;
+}
+
+.anime-aliases {
+  display: grid;
+  gap: 0.18rem;
+  margin: 0 0 0.65rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.78rem;
+  font-weight: 750;
+  line-height: 1.28;
+}
+
 .season-card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
@@ -2652,6 +3259,26 @@ body.soft-focus .is-tv-focused {
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 800;
+}
+
+.season-format-badge {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.1rem 0.38rem;
+  border-radius: 999rem;
+  background: rgba(138, 92, 255, 0.22);
+  color: rgba(184, 160, 255, 0.9);
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  text-transform: uppercase;
+}
+
+.season-year {
+  margin-left: 0.35rem;
+  color: rgba(246, 243, 255, 0.38);
+  font-size: 0.65rem;
 }
 
 .season-card:is(:hover, :focus-visible, .is-tv-focused, .is-selected) {
@@ -2919,6 +3546,7 @@ body.soft-focus .is-tv-focused {
 .player-server-options {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 0.55rem;
   width: 100%;
   padding: 0.15rem 0.05rem;
@@ -2927,9 +3555,11 @@ body.soft-focus .is-tv-focused {
 .player-source-heading {
   flex: 1 0 100%;
   display: grid;
+  justify-items: center;
   gap: 0.08rem;
   margin-bottom: 0.18rem;
   color: #ffffff;
+  text-align: center;
 }
 
 .player-source-heading strong {
@@ -2951,6 +3581,7 @@ body.soft-focus .is-tv-focused {
     "number"
     "source";
   align-items: center;
+  justify-items: center;
   gap: 0.12rem;
   min-width: 7rem;
   min-height: 4rem;
@@ -2963,6 +3594,7 @@ body.soft-focus .is-tv-focused {
     rgba(40, 35, 72, 0.9);
   box-shadow: inset 0 0 0 0.04rem rgba(255, 255, 255, 0.03);
   cursor: pointer;
+  text-align: center;
   transition: transform 180ms ease, background 180ms ease, border-color 180ms ease, box-shadow 180ms ease, color 180ms ease;
 }
 
@@ -2977,6 +3609,7 @@ body.soft-focus .is-tv-focused {
 
 .player-server-option strong {
   grid-area: number;
+  max-width: 100%;
   overflow: hidden;
   font-size: 0.94rem;
   line-height: 1.1;
@@ -3010,24 +3643,333 @@ body.soft-focus .is-tv-focused {
   color: rgba(255, 255, 255, 0.78);
 }
 
+/* ── Loading hint while addon sources are being fetched ─────────────────── */
+.addon-loading-hint {
+  padding: 1.2rem 1.5rem;
+  color: rgba(246, 243, 255, 0.42);
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  animation: addonLoadingPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes addonLoadingPulse {
+  0%, 100% { opacity: 0.35; }
+  50%       { opacity: 0.8; }
+}
+
+/* Fade-in each addon band as it arrives */
+.addon-band {
+  animation: addonBandIn 0.38s ease both;
+}
+
+@keyframes addonBandIn {
+  from { opacity: 0; transform: translateY(0.5rem); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+/* ── Source picker (shown after ✕ exit button is clicked) ────────────────── */
+.source-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  height: 100%;
+  min-height: 18rem;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  cursor: default;
+  user-select: none;
+}
+
+/* ── Poster hero strip ───────────────────────────────────────────────── */
+.source-picker-hero {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+  flex-shrink: 0;
+  min-height: 10rem;
+  padding: 1.1rem 1.2rem 0.9rem;
+  background: linear-gradient(135deg, rgba(20, 10, 38, 0.85), rgba(10, 14, 28, 0.7));
+  overflow: hidden;
+}
+
+.source-picker-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--watch-bg, none) center / cover no-repeat;
+  opacity: 0.22;
+  filter: blur(18px) saturate(1.4);
+  transform: scale(1.08);
+  pointer-events: none;
+}
+
+.source-picker-art {
+  position: relative;
+  flex-shrink: 0;
+  width: 4.8rem;
+  height: 7rem;
+  border-radius: 0.6rem;
+  object-fit: cover;
+  box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.55);
+}
+
+.source-picker-art-placeholder {
+  background: linear-gradient(135deg, rgba(0, 210, 255, 0.18), rgba(138, 92, 255, 0.14));
+  border: 0.08rem solid rgba(255, 255, 255, 0.1);
+}
+
+.source-picker-hero-text {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
+.source-picker-show-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: #ffffff;
+  font-size: 0.88rem;
+  font-weight: 850;
+  line-height: 1.25;
+}
+
+.source-picker-ep-label {
+  color: rgba(0, 210, 255, 0.85);
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
+/* ── Heading strip ───────────────────────────────────────────────────── */
+.source-picker-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  gap: 0.5rem;
+  padding: 0.7rem 1.2rem 0.5rem;
+  border-bottom: 0.08rem solid rgba(255, 255, 255, 0.07);
+  color: #fff;
+}
+
+.source-picker-heading strong {
+  font-size: 0.9rem;
+  font-weight: 900;
+}
+
+.source-picker-heading span {
+  font-size: 0.72rem;
+  color: rgba(246, 243, 255, 0.46);
+  font-weight: 800;
+}
+
+/* ── Options list ────────────────────────────────────────────────────── */
+.source-picker-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.75rem 1rem;
+  overflow-y: auto;
+  flex: 1;
+  align-content: flex-start;
+}
+
+/* Base option row — shared by all states */
+.source-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.72rem 0.95rem;
+  border-radius: 0.72rem;
+  border: 0.08rem solid rgba(255, 255, 255, 0.08);
+  color: rgba(246, 243, 255, 0.9);
+  background: rgba(255, 255, 255, 0.04);
+  font: inherit;
+  text-align: left;
+  transition: background 160ms, border-color 160ms, box-shadow 160ms, transform 120ms;
+}
+
+/* ── Found: fully playable server ───────────────────────────────────── */
+.source-picker-option-found {
+  border-color: rgba(0, 210, 255, 0.28);
+  background: linear-gradient(130deg, rgba(0, 210, 255, 0.08), rgba(138, 92, 255, 0.1));
+  cursor: pointer;
+}
+
+.source-picker-option-found:is(:hover, :focus-visible, .is-tv-focused) {
+  outline: 0;
+  background: linear-gradient(130deg, rgba(34, 215, 255, 0.88), rgba(138, 92, 255, 0.78));
+  border-color: transparent;
+  color: #06121d;
+  box-shadow: 0 0.4rem 1.2rem rgba(0, 0, 0, 0.3);
+  transform: translateY(-0.05rem);
+}
+
+.source-picker-option-found:is(:hover, :focus-visible, .is-tv-focused) small,
+.source-picker-option-found:is(:hover, :focus-visible, .is-tv-focused) .source-picker-slot-play-icon {
+  color: rgba(6, 18, 29, 0.65);
+}
+
+.source-picker-option-found:is(:hover, :focus-visible, .is-tv-focused) .source-picker-slot-play-badge {
+  background: rgba(6, 18, 29, 0.18);
+  color: #06121d;
+}
+
+/* ── Checking: lookup still in-flight ───────────────────────────────── */
+.source-picker-option-checking {
+  opacity: 0.62;
+  cursor: default;
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+/* ── Unavailable: lookup finished, nothing found ────────────────────── */
+.source-picker-option-unavail {
+  opacity: 0.32;
+  cursor: default;
+  border-color: rgba(255, 255, 255, 0.04);
+}
+
+/* ── Slot icon (left) ────────────────────────────────────────────────── */
+.source-picker-slot-icon {
+  flex-shrink: 0;
+  width: 1.6rem;
+  height: 1.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.source-picker-slot-play-icon {
+  color: rgba(0, 210, 255, 0.9);
+  background: rgba(0, 210, 255, 0.12);
+  font-size: 0.6rem;
+}
+
+.source-picker-slot-off-icon {
+  color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 0.85rem;
+}
+
+.source-picker-slot-checking-icon {
+  background: rgba(0, 210, 255, 0.07);
+}
+
+/* ── Slot body (center) ──────────────────────────────────────────────── */
+.source-picker-slot-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.source-picker-slot-body strong {
+  font-size: 0.88rem;
+  font-weight: 900;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.source-picker-slot-body small {
+  color: rgba(246, 243, 255, 0.48);
+  font-size: 0.68rem;
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Play badge (right, found only) ──────────────────────────────────── */
+.source-picker-slot-play-badge {
+  flex-shrink: 0;
+  padding: 0.22rem 0.6rem;
+  border-radius: 999rem;
+  background: rgba(0, 210, 255, 0.15);
+  color: rgba(0, 210, 255, 0.9);
+  font-size: 0.66rem;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ── Spinner ─────────────────────────────────────────────────────────── */
+.source-picker-spinner {
+  display: inline-block;
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 0.12rem solid rgba(0, 210, 255, 0.3);
+  border-top-color: var(--cyan);
+  border-radius: 50%;
+  animation: spinnerRotate 700ms linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spinnerRotate {
+  to { transform: rotate(360deg); }
+}
+
+/* ✕ exit button — always visible, slightly larger than tool buttons */
+.vid-exit-button {
+  font-size: 1.05rem;
+  font-weight: 900;
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  pointer-events: auto;
+}
+
+.vid-exit-button:is(:hover, :focus-visible, .is-tv-focused) {
+  background: rgba(220, 60, 60, 0.55);
+  color: #fff;
+}
+
+/* Topbar prev/next buttons: hidden in normal mode, shown in cinema mode */
+.vid-topbar-nav {
+  display: none;
+}
+/* ─────────────────────────────────────────────────────────────────────────── */
+
 .player-episode-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: center;
-  gap: 0.62rem;
+  gap: 0.55rem;
   width: 100%;
-  min-height: 3.7rem;
-  padding: 0.62rem;
-  border: 0.08rem solid rgba(255, 255, 255, 0.08);
-  border-radius: 0.78rem;
+  max-width: 44rem;
+  /* center the bar horizontally */
+  margin-inline: auto;
+  min-height: 3.2rem;
+  padding: 0.42rem 0.55rem;
+  border: 0.08rem solid rgba(255, 255, 255, 0.1);
+  border-radius: 999rem;
   background:
-    linear-gradient(135deg, rgba(38, 31, 74, 0.82), rgba(18, 22, 39, 0.72)),
-    rgba(20, 18, 42, 0.82);
-  box-shadow: inset 0 0 0 0.08rem rgba(255, 255, 255, 0.025);
+    linear-gradient(135deg, rgba(20, 16, 42, 0.94), rgba(10, 12, 24, 0.92));
+  box-shadow:
+    inset 0 0 0 0.08rem rgba(255, 255, 255, 0.06),
+    0 0.5rem 1.6rem rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
 }
 
-.player-episode-actions:has(.player-download-action:not(:disabled)) {
+.player-episode-actions:has(.player-download-action) {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  max-width: 52rem;
 }
 
 .player-language-bar {
@@ -3055,17 +3997,18 @@ body.soft-focus .is-tv-focused {
   justify-content: center;
   gap: 0.42rem;
   width: 100%;
-  min-height: 2.55rem;
-  padding: 0 0.82rem;
-  border: 0.08rem solid rgba(255, 255, 255, 0.1);
-  border-radius: 0.62rem;
-  color: rgba(246, 243, 255, 0.9);
-  background: rgba(255, 255, 255, 0.08);
-  font-size: 0.86rem;
+  min-height: 2.45rem;
+  padding: 0 0.9rem;
+  border: 0.08rem solid transparent;
+  border-radius: 999rem;
+  color: rgba(246, 243, 255, 0.88);
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 0.84rem;
   font-weight: 900;
   text-decoration: none;
   white-space: nowrap;
   cursor: pointer;
+  transition: background 150ms, color 150ms, box-shadow 150ms;
 }
 
 .player-nav-action span {
@@ -3097,6 +4040,7 @@ body.soft-focus .is-tv-focused {
 .player-nav-action:disabled {
   opacity: 0.42;
   cursor: not-allowed;
+  pointer-events: none;
   transform: none;
   box-shadow: none;
 }
@@ -3121,10 +4065,10 @@ body.soft-focus .is-tv-focused {
 
 .vidstream-player {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(12rem, 18rem);
+  grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
-    "stage sources"
-    "actions sources";
+    "stage"
+    "actions";
   gap: 0.9rem;
   align-items: start;
   padding: 0.8rem;
@@ -3136,20 +4080,6 @@ body.soft-focus .is-tv-focused {
   box-shadow:
     inset 0 0 0 0.08rem rgba(255, 255, 255, 0.035),
     0 1.1rem 2.4rem rgba(0, 0, 0, 0.24);
-}
-
-.vidstream-player .player-server-options {
-  grid-area: sources;
-  align-content: start;
-  flex-direction: column;
-  flex-wrap: nowrap;
-  max-height: min(52vh, 35rem);
-  overflow: auto;
-  padding: 0.25rem;
-}
-
-.vidstream-player .player-server-option {
-  width: 100%;
 }
 
 .vidstream-player .player-episode-actions {
@@ -3198,6 +4128,7 @@ body.soft-focus .is-tv-focused {
 .vid-player-stage {
   grid-area: stage;
   position: relative;
+  display: block;
   min-height: clamp(20rem, 44vw, 35rem);
   overflow: hidden;
   border-radius: 0.65rem;
@@ -3211,13 +4142,33 @@ body.soft-focus .is-tv-focused {
 
 .video-frame .vid-player-stage video,
 .video-frame .vid-player-stage iframe {
+  position: absolute;
+  inset: 0;
   display: block;
-  width: 100%;
-  height: 100%;
-  min-height: clamp(20rem, 44vw, 35rem);
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0;
   max-height: none;
   border-radius: 0;
   object-fit: contain;
+}
+
+.video-frame .vid-player-stage .apk-video-frame {
+  border: 0;
+  background: #000000;
+}
+
+.vidstream-player.fit-cover .vid-player-stage > video {
+  object-fit: cover;
+}
+
+.vidstream-player.fit-fill .vid-player-stage > video {
+  object-fit: fill;
+}
+
+.vidstream-player.fit-cover .vid-player-stage > iframe,
+.vidstream-player.fit-fill .vid-player-stage > iframe {
+  object-fit: fill;
 }
 
 .vid-topbar {
@@ -3225,7 +4176,7 @@ body.soft-focus .is-tv-focused {
   inset: 0 0 auto;
   z-index: 5;
   display: grid;
-  grid-template-columns: 2.8rem minmax(0, 1fr) 2.8rem;
+  grid-template-columns: minmax(0, 1fr) 2.8rem;
   align-items: center;
   gap: 0.55rem;
   min-height: 3.7rem;
@@ -3235,11 +4186,23 @@ body.soft-focus .is-tv-focused {
   pointer-events: none;
 }
 
+/* iframe mode: solid topbar — title centered, no left-padding compensation */
+.vidstream-player.is-iframe .vid-topbar strong {
+  padding-left: 0;
+  text-align: center;
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.92);
+}
+
 .vid-topbar strong {
   min-width: 0;
   overflow: hidden;
   font-size: 0.98rem;
   font-weight: 850;
+  padding-left: 2.8rem;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3266,6 +4229,13 @@ body.soft-focus .is-tv-focused {
   color: #ffffff;
   background: rgba(138, 92, 255, 0.38);
   box-shadow: 0 0 0 0.14rem rgba(138, 92, 255, 0.12);
+}
+
+.vid-icon-button:disabled,
+.vid-tool-button:disabled {
+  opacity: 0.28;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .vid-loader {
@@ -3403,14 +4373,42 @@ body.soft-focus .is-tv-focused {
 }
 
 .vidstream-player.is-iframe {
-  grid-template-rows: auto;
-  height: auto;
+  grid-template-rows: 1fr auto;
+  height: 100%;
   min-height: 0;
-  padding: 0.8rem;
+  padding: 0.5rem;
 }
 
 .vidstream-player.is-iframe .vid-player-stage {
-  min-height: clamp(23rem, 46vw, 36rem);
+  /* Fill the video-frame area instead of forcing a fixed min-height */
+  flex: 1;
+  min-height: clamp(14rem, 28vh, 22rem);
+  /* Black topbar + iframe stacked vertically */
+  display: flex;
+  flex-direction: column;
+}
+
+/* Opaque black info bar above the iframe */
+.vidstream-player.is-iframe .vid-topbar {
+  order: -1;
+  position: relative;
+  inset: auto;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.95);
+  border-bottom: 0.06rem solid rgba(255, 255, 255, 0.13);
+  min-height: 2.8rem;
+  padding: 0.4rem 3rem;
+  pointer-events: auto;
+}
+
+/* iframe fills remaining space after topbar */
+.vidstream-player.is-iframe .vid-player-stage > iframe {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
 }
 
 .vidstream-player.is-iframe .player-inline-prefs {
@@ -3421,37 +4419,282 @@ body.player-cinema-open {
   overflow: hidden;
 }
 
+/*
+ * CRITICAL FIX — containing-block isolation
+ * ─────────────────────────────────────────
+ * .watch-overlay has backdrop-filter which makes it the containing block
+ * for ALL position:fixed descendants.  .watch-panel (inside the overlay)
+ * has overflow:hidden, so .vidstream-player.is-cinema { position:fixed }
+ * gets clipped to the watch-panel rectangle — never full-viewport.
+ *
+ * Solution: remove the backdrop-filter when cinema is active so that
+ * position:fixed is relative to the true viewport, which overflow:hidden
+ * on any ancestor cannot clip.
+ */
+body.player-cinema-open .watch-overlay {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  overflow: hidden;
+  /* Kill the entrance animation so it doesn't re-fire on fullscreen toggle */
+  animation: none !important;
+}
+
+/* Suppress panel re-animation during fullscreen transition */
+body.player-cinema-open .watch-panel {
+  animation: none !important;
+}
+
+/* ── Embedded-player mode (iframe, no full-viewport cinema) ─────────────────
+   Kills the backdrop-filter so the iframe's own fullscreen request
+   doesn't have to traverse expensive compositor layers. */
+body.has-embedded-player .watch-overlay {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  animation: none !important;
+}
+body.has-embedded-player .watch-panel {
+  animation: none !important;
+}
+
+/* Make the video-frame stretch to fill its grid cell so the iframe uses
+   all available vertical space instead of shrinking to min-height. */
+body.has-embedded-player .video-frame {
+  align-self: stretch;
+  align-content: stretch;
+  place-items: stretch;
+}
+
+/* Hide the overlay's outer × when cinema is active — the in-player vid-exit-button serves as close */
+body.player-cinema-open .close-button {
+  display: none;
+}
+
+/* Native fullscreen: zero-latency backdrop, no transition flash */
+/* Instant fullscreen — no fade-in, no compositor overhead */
+::backdrop {
+  background: #000;
+  animation: none !important;
+  transition: none !important;
+}
+:fullscreen,
+:-webkit-full-screen {
+  animation: none !important;
+  transition: none !important;
+}
+:fullscreen .watch-panel,
+:fullscreen .watch-overlay,
+:-webkit-full-screen .watch-panel,
+:-webkit-full-screen .watch-overlay {
+  animation: none !important;
+  transition: none !important;
+  backdrop-filter: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Cinema mode — full-screen overlay
+   ══════════════════════════════════════════════════════════════════════════
+   The cinema container is position:fixed; inset:0 on the true viewport
+   (backdrop-filter is disabled on .watch-overlay when cinema is open,
+   so there is no re-rooted containing block that could clip this element).
+
+   The stage is position:absolute; inset:0 — relative to the cinema
+   container, which is now the true viewport rectangle.  This avoids any
+   double-fixed complexity and works correctly in native fullscreen too.
+   ══════════════════════════════════════════════════════════════════════════ */
+
 .vidstream-player.is-cinema {
   position: fixed;
-  inset: 0;
+  top: 50%;
+  left: 50%;
   z-index: 10050;
-  grid-template-columns: minmax(0, 1fr) minmax(14rem, 19rem);
-  grid-template-areas:
-    "stage sources"
-    "actions sources";
-  align-content: stretch;
-  height: 100dvh;
-  padding: 0.75rem;
-  border: 0;
-  border-radius: 0;
-  background:
-    radial-gradient(circle at 100% 0%, rgba(138, 92, 255, 0.16), transparent 24rem),
-    linear-gradient(135deg, #03050d, #070915);
+  display: block;
+  width: min(92vw, 96rem);
+  height: min(78vh, 54rem);
+  padding: 0;
+  border: 0.08rem solid rgba(255, 255, 255, 0.16);
+  border-radius: 1rem;
+  background: #000;
+  overflow: hidden;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 1.4rem 5rem rgba(0, 0, 0, 0.62), 0 0 0 999rem rgba(2, 2, 8, 0.72);
   transition: none;
 }
 
-.vidstream-player.is-cinema .vid-player-stage,
-.vidstream-player.is-cinema .vid-player-stage video,
-.vidstream-player.is-cinema .vid-player-stage iframe {
-  min-height: calc(100dvh - 8.9rem);
+/* Stage: fills the cinema container via position:absolute */
+.vidstream-player.is-cinema .vid-player-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  background: #000;
 }
 
-.vidstream-player.is-cinema .player-server-options {
-  max-height: calc(100dvh - 1.5rem);
+/* Media: stretches to fill the entire stage */
+.vidstream-player.is-cinema .vid-player-stage > video,
+.vidstream-player.is-cinema .vid-player-stage > iframe {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  object-fit: contain;
+  border-radius: inherit;
+  background: #000;
+  z-index: 1;
+  flex: none;
 }
 
-.vidstream-player.is-cinema .player-episode-actions {
+.vidstream-player.is-cinema.is-popup-message .episode-video-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  width: 100%;
   max-width: none;
+  min-height: 0;
+  padding: clamp(2rem, 5vw, 4rem);
+  background:
+    radial-gradient(circle at 50% 42%, rgba(138, 92, 255, 0.2), transparent 19rem),
+    linear-gradient(180deg, rgba(7, 8, 18, 0.86), rgba(0, 0, 0, 0.94));
+}
+
+.vidstream-player.is-cinema.is-popup-message .episode-video-empty p {
+  max-width: min(36rem, 78vw);
+  margin: 0;
+  color: rgba(246, 243, 255, 0.72);
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.vidstream-player.is-cinema.is-source-picker .source-picker {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  padding-top: 4.2rem;
+  border-radius: inherit;
+}
+
+.vidstream-player.is-cinema.is-source-picker .source-picker-options {
+  min-height: 0;
+}
+
+.vidstream-player.is-cinema.fit-cover .vid-player-stage > video {
+  object-fit: cover;
+}
+
+.vidstream-player.is-cinema.fit-fill .vid-player-stage > video {
+  object-fit: fill;
+}
+
+.vidstream-player.is-cinema.fit-cover .vid-player-stage > iframe,
+.vidstream-player.is-cinema.fit-fill .vid-player-stage > iframe {
+  object-fit: fill;
+}
+
+/* ── Topbar: gradient bar pinned to the top of the stage ── */
+.vidstream-player.is-cinema .vid-topbar {
+  position: absolute;
+  inset: 0 0 auto;         /* top:0  left:0  right:0  bottom:auto */
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 3.5rem;
+  /* right padding leaves room for the ✕ button (~3.4 rem wide) */
+  padding: 0.8rem 4rem 3.5rem 1rem;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.88) 0%, transparent 100%);
+  border-bottom: 0;
+  pointer-events: none;    /* click-through to video */
+}
+
+/* Re-enable pointer events for interactive controls inside the topbar */
+.vidstream-player.is-cinema .vid-topbar > * {
+  pointer-events: auto;
+}
+
+/* Episode title: grows to fill the topbar, clips overflow */
+.vidstream-player.is-cinema .vid-topbar strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: 0;
+  text-align: left;
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+/* Show Prev / Next nav buttons only in cinema (hidden by default) */
+.vidstream-player.is-cinema .vid-topbar-nav {
+  display: inline-grid;
+  flex-shrink: 0;
+}
+
+/* ── ✕ button: pinned to the very top-right of the stage ── */
+.vidstream-player.is-cinema .vid-exit-button {
+  position: absolute;
+  inset: auto;             /* clear any inherited inset */
+  top: 0.8rem;
+  right: 0.85rem;
+  z-index: 12;
+  pointer-events: auto;
+  width: 3rem;
+  height: 3rem;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 999rem;
+  background: rgba(56, 58, 72, 0.86);
+  border: 0;
+  font-size: 1.4rem;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.vidstream-player.is-cinema .vid-exit-button:is(:hover, :focus-visible, .is-tv-focused) {
+  background: rgba(200, 35, 35, 0.75);
+  border-color: rgba(255, 80, 80, 0.4);
+  color: #fff;
+  box-shadow: 0 0 0 0.18rem rgba(200, 35, 35, 0.25);
+}
+
+/* ── Controls bar: gradient bar pinned to the bottom of the stage ── */
+.vidstream-player.is-cinema .vid-controls {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 10;
+  padding-bottom: max(0.72rem, env(safe-area-inset-bottom));
+  background: linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.9)  0%,
+    rgba(0, 0, 0, 0.55) 50%,
+    transparent         100%
+  );
+}
+
+/* ── Episode actions bar: hidden in cinema ──
+   Navigation is in the topbar (⏮ ⏭) and vid-controls (⏮ ⏭). */
+.vidstream-player.is-cinema .player-episode-actions {
+  display: none;
+}
+
+/* Fullscreen button active state — highlight while in native fullscreen */
+:fullscreen [data-player-fullscreen],
+:-webkit-full-screen [data-player-fullscreen] {
+  color: var(--cyan);
+  opacity: 1;
 }
 
 .player-controls-bar {
@@ -3517,8 +4760,8 @@ body.player-cinema-open {
 .episode-info strong {
   overflow: hidden;
   max-width: min(31rem, 42vw);
-  font-size: 0.9rem;
-  font-weight: 950;
+  font-size: 0.78rem;
+  font-weight: 850;
   line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3748,18 +4991,22 @@ body.player-cinema-open {
 }
 
 .custom-toast {
+  /* Center the toast in the viewport so it's always visible regardless of
+     what is open underneath (main page, watch overlay, cinema mode, etc.).
+     Previously bottom: 5rem landed inside the video player area visually. */
   position: fixed;
   left: 50%;
-  bottom: 5rem;
+  top: 50%;
+  bottom: auto;
   z-index: 10000;
   max-width: min(32rem, calc(100vw - 2rem));
   padding: 0.8rem 1.15rem;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   border: 0.08rem solid rgba(0, 210, 255, 0.24);
   border-radius: 999rem;
   color: #ffffff;
-  background: rgba(8, 10, 19, 0.88);
-  box-shadow: 0 1rem 2rem rgba(0, 0, 0, 0.34);
+  background: rgba(8, 10, 19, 0.92);
+  box-shadow: 0 1rem 2.4rem rgba(0, 0, 0, 0.48);
   font-weight: 900;
   text-align: center;
   backdrop-filter: blur(1rem);
@@ -3823,11 +5070,12 @@ body.player-cinema-open {
 @keyframes slide-up {
   from {
     opacity: 0;
-    transform: translateX(-50%) translateY(1rem);
+    /* start slightly below center and rise into position */
+    transform: translate(-50%, calc(-50% + 1.2rem));
   }
   to {
     opacity: 1;
-    transform: translateX(-50%) translateY(0);
+    transform: translate(-50%, -50%);
   }
 }
 
@@ -3866,6 +5114,12 @@ body.player-cinema-open {
     box-shadow:
       0 0 0 0.5rem rgba(242, 187, 70, 0.08),
       0 0 1.45rem rgba(0, 210, 255, 0.38);
+  }
+}
+
+@keyframes logo-halo-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
@@ -4114,12 +5368,16 @@ body.player-cinema-open {
 
   .watch-panel {
     grid-template-columns: 1fr;
-    max-height: 92vh;
-    overflow: auto;
+    width: 100%;
+    height: auto;
+    max-height: calc(100dvh - 1.5rem);
+    overflow-y: auto;
+    overflow-x: hidden;
   }
 
   .watch-info {
-    padding: 0 4.1rem 0.5rem 0.5rem;
+    overflow-y: visible;
+    padding: 0.5rem 0.5rem 1rem 0.5rem;
   }
 
   .player-controls-bar {
@@ -4164,7 +5422,6 @@ body.player-cinema-open {
     max-width: none;
   }
 
-  .player-server-options,
   .player-episode-actions {
     overflow-x: auto;
     padding-bottom: 0.65rem;
@@ -4174,23 +5431,9 @@ body.player-cinema-open {
   .vidstream-player.is-iframe {
     grid-template-columns: 1fr;
     grid-template-areas:
-      "sources"
       "stage"
       "actions";
     padding: 0.58rem;
-  }
-
-  .vidstream-player .player-server-options {
-    flex-flow: row nowrap;
-    max-height: none;
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
-  .vidstream-player .player-source-heading {
-    flex: 0 0 9rem;
-    align-content: center;
-    margin: 0;
   }
 
   .vid-player-stage,
@@ -4232,21 +5475,7 @@ body.player-cinema-open {
     grid-template-columns: 1fr;
   }
 
-  .vidstream-player.is-cinema {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "stage"
-      "sources"
-      "actions";
-    overflow: auto;
-    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
-  }
-
-  .vidstream-player.is-cinema .vid-player-stage,
-  .vidstream-player.is-cinema .vid-player-stage video,
-  .vidstream-player.is-cinema .vid-player-stage iframe {
-    min-height: min(64dvh, 34rem);
-  }
+  /* cinema mode is already fully absolute-positioned — no responsive overrides needed */
 
   .vid-controls {
     padding-bottom: max(0.72rem, env(safe-area-inset-bottom));
@@ -4268,7 +5497,6 @@ body.player-cinema-open {
     justify-self: start;
   }
 
-  .player-server-option,
   .player-nav-action,
   .player-download-action,
   .player-cast-action {
@@ -4314,6 +5542,14 @@ body.player-cinema-open {
   cursor: pointer;
   transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
   animation: carousel-enter 520ms ease both;
+}
+
+.carousel-stage.is-loading {
+  grid-template-columns: minmax(23rem, 1fr) clamp(12rem, 18vw, 17rem);
+  align-items: center;
+  min-height: clamp(28rem, 56vh, 39rem);
+  gap: clamp(2rem, 5vw, 5rem);
+  cursor: default;
 }
 
 .carousel-stage::before {
@@ -4474,6 +5710,67 @@ body.player-cinema-open {
   filter: saturate(1.18) contrast(1.1) brightness(1.05);
 }
 
+.carousel-stage.is-loading:is(:hover, :focus-visible, .is-tv-focused) .carousel-poster {
+  transform: none;
+}
+
+.carousel-stage.is-loading .carousel-poster-wrap {
+  align-self: center;
+  justify-self: end;
+  width: min(100%, 23rem);
+  opacity: 0.72;
+  transform: none;
+}
+
+.carousel-stage.is-loading .carousel-poster-wrap::before {
+  inset: -0.55rem;
+  filter: blur(12px);
+  opacity: 0.42;
+}
+
+.carousel-stage.is-loading .carousel-poster-wrap::after {
+  border-radius: 0.82rem;
+  opacity: 0.38;
+}
+
+.carousel-stage.is-loading .carousel-poster-skeleton {
+  width: 100%;
+  height: 100%;
+  border-radius: 0.9rem;
+  border: 0.1rem solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 2.4rem 4.4rem rgba(0, 0, 0, 0.52),
+    0 0 0 0.08rem rgba(0, 210, 255, 0.08);
+}
+
+.carousel-stage.is-loading .carousel-info {
+  align-self: center;
+  justify-self: start;
+  max-width: min(27rem, 58vw);
+  padding-left: 0;
+  transform: translateY(0);
+}
+
+.carousel-stage.is-loading .carousel-info h2 {
+  font-size: clamp(1.55rem, 2.6vw, 2.6rem);
+}
+
+.carousel-stage.is-loading .carousel-info p:not(.eyebrow) {
+  max-width: 30rem;
+}
+
+.carousel-stage.is-loading .carousel-meta-line {
+  width: fit-content;
+}
+
+.carousel-stage.is-loading .play-action {
+  display: none;
+}
+
+.carousel-stage.is-loading .carousel-indicators {
+  display: none;
+}
+
 .carousel-stage:is(:hover, :focus-visible, .is-tv-focused) .carousel-poster-wrap::before {
   opacity: 0.95;
   filter: blur(22px);
@@ -4500,8 +5797,8 @@ body.player-cinema-open {
   min-height: 0;
   margin: 0;
   padding-bottom: 0.18rem;
-  font-size: clamp(2rem, 3.9vw, 4.2rem);
-  line-height: 0.94;
+  font-size: clamp(1.55rem, 3.1vw, 3.1rem);
+  line-height: 1;
   letter-spacing: 0;
   display: -webkit-box;
   overflow: hidden;
@@ -4741,6 +6038,23 @@ body.player-cinema-open {
   }
 }
 
+@keyframes neko-ear-twitch {
+  0%,
+  72%,
+  100% {
+    transform: rotate(0deg) scale(1);
+  }
+  78% {
+    transform: rotate(-2deg) scale(1.015);
+  }
+  84% {
+    transform: rotate(2deg) scale(1.015);
+  }
+  90% {
+    transform: rotate(0deg) scale(1);
+  }
+}
+
 @keyframes section-dot-glow {
   0%,
   100% {
@@ -4888,7 +6202,7 @@ body.player-cinema-open {
   }
 
   .carousel-info h2 {
-    font-size: 2.35rem;
+    font-size: 1.85rem;
     line-height: 1;
   }
 
@@ -5069,6 +6383,13 @@ body.player-cinema-open {
   grid-row: 1;
 }
 
+/* Responsive column counts — must come AFTER the base rule above */
+@media (max-width: 1150px) {
+  .rail-shell .poster-grid {
+    grid-auto-columns: calc((100% - (6 * var(--rail-gap))) / 7);
+  }
+}
+
 @media (max-width: 760px) {
   .rail-shell {
     grid-template-columns: 2.4rem minmax(0, 1fr) 2.4rem;
@@ -5076,7 +6397,7 @@ body.player-cinema-open {
   }
 
   .rail-shell .poster-grid {
-    grid-auto-columns: calc((100% - (1 * var(--rail-gap))) / 2);
+    grid-auto-columns: calc((100% - (6 * var(--rail-gap))) / 7);
   }
 
   .rail-arrow {
@@ -5129,3 +6450,127 @@ body.player-cinema-open {
     grid-column: 3;
   }
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Modern micro-interactions & reveals (ZenkaiTV)
+   A cohesive motion layer — all covered by body.reduce-motion (instant) and
+   built on transform/opacity for smooth, GPU-friendly animation.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+@keyframes pop-in {
+  0%   { opacity: 0; transform: translateY(0.7rem) scale(0.97); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes fade-slide {
+  0%   { opacity: 0; transform: translateY(0.85rem); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Detail-tab panes reveal when switched (display:none → block replays) ──── */
+.detail-pane.is-active {
+  animation: fade-slide 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ── Episode buttons: gentle staggered pop-in + springy hover ─────────────── */
+.episode-buttons .episode-button {
+  animation: pop-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.episode-buttons .episode-button:nth-child(1)  { animation-delay: 20ms; }
+.episode-buttons .episode-button:nth-child(2)  { animation-delay: 40ms; }
+.episode-buttons .episode-button:nth-child(3)  { animation-delay: 60ms; }
+.episode-buttons .episode-button:nth-child(4)  { animation-delay: 80ms; }
+.episode-buttons .episode-button:nth-child(5)  { animation-delay: 100ms; }
+.episode-buttons .episode-button:nth-child(6)  { animation-delay: 120ms; }
+.episode-buttons .episode-button:nth-child(7)  { animation-delay: 140ms; }
+.episode-buttons .episode-button:nth-child(8)  { animation-delay: 160ms; }
+.episode-buttons .episode-button:nth-child(n+9){ animation-delay: 180ms; }
+.episode-button {
+  transition: transform 200ms cubic-bezier(0.34, 1.3, 0.5, 1), border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+.episode-button:is(:hover, :focus-visible, .is-tv-focused):not(.is-locked) {
+  transform: translateY(-0.14rem) scale(1.03);
+}
+.episode-button:active { transform: scale(0.96); }
+
+/* ── Season cards: staggered reveal ───────────────────────────────────────── */
+.season-card-grid .season-card {
+  animation: pop-in 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.season-card-grid .season-card:nth-child(2) { animation-delay: 70ms; }
+.season-card-grid .season-card:nth-child(3) { animation-delay: 140ms; }
+.season-card-grid .season-card:nth-child(4) { animation-delay: 210ms; }
+.season-card-grid .season-card:nth-child(n+5) { animation-delay: 280ms; }
+
+/* ── Nav links: lift + icon bounce + press ────────────────────────────────── */
+.main-nav .nav-link {
+  transition:
+    min-height 360ms cubic-bezier(0.22, 1, 0.36, 1),
+    font-size 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    letter-spacing 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 180ms ease, color 220ms ease, box-shadow 220ms ease,
+    transform 240ms cubic-bezier(0.34, 1.3, 0.5, 1);
+}
+.main-nav .nav-link:is(:hover, :focus-visible, .is-tv-focused) {
+  transform: translateY(-0.1rem);
+}
+body.sidebar-collapsed .main-nav .nav-link:is(:hover, :focus-visible, .is-tv-focused) {
+  transform: scale(1.08);
+}
+.nav-link:is(:hover, :focus-visible, .is-tv-focused) span {
+  transform: translateY(-0.12rem) scale(1.08);
+}
+.nav-link:active { transform: scale(0.96); }
+
+/* ── Genre chips & filters: lift + press ──────────────────────────────────── */
+.chip {
+  transition: transform 200ms cubic-bezier(0.34, 1.3, 0.5, 1), background 180ms ease, color 180ms ease, box-shadow 180ms ease;
+}
+.chip:is(:hover, :focus-visible, .is-tv-focused) { transform: translateY(-0.12rem) scale(1.04); }
+.chip:active { transform: scale(0.95); }
+
+/* ── Search boxes: focus glow + subtle lift ───────────────────────────────── */
+.search-box input {
+  transition: border-color 220ms ease, box-shadow 260ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1), background 220ms ease;
+}
+.search-box input:focus {
+  border-color: rgba(59, 130, 246, 0.55);
+  box-shadow: 0 0 0 0.18rem rgba(59, 130, 246, 0.16), 0 0.8rem 1.8rem rgba(0, 0, 0, 0.24);
+  transform: translateY(-0.08rem);
+}
+
+/* ── Source-picker options: stagger in + hover slide ──────────────────────── */
+.source-picker-options .source-picker-option {
+  animation: fade-slide 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.source-picker-options .source-picker-option:nth-child(2) { animation-delay: 50ms; }
+.source-picker-options .source-picker-option:nth-child(3) { animation-delay: 100ms; }
+.source-picker-options .source-picker-option:nth-child(4) { animation-delay: 150ms; }
+.source-picker-options .source-picker-option:nth-child(n+5) { animation-delay: 200ms; }
+.source-picker-option-found {
+  transition: transform 200ms cubic-bezier(0.34, 1.3, 0.5, 1), background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+.source-picker-option-found:is(:hover, :focus-visible, .is-tv-focused) {
+  transform: translateX(0.25rem);
+}
+
+/* ── Detail tabs & season tabs: press feedback ────────────────────────────── */
+.detail-tab, .season-tab {
+  transition: transform 200ms cubic-bezier(0.34, 1.3, 0.5, 1), background 180ms ease, color 180ms ease, box-shadow 180ms ease;
+}
+.detail-tab:is(:hover, :focus-visible, .is-tv-focused),
+.season-tab:is(:hover, :focus-visible, .is-tv-focused) {
+  transform: translateY(-0.1rem);
+}
+.detail-tab:active, .season-tab:active { transform: scale(0.97); }
+
+/* ── Genre/section headings: dot pulse already exists; lift the heading in ── */
+.section-heading h2 {
+  animation: fade-slide 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ── Favorite / secondary action buttons: press feedback ──────────────────── */
+.secondary-action {
+  transition: transform 200ms cubic-bezier(0.34, 1.3, 0.5, 1), background 180ms ease, color 180ms ease, box-shadow 180ms ease;
+}
+.secondary-action:is(:hover, :focus-visible, .is-tv-focused) { transform: translateY(-0.1rem); }
+.secondary-action:active { transform: scale(0.96); }

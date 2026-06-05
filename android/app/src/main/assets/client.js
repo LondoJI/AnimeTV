@@ -5,7 +5,7 @@ installAdBlockGuards();
 
 function installAdBlockGuards() {
   const blockedOpen = (url = "") => {
-    console.warn("AnimeTV blocked a popup/ad window.", url);
+    console.warn("ZenkaiTV blocked a popup/ad window.", url);
     if (typeof showToast === "function") showToast("Popup blocked");
     return null;
   };
@@ -35,6 +35,20 @@ if (!localStorage.getItem(LANGUAGE_PREFERENCES_KEY)) setDefaultLanguage("japanes
 
 // readUiPreferences is defined in js/utils.js
 
+const LOCAL_FINDER_SOURCE_ID = "local-finder";
+const LOCAL_FINDER_SOURCE = {
+  id: LOCAL_FINDER_SOURCE_ID,
+  name: "Local Finder",
+  enabled: true,
+  type: "playback-addon",
+  endpoint: "/api/scraped-catalog?limit=500&page=1",
+  pageSize: 500,
+  paginated: true,
+  hidden: true,
+  playbackOnly: true,
+  noCache: true
+};
+
 const fallbackShows = [
   ["Sky Guard Returns", 9, "action", "Mon", "7:00 PM", "#68d8ff", "#1a2458"],
   ["Second Crown Chronicle", 8, "fantasy", "Tue", "8:30 PM", "#efb25f", "#402060"],
@@ -60,9 +74,41 @@ const fallbackShows = [
   image: "",
   banner: "",
   siteUrl: "",
-  description: "Temporary offline placeholder while AnimeTV reconnects to metadata sources.",
+  description: "Temporary offline placeholder while ZenkaiTV reconnects to metadata sources.",
   videoUrl: ""
 }));
+
+// Known playback server definitions — used by the source picker to show all server slots
+// even when only some resolve. `match` identifies a sourceOption belonging to this server.
+// AnimeAV1 is listed FIRST (most reliable; its HLS is the top pick). The picker
+// also re-orders by source preference, so the card holding AnimeAV1-HLS leads.
+const KNOWN_SOURCE_SERVERS = [
+  {
+    key: "animeav1",
+    label: "AnimeAV1",
+    desc: "Fast AnimeAV1 scraper (HLS)",
+    match: (s) =>
+      (s.id || "").includes("animeav1") ||
+      (s.label || "").toLowerCase().includes("animeav1") ||
+      (s.externalUrl || s.videoUrl || "").includes("animeav1.com")
+  },
+  {
+    key: "tioanime",
+    label: "TioAnime",
+    desc: "Live scraper sources",
+    match: (s) =>
+      (s.id || "").includes("tioanime") ||
+      (s.label || "").toLowerCase().includes("tioanime")
+  },
+  {
+    key: "anipub",
+    label: "AniPub",
+    desc: "AniPub catalog",
+    match: (s) =>
+      s.id === "anipub" || (s.id || "").startsWith("anipub") ||
+      (s.label || "").toLowerCase() === "anipub"
+  }
+];
 
 const state = {
   route: "home",
@@ -73,6 +119,8 @@ const state = {
   activeEpisode: null,
   preferredSource: localStorage.getItem("animetv-preferred-playback-source") || "auto",
   activeDetailTab: "anime",
+  activeSettingsTab: "general",
+  activeLegalTab: "terms",
   activeSeasonIndex: 0,
   carouselIndex: 0,
   shows: [],
@@ -84,7 +132,8 @@ const state = {
   anipubFallbackCache: readAniPubFallbackCache(),
   localSources: [],
   customSources: JSON.parse(localStorage.getItem("animetv-custom-sources") || "[]"),
-  sidebarCollapsed: localStorage.getItem("animetv-sidebar-collapsed") === "true",
+  // Compact (collapsed) icon rail is the DEFAULT; expand to reveal labels.
+  sidebarCollapsed: localStorage.getItem("animetv-sidebar-collapsed") !== "false",
   apiStatus: {
     metadata: "Checking",
     direct: "Checking",
@@ -96,6 +145,13 @@ const state = {
   theme: localStorage.getItem(APP_THEME_KEY) || "dark",
   uiPreferences: readUiPreferences()
 };
+
+const TITLE_LANGUAGE_ROMAJI_MIGRATION_KEY = "animetv-title-language-romaji-v1";
+if (localStorage.getItem(TITLE_LANGUAGE_ROMAJI_MIGRATION_KEY) !== "done") {
+  state.uiPreferences.titleLanguage = "romaji";
+  localStorage.setItem(APP_UI_PREFS_KEY, JSON.stringify(state.uiPreferences));
+  localStorage.setItem(TITLE_LANGUAGE_ROMAJI_MIGRATION_KEY, "done");
+}
 
 const appLoader = document.querySelector("#appLoader");
 const latestGrid = document.querySelector("#latestGrid");
@@ -143,8 +199,9 @@ function applySidebarState() {
   if (sidebarToggle) {
     sidebarToggle.setAttribute("aria-pressed", String(state.sidebarCollapsed));
     sidebarToggle.setAttribute("aria-label", state.sidebarCollapsed ? "Show sidebar labels" : "Hide sidebar labels");
+    // Keep a constant chevron glyph; CSS rotates it smoothly on collapse.
     const icon = sidebarToggle.querySelector("span");
-    if (icon) icon.textContent = state.sidebarCollapsed ? "›" : "‹";
+    if (icon && icon.textContent !== "‹") icon.textContent = "‹";
   }
 }
 
@@ -164,9 +221,20 @@ function saveUiPreferences(next = {}) {
   applyUiPreferences();
 }
 
+let _sidebarToggleTimer = null;
 function toggleSidebar() {
   state.sidebarCollapsed = !state.sidebarCollapsed;
   localStorage.setItem("animetv-sidebar-collapsed", String(state.sidebarCollapsed));
+  // Fire a transient class so the logo can play a one-shot reaction that's
+  // synced with the sidebar slide (see .is-toggling rules in styles.css).
+  document.body.classList.remove("is-toggling");
+  // force reflow so re-adding the class restarts the animation even on rapid clicks
+  void document.body.offsetWidth;
+  document.body.classList.add("is-toggling", state.sidebarCollapsed ? "is-collapsing" : "is-expanding");
+  clearTimeout(_sidebarToggleTimer);
+  _sidebarToggleTimer = window.setTimeout(() => {
+    document.body.classList.remove("is-toggling", "is-collapsing", "is-expanding");
+  }, 640);
   applySidebarState();
   refreshFocusables();
 }
@@ -223,7 +291,7 @@ function setPlaceholder(input, key) {
 }
 
 async function loadAnimeSources() {
-  setSourceStatus("Loading AnimeTV metadata API...");
+  setSourceStatus("Loading ZenkaiTV metadata API...");
   render();
   hideAppLoader();
 
@@ -232,11 +300,13 @@ async function loadAnimeSources() {
     state.shows = cachedCatalog;
     state.isLoadingCatalog = false;
     state.carouselIndex = 0;
-    setSourceStatus(catalogStatusLabel("Cached AnimeTV catalog", cachedCatalog));
+    setSourceStatus(catalogStatusLabel("Cached ZenkaiTV catalog", cachedCatalog));
     render();
+    warmTioAnimeSlugCatalog(state.shows);
+    warmAnimeAv1SlugCatalog(state.shows);
   }
 
-  const serverCatalog = await timedRequest("AnimeTV metadata API", () => fetchLocalMetadataCatalog()).catch(() => []);
+  const serverCatalog = await timedRequest("ZenkaiTV metadata API", () => fetchLocalMetadataCatalog()).catch(() => []);
   if (serverCatalog.length) {
     state.shows = mergeShows(serverCatalog);
     state.isLoadingCatalog = false;
@@ -244,8 +314,10 @@ async function loadAnimeSources() {
     state.apiStatus.metadata = "Online";
     state.apiStatus.direct = "Standby";
     writeResponseCache("main-catalog", state.shows);
-    setSourceStatus(catalogStatusLabel("AnimeTV API", state.shows));
+    setSourceStatus(catalogStatusLabel("ZenkaiTV API", state.shows));
     render();
+    warmTioAnimeSlugCatalog(state.shows);
+    warmAnimeAv1SlugCatalog(state.shows);
     scheduleExternalSourcesLoad();
     return;
   }
@@ -286,6 +358,8 @@ async function loadAnimeSources() {
     writeResponseCache("direct-catalog", merged);
     writeResponseCache("main-catalog", merged);
     setSourceStatus(catalogStatusLabel("AniList + Jikan", merged));
+    warmTioAnimeSlugCatalog(state.shows);
+    warmAnimeAv1SlugCatalog(state.shows);
   } else {
     state.apiStatus.direct = "Offline";
     if (!state.shows.length) state.shows = fallbackShows;
@@ -309,60 +383,91 @@ function scheduleExternalSourcesLoad() {
 
 async function loadExternalSources() {
   try {
-    state.externalSourcesLoaded = true;
+    state.externalSourcesLoaded = false; // mark loading in progress for skeleton
+    renderAddonSections();               // show "Loading sources…" hint immediately
     const response = await fetch("./sources.json", { cache: "no-store" });
     if (!response.ok) throw new Error("sources.json unavailable");
     const config = await response.json();
-    const sources = [...(Array.isArray(config.sources) ? config.sources : []), ...state.customSources];
+    const configuredSources = Array.isArray(config.sources) ? config.sources : [];
+    const sources = configuredSources.some((source) => source.id === LOCAL_FINDER_SOURCE_ID)
+      ? [...configuredSources, ...state.customSources]
+      : [...configuredSources, LOCAL_FINDER_SOURCE, ...state.customSources];
     state.localSources = sources.map(applySourceOverride).filter((source) => !source.deleted);
     renderSources();
 
-    const enabledSources = state.localSources.filter((source) => source.enabled && source.endpoint && source.id !== "anipub-catalog");
-    const sourceResults = await Promise.allSettled(enabledSources.map(async (source) => {
-      const catalog = await timedRequest(`External source ${source.name || source.id}`, () => fetchExternalCatalogData(source));
-      return { source, catalog };
-    }));
-    const loaded = [];
+    state.externalSourcesLoaded = true; // sources.json parsed — fan-out begins
+    const enabledSources = state.localSources.filter(
+      (source) => source.enabled && source.endpoint && source.id !== "anipub-catalog"
+    );
+
+    // Snapshot the show list so incremental merges are idempotent
+    const baseShows = [...state.shows];
     const addonSections = [];
-    sourceResults.forEach((result, index) => {
-      const source = enabledSources[index];
+    const allLoaded = [];
+
+    // Each source renders as soon as it arrives — no waiting for others.
+    await Promise.allSettled(enabledSources.map(async (source) => {
       try {
-        if (result.status === "rejected") throw result.reason;
-        const { catalog } = result.value;
+        const catalog = await timedRequest(
+          `External source ${source.name || source.id}`,
+          () => fetchExternalCatalogData(source)
+        );
         const items = catalog.items;
-        const isAniPubCatalog = source.id === "anipub-catalog";
-        if (!isAniPubCatalog) loaded.push(...items);
-        if (items.length) {
-          addonSections.push({
-            id: source.id,
-            name: source.name || source.id,
-            type: source.type || "addon",
-            items,
-            source,
-            page: catalog.page,
-            nextPage: catalog.nextPage,
-            hasMore: catalog.hasMore,
-            totalResults: catalog.totalResults,
-            paginated: Boolean(source.paginated || catalog.nextPage || catalog.hasMore)
-          });
+        markSourceStatus(
+          source.name,
+          items.length
+            ? `${items.length}${catalog.totalResults ? ` of ${catalog.totalResults}` : ""} titles`
+            : "Connected, no playable items"
+        );
+        if (!items.length) return;
+
+        // Remove any prior entry for this source, then push the fresh one
+        const existingIdx = addonSections.findIndex((s) => s.id === source.id);
+        const section = {
+          id: source.id,
+          name: source.name || source.id,
+          type: source.type || "addon",
+          items,
+          source,
+          page: catalog.page,
+          nextPage: catalog.nextPage,
+          hasMore: catalog.hasMore,
+          totalResults: catalog.totalResults,
+          paginated: Boolean(source.paginated || catalog.nextPage || catalog.hasMore)
+        };
+        if (existingIdx >= 0) addonSections[existingIdx] = section;
+        else addonSections.push(section);
+
+        if (!source.playbackOnly) allLoaded.push(...items);
+
+        // Update global state and re-render addon rails right away
+        state.addonSections = [...addonSections];
+      state.shows = mergeShows([...baseShows, ...allLoaded]);
+      if (_tioAnimeSlugTitleMap) state.shows.forEach((show) => applyTioAnimeSlugFromMap(show, _tioAnimeSlugTitleMap));
+      if (_animeAv1SlugTitleMap) state.shows.forEach((show) => applyAnimeAv1SlugFromMap(show, _animeAv1SlugTitleMap));
+      if (!source.playbackOnly) {
+          renderAddonSections();
+          renderCarousel();
         }
-        markSourceStatus(source.name, items.length ? `${items.length}${catalog.totalResults ? ` of ${catalog.totalResults}` : ""} titles` : "Connected, no playable items");
       } catch (error) {
         markSourceStatus(source.name, "Server offline or wrong URL");
       }
-    });
-    state.addonSections = addonSections;
+    }));
 
-    if (loaded.length || addonSections.length) {
-      if (loaded.length) state.shows = mergeShows([...state.shows, ...loaded]);
-      const addonCount = addonSections.reduce((total, section) => total + (section.items?.length || 0), 0);
-      state.apiStatus.local = loaded.length
-        ? `${loaded.length} local titles`
+    // Final consolidated state + full render
+    state.addonSections = addonSections;
+    if (allLoaded.length || addonSections.length) {
+      state.shows = mergeShows([...baseShows, ...allLoaded]);
+      warmTioAnimeSlugCatalog(state.shows);
+      warmAnimeAv1SlugCatalog(state.shows);
+      const addonCount = addonSections.reduce((t, s) => t + (s.items?.length || 0), 0);
+      state.apiStatus.local = allLoaded.length
+        ? `${allLoaded.length} local titles`
         : `${addonCount} addon titles`;
-      setSourceStatus(catalogStatusLabel("AniList + Jikan + Local", state.shows));
+      setSourceStatus(catalogStatusLabel("AniList + Jikan + Sources", state.shows));
       render();
     } else {
-      state.apiStatus.local = enabledSources.length ? "No local titles loaded" : "No enabled local sources";
+      state.apiStatus.local = enabledSources.length ? "No titles loaded" : "No enabled sources";
       state.addonSections = [];
       renderAddonSections();
       renderSources();
@@ -379,12 +484,12 @@ async function loadExternalSources() {
 async function fetchLocalMetadataCatalog() {
   if (location.protocol === "file:") return [];
   const response = await fetchWithTimeout(LOCAL_METADATA_ENDPOINT, { cache: "no-store" });
-  if (!response.ok) throw new Error("AnimeTV metadata API unavailable");
+  if (!response.ok) throw new Error("ZenkaiTV metadata API unavailable");
   const payload = await response.json();
   const rawItems = Array.isArray(payload)
     ? payload
     : payload.items || payload.results || payload.anime || payload.catalog || payload.data || [];
-  const source = { id: "animetv-api", name: payload.source || "AnimeTV API" };
+  const source = { id: "animetv-api", name: payload.source || "ZenkaiTV API" };
   return rawItems.map((item, index) => normalizeExternalShow(item, source, index)).filter(Boolean);
 }
 
@@ -395,7 +500,8 @@ async function fetchExternalCatalog(source) {
 
 async function fetchExternalCatalogData(source, page = null) {
   const cacheKey = `external:${source.id || source.name}:${page || getSourcePage(source) || 1}`;
-  const cached = readResponseCache(cacheKey);
+  const useCache = !source.noCache && !source.playbackOnly;
+  const cached = useCache ? readResponseCache(cacheKey) : null;
   if (cached) return cached;
   const response = await fetchCatalogResponse(source);
   if (!response.ok) throw new Error(`${source.name} failed`);
@@ -411,7 +517,7 @@ async function fetchExternalCatalogData(source, page = null) {
     hasMore: Boolean(payload.hasMore || payload.nextPage),
     totalResults: Number(payload.totalResults || payload.total || payload.count || 0) || null
   };
-  writeResponseCache(cacheKey, catalog);
+  if (useCache) writeResponseCache(cacheKey, catalog);
   return catalog;
 }
 
@@ -491,6 +597,43 @@ function getAniPubSource() {
     || { id: "anipub-catalog", name: "AniPub", endpoint: "./api/anipub/catalog/all?limit=100&page=1", pageSize: 100, paginated: true };
 }
 
+function getLocalFinderSource() {
+  return state.localSources.find((source) => source.id === LOCAL_FINDER_SOURCE_ID)
+    || state.customSources.find((source) => source.id === LOCAL_FINDER_SOURCE_ID)
+    || LOCAL_FINDER_SOURCE;
+}
+
+async function ensureLocalFinderSectionLoaded() {
+  const existing = state.addonSections.find((section) => section.id === LOCAL_FINDER_SOURCE_ID && section.items?.length);
+  if (existing) return existing;
+  const source = applySourceOverride(getLocalFinderSource());
+  if (!source?.enabled || !source.endpoint || source.deleted) return null;
+  try {
+    const catalog = await fetchExternalCatalogData(source);
+    if (!catalog.items?.length) return null;
+    const section = {
+      id: source.id,
+      name: source.name || source.id,
+      type: source.type || "playback-addon",
+      items: catalog.items,
+      source,
+      page: catalog.page,
+      nextPage: catalog.nextPage,
+      hasMore: catalog.hasMore,
+      totalResults: catalog.totalResults,
+      paginated: Boolean(source.paginated || catalog.nextPage || catalog.hasMore)
+    };
+    state.addonSections = [
+      ...state.addonSections.filter((entry) => entry.id !== source.id),
+      section
+    ];
+    return section;
+  } catch (error) {
+    console.warn("Local Finder catalog unavailable:", error);
+    return null;
+  }
+}
+
 function getAniPubSection() {
   return state.addonSections.find((section) => section.id === "anipub-catalog")
     || { id: "anipub-catalog", name: "AniPub", items: [], page: 0, hasMore: true, source: getAniPubSource() };
@@ -551,8 +694,8 @@ function addCustomSource() {
     type: isOnline ? "online-addon" : "local-addon",
     endpoint: normalizedEndpoint,
     description: isOnline
-      ? "Online addon added from AnimeTV. It should return normalized catalog JSON from a source you are allowed to use."
-      : "Local addon added from AnimeTV. It should return normalized catalog JSON."
+      ? "Online addon added from ZenkaiTV. It should return normalized catalog JSON from a source you are allowed to use."
+      : "Local addon added from ZenkaiTV. It should return normalized catalog JSON."
   };
   state.customSources = [...state.customSources, source];
   saveCustomSources();
@@ -567,7 +710,7 @@ function addCustomSource() {
 function removeSource(sourceId) {
   const source = state.localSources.find((item) => item.id === sourceId);
   if (!source) return;
-  const confirmed = window.confirm(`Remove "${source.name || "this source"}" from AnimeTV?`);
+  const confirmed = window.confirm(`Remove "${source.name || "this source"}" from ZenkaiTV?`);
   if (!confirmed) return;
 
   if (source.custom) {
@@ -599,6 +742,10 @@ async function fetchAniListTrending() {
           episodes
           genres
           averageScore
+          format
+          duration
+          seasonYear
+          startDate { year month day }
           status
           siteUrl
           nextAiringEpisode { episode airingAt }
@@ -690,30 +837,115 @@ function matchesShowSearch(show) {
   ].some((value) => String(value || "").toLowerCase().includes(query));
 }
 
+/**
+ * Return the most recently aired shows for the carousel (up to `limit`).
+ * Only currently-airing shows with a confirmed broadcast day are considered.
+ * Shows are sorted by "last aired" date (most recent first) so the carousel
+ * always reflects what actually dropped this week or last week.
+ */
+function recentlyAiredShows(limit = 8) {
+  const now     = new Date();
+  const nowMs   = now.getTime();
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const DAY_IDX = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+
+  const seenTitles = new Set();
+
+  // Build candidates: airing shows with a known broadcast day
+  const candidates = state.shows
+    .filter((show) => {
+      if (!show.image) return false;
+      if (!show.day || show.day === "TBA" || show.day === "Local") return false;
+      const status = (show.status || "").toUpperCase();
+      if (status === "FINISHED" || status === "CANCELLED") return false;
+      return true;
+    })
+    .map((show) => {
+      const dayShort = show.day.toLowerCase().slice(0, 3);
+      const dayNum   = DAY_IDX[dayShort];
+      if (dayNum === undefined) return null;
+
+      // Parse air time (handles "10:30 PM", "23:00", "TBA")
+      let airH = 0, airM = 0;
+      if (show.time && show.time !== "TBA") {
+        const m = show.time.match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+        if (m) {
+          airH = parseInt(m[1], 10);
+          airM = parseInt(m[2], 10);
+          const ap = m[3]?.toLowerCase();
+          if (ap === "pm" && airH !== 12) airH += 12;
+          if (ap === "am" && airH === 12)  airH  = 0;
+        }
+      }
+
+      // Most recent past occurrence of this day+time
+      const daysBack = (now.getDay() - dayNum + 7) % 7;
+      const d = new Date(now);
+      d.setDate(d.getDate() - daysBack);
+      d.setHours(airH, airM, 0, 0);
+
+      // If that calculated moment is still in the future, go back one week
+      if (d.getTime() > nowMs) d.setDate(d.getDate() - 7);
+
+      const lastAiredMs = d.getTime();
+      // Discard if older than 14 days (two cycles back, safely handles gaps)
+      if (nowMs - lastAiredMs > 14 * 24 * 60 * 60 * 1000) return null;
+
+      return { show, lastAiredMs };
+    })
+    .filter(Boolean);
+
+  // Sort most-recent first, then by visual quality (banner > score)
+  candidates.sort((a, b) => {
+    const timeDiff = b.lastAiredMs - a.lastAiredMs;
+    if (timeDiff !== 0) return timeDiff;
+    return Number(Boolean(b.show.banner)) - Number(Boolean(a.show.banner));
+  });
+
+  // Deduplicate by normalised title and collect up to `limit` shows
+  const result = [];
+  for (const { show } of candidates) {
+    const key = normalizeTitle(show.title);
+    if (seenTitles.has(key)) continue;
+    seenTitles.add(key);
+    result.push(show);
+    if (result.length >= limit) break;
+  }
+
+  // If we still don't have enough, pad with high-quality airing shows
+  if (result.length < limit) {
+    const pad = sortCarouselQuality(
+      state.shows.filter((s) => s.image && !seenTitles.has(normalizeTitle(s.title)))
+    ).slice(0, limit - result.length);
+    result.push(...pad);
+  }
+
+  return result;
+}
+
+// Keep the old name as an alias so nothing else breaks
 function todayShows() {
-  const today = new Date().toLocaleDateString([], { weekday: "short" }).toLowerCase();
-  const scheduled = state.shows.filter((show) => show.day?.toLowerCase().startsWith(today));
-  const withBanners = scheduled.filter((show) => show.banner);
-  if (withBanners.length) return sortCarouselQuality(withBanners);
-  const anyBanners = state.shows.filter((show) => show.banner);
-  if (anyBanners.length) return sortCarouselQuality(anyBanners).slice(0, 16);
-  return sortCarouselQuality(scheduled.length ? scheduled : state.shows.slice(0, 10));
+  return recentlyAiredShows(8);
 }
 
 
 function renderCarousel() {
   const items = todayShows();
   if (!items.length) {
+    carouselStage.classList.add("is-loading");
     carouselPosterWrap.innerHTML = `<div class="carousel-poster carousel-poster-skeleton" aria-hidden="true"></div>`;
     carouselBackdrop.classList.remove("has-banner", "is-poster-backdrop");
     carouselBackdrop.style.backgroundImage = "linear-gradient(135deg, #121733 0%, #1b1a3b 38%, #0b2637 100%)";
-    carouselTitle.textContent = "Loading AnimeTV...";
+    carouselTitle.textContent = "Loading ZenkaiTV...";
     carouselText.textContent = "Getting the catalog ready.";
     carouselMeta.textContent = "Please wait";
     carouselOpen.removeAttribute("data-open-show");
+    carouselOpen.disabled = true;
     if (carouselIndicators) carouselIndicators.innerHTML = "";
     return;
   }
+  carouselStage.classList.remove("is-loading");
+  carouselOpen.disabled = false;
   if (state.carouselIndex >= items.length) state.carouselIndex = 0;
   if (state.carouselIndex < 0) state.carouselIndex = items.length - 1;
   const show = items[state.carouselIndex];
@@ -731,7 +963,7 @@ function renderCarousel() {
     : fallbackArt
       ? `url("${fallbackArt}")`
       : "linear-gradient(135deg, #121733 0%, #1b1a3b 38%, #0b2637 100%)";
-  carouselTitle.textContent = show.title;
+  carouselTitle.textContent = getShowTitle(show);
   carouselText.textContent = simpleCarouselText(show);
   carouselMeta.textContent = [show.day, show.time, show.genre.toUpperCase()].filter(Boolean).join(" | ");
   const target = getCardTarget(show);
@@ -745,7 +977,7 @@ function renderCarousel() {
 function renderCarouselIndicators(items) {
   if (!carouselIndicators) return;
   carouselIndicators.innerHTML = items.slice(0, 8).map((show, index) => `
-    <button class="carousel-dot focusable ${index === state.carouselIndex ? "is-selected" : ""}" data-carousel-index="${index}" aria-label="Show ${show.title}">
+    <button class="carousel-dot focusable ${index === state.carouselIndex ? "is-selected" : ""}" data-carousel-index="${index}" aria-label="Show ${escapeHtml(getShowTitle(show))}">
       ${show.image ? `<img src="${show.image}" alt="">` : "<span></span>"}
     </button>
   `).join("");
@@ -791,7 +1023,7 @@ function restartCarouselTimer() {
 function cardTemplate(show, index = 0) {
   const isFavorite = state.favorites.includes(show.id);
   const colors = Array.isArray(show.colors) && show.colors.length >= 2 ? show.colors : ["#00d2ff", "#251d47"];
-  const title = escapeHtml(show.title || "Untitled Anime");
+  const title = escapeHtml(getShowTitle(show));
   const artStyle = `--thumb-a: ${colors[0]}; --thumb-b: ${colors[1]}`;
   const meta = cardMeta(show, isFavorite);
   const target = getCardTarget(show);
@@ -818,9 +1050,13 @@ function cardTemplate(show, index = 0) {
 function getCardTarget(show) {
   const seasonNumber = extractSeasonNumber(show.title, 1);
   const episodeNumber = Number(show.episode);
+  const totalEpisodes = Number(show.totalEpisodes || show.episodeCount || show.episodesCount);
+  const safeEpisodeNumber = Number.isFinite(totalEpisodes) && totalEpisodes > 0 && Number.isFinite(episodeNumber)
+    ? Math.min(episodeNumber, totalEpisodes)
+    : episodeNumber;
   return {
     seasonNumber,
-    episodeNumber: Number.isFinite(episodeNumber) && episodeNumber > 0 ? episodeNumber : ""
+    episodeNumber: Number.isFinite(safeEpisodeNumber) && safeEpisodeNumber > 0 ? safeEpisodeNumber : ""
   };
 }
 
@@ -834,11 +1070,13 @@ function cardMeta(show, isFavorite = false) {
 
 function renderCards(container, list) {
   if (!container) return;
+  container.classList.remove("is-skeleton-loading");
   container.innerHTML = list.map((show, index) => cardTemplate(show, index)).join("");
 }
 
-function renderSkeletonCards(container, count = 12) {
+function renderSkeletonCards(container, count = 7) {
   if (!container) return;
+  container.classList.add("is-skeleton-loading");
   container.innerHTML = Array.from({ length: count }, (_, index) => `
     <div class="show-card skeleton-card" style="--card-index: ${index}" aria-hidden="true">
       <span class="thumb-art"></span>
@@ -851,29 +1089,61 @@ function renderSkeletonCards(container, count = 12) {
 }
 
 function renderSchedule() {
+  // Fixed Mon → Sun order
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const fallback = state.shows.filter((show) => show.day === "TBA").slice(0, 14);
+
+  // Only shows with a confirmed weekly broadcast day AND an active airing status.
+  // Exclude anything AniList/Jikan marks as FINISHED or CANCELLED — these are
+  // completed series that still have a stored broadcast day (e.g. Naruto, HxH).
+  const airingShows = (() => {
+    const seen = new Map();
+    [...state.shows]
+      .filter((show) => {
+        if (!show.day || show.day === "TBA" || show.day === "Local") return false;
+        const status = (show.status || "").toUpperCase();
+        // Exclude shows that have definitively ended
+        if (status === "FINISHED" || status === "CANCELLED") return false;
+        if (status.includes("FINISH")) return false; // catches "Finished Airing" from MAL
+        return true;
+      })
+      .sort((a, b) => {
+        const hasEp = (s) => s.episode && s.episode !== "?" ? 1 : 0;
+        return hasEp(b) - hasEp(a);
+      })
+      .forEach((show) => {
+        const key = normalizeTitle(show.title);
+        if (!seen.has(key)) {
+          seen.set(key, show);
+        } else {
+          const existing = seen.get(key);
+          const betterTime = show.time && !existing.time;
+          const betterImg = show.image && !existing.image;
+          if (betterTime || betterImg) seen.set(key, { ...existing, ...show, id: existing.id });
+        }
+      });
+    return [...seen.values()];
+  })();
+
   scheduleList.innerHTML = days.map((day) => {
-    const shows = state.shows
+    const shows = airingShows
       .filter((show) => show.day?.toLowerCase().startsWith(day.toLowerCase()))
-      .slice(0, 10);
-    const dayShows = shows.length ? shows : fallback.splice(0, 2);
+      .slice(0, 12);
     return `
       <section class="schedule-day-column">
         <h3>${fullDayName(day)}</h3>
         <div class="schedule-day-rail">
-          ${dayShows.map((show) => `
+          ${shows.length ? shows.map((show) => `
             <button class="schedule-item focusable" data-open-show="${escapeHtml(show.id)}" data-open-season="${getCardTarget(show).seasonNumber}" data-open-episode="${getCardTarget(show).episodeNumber}">
               <span class="schedule-thumb">
-                ${show.image ? `<img src="${show.image}" alt="" loading="lazy">` : ""}
-                <span>${show.episode === "?" ? "TV" : `EP ${show.episode}`}</span>
+                ${show.image ? `<img src="${escapeHtml(show.image)}" alt="" loading="lazy">` : ""}
+                <span>${show.episode && show.episode !== "?" ? `EP ${show.episode}` : "TV"}</span>
               </span>
               <span class="schedule-copy">
-                <span class="schedule-title">${show.title}</span>
-                <span class="show-meta">${show.time || "TBA"} | ${show.source}</span>
+                <span class="schedule-title">${escapeHtml(getShowTitle(show))}</span>
+                <span class="show-meta">${show.time ? escapeHtml(show.time) : "TBA"}${show.source ? ` · ${escapeHtml(show.source)}` : ""}</span>
               </span>
             </button>
-          `).join("")}
+          `).join("") : `<p class="schedule-empty">No new episodes</p>`}
         </div>
       </section>
     `;
@@ -1508,6 +1778,108 @@ async function resolveEpisodeWithJimovFallback(show, episode, seasonNumber = 1) 
   return { type: "none" };
 }
 
+const ALLANIME_FALLBACK_PREFIX = "animetv-allanime-fallback:";
+const ALLANIME_FALLBACK_TTL = 1000 * 60 * 45;
+
+async function resolveEpisodeWithAllAnimeFallback(show, episode, seasonNumber = 1) {
+  if (!show || !episode) return { type: "none" };
+  const episodeNumber = Number(episode.episode || episode.number || 1);
+  const cacheKey = `${ALLANIME_FALLBACK_PREFIX}${normalizeTitle(show.title)}:s${seasonNumber}:e${episodeNumber}`;
+  try {
+    const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+    if (cached?.expiry > Date.now()) {
+      if (!cached.found) return { type: "none" };
+      (cached.sourceOptions || []).forEach((option) => addEpisodeSourceOption(episode, option));
+      if (cached.videoUrl) episode.videoUrl = episode.videoUrl || cached.videoUrl;
+      if (cached.externalUrl && !episode.externalUrl) {
+        episode.externalUrl = cached.externalUrl;
+        episode.externalType = cached.externalType || "iframe";
+      }
+      episode.locked = false;
+      if (cached.videoUrl) return { type: "direct", url: cached.videoUrl, source: "AllAnime" };
+      if (cached.externalUrl) return { type: "iframe", externalUrl: cached.externalUrl, source: "AllAnime" };
+    }
+  } catch (error) {
+    localStorage.removeItem(cacheKey);
+  }
+
+  try {
+    // 1. Search AllAnime for this show
+    const searchUrl = new URL("./api/allanime/search", location.href);
+    searchUrl.searchParams.set("q", stripSeasonFromTitle(show.title));
+    searchUrl.searchParams.set("limit", "8");
+    const searchResponse = await fetchWithTimeout(searchUrl.toString(), { cache: "no-store" }, 10000);
+    if (!searchResponse.ok) throw new Error("AllAnime search unavailable");
+    const searchPayload = await searchResponse.json();
+    const candidates = Array.isArray(searchPayload.items) ? searchPayload.items : [];
+    const matched = candidates
+      .map((candidate) => ({ candidate, score: titleMatchScore(show, candidate) }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score)[0]?.candidate;
+    if (!matched?.allAnimeId && !matched?.id) {
+      localStorage.setItem(cacheKey, JSON.stringify({ found: false, expiry: Date.now() + ALLANIME_FALLBACK_TTL }));
+      return { type: "none" };
+    }
+
+    // 2. Get stream URLs for this episode
+    const watchUrl = new URL("./api/allanime/watch", location.href);
+    watchUrl.searchParams.set("id", matched.allAnimeId || matched.id);
+    watchUrl.searchParams.set("ep", String(episodeNumber));
+    watchUrl.searchParams.set("lang", "sub");
+    const watchResponse = await fetchWithTimeout(watchUrl.toString(), { cache: "no-store" }, 10000);
+    if (!watchResponse.ok) throw new Error("AllAnime watch unavailable");
+    const watchPayload = await watchResponse.json();
+    const streamItems = Array.isArray(watchPayload.sources) ? watchPayload.sources : [];
+    if (!streamItems.length) {
+      localStorage.setItem(cacheKey, JSON.stringify({ found: false, expiry: Date.now() + ALLANIME_FALLBACK_TTL }));
+      return { type: "none" };
+    }
+
+    // 3. Build source options from stream items
+    const sourceOptions = streamItems.slice(0, 6).map((item, index) => ({
+      id: `allanime-${item.sourceName || index}`,
+      label: `AllAnime · ${item.sourceName || `Source ${index + 1}`}`,
+      type: item.type === "direct" ? "direct" : "iframe",
+      videoUrl: item.type === "direct" ? item.url : "",
+      externalUrl: item.type !== "direct" ? item.url : "",
+      externalType: "iframe"
+    })).filter((option) => option.videoUrl || option.externalUrl);
+
+    if (!sourceOptions.length) {
+      localStorage.setItem(cacheKey, JSON.stringify({ found: false, expiry: Date.now() + ALLANIME_FALLBACK_TTL }));
+      return { type: "none" };
+    }
+
+    sourceOptions.forEach((option) => addEpisodeSourceOption(episode, option));
+    const directOption = sourceOptions.find((option) => option.videoUrl);
+    const iframeOption = sourceOptions.find((option) => option.externalUrl);
+    if (directOption) episode.videoUrl = episode.videoUrl || directOption.videoUrl;
+    if (iframeOption && !episode.externalUrl) {
+      episode.externalUrl = iframeOption.externalUrl;
+      episode.externalType = "iframe";
+    }
+    episode.server = episode.server || "AllAnime";
+    episode.locked = false;
+
+    const saveVideoUrl = directOption?.videoUrl || "";
+    const saveExternalUrl = iframeOption?.externalUrl || "";
+    const saveExternalType = saveExternalUrl ? "iframe" : "";
+    localStorage.setItem(cacheKey, JSON.stringify({
+      found: true,
+      videoUrl: saveVideoUrl,
+      externalUrl: saveExternalUrl,
+      externalType: saveExternalType,
+      sourceOptions,
+      expiry: Date.now() + ALLANIME_FALLBACK_TTL
+    }));
+    if (saveVideoUrl) return { type: "direct", url: saveVideoUrl, source: "AllAnime" };
+    if (saveExternalUrl) return { type: "iframe", externalUrl: saveExternalUrl, source: "AllAnime" };
+  } catch (error) {
+    console.warn("AllAnime fallback failed:", error);
+  }
+  return { type: "none" };
+}
+
 async function resolveEpisodeWithRapidAnimeFallback(show, episode, seasonNumber = 1) {
   if (!show || !episode || isRapidAnimeShow(show)) return { type: "none" };
   const episodeNumber = Number(episode.episode || episode.number || 1);
@@ -1664,6 +2036,7 @@ async function resolveEpisodeWithConsumetFallback(show, episode, seasonNumber = 
 async function attachLoadedAddonFallbacks(show, episode, seasonNumber = 1) {
   if (!show || !episode) return;
   const episodeNumber = Number(episode.episode || episode.number || 1);
+  await ensureLocalFinderSectionLoaded();
   const sections = state.addonSections.filter((section) =>
     section?.items?.length
     && !["anipub-catalog", "consumet-kickassanime", "anime1v-spanish", "jimov-tioanime", "rapidapi-anime-streaming"].includes(section.id)
@@ -1678,24 +2051,75 @@ async function attachLoadedAddonFallbacks(show, episode, seasonNumber = 1) {
     const targetSeason = seasons.find((season) => Number(season.season || 1) === Number(seasonNumber || 1)) || seasons[0];
     const targetEpisode = (targetSeason?.episodes || []).find((entry) => Number(entry.episode || entry.number) === episodeNumber);
     if (!targetEpisode) return;
-    normalizeEpisodeSourceOptions(targetEpisode).forEach((option) => addEpisodeSourceOption(episode, {
+    let foundPlayable = false;
+    const scrapedLabel = scrapedPlaybackLabel(targetEpisode, matched, section);
+    const scrapedIdBase = `${section.id}-${normalizeTitle(scrapedLabel) || "scraped"}`;
+    const sourceOptions = normalizeEpisodeSourceOptions(targetEpisode);
+    sourceOptions.forEach((option) => addEpisodeSourceOption(episode, {
       ...option,
-      id: `${section.id}-${option.id || normalizeTitle(option.label || "source")}`,
-      label: option.label || section.name || section.id
+      id: `${scrapedIdBase}-${option.id || normalizeTitle(option.label || "source")}`,
+      label: option.label && !/^external|direct|source\s*\d+$/i.test(option.label) ? option.label : scrapedLabel
     }));
+    if (sourceOptions.length) foundPlayable = true;
     if (targetEpisode.streamResolver) addEpisodeSourceOption(episode, {
-      id: `${section.id}-resolver`,
-      label: section.name || section.id,
+      id: `${scrapedIdBase}-resolver`,
+      label: scrapedLabel,
       type: "resolver",
       streamResolver: targetEpisode.streamResolver
     });
+    if (targetEpisode.streamResolver) foundPlayable = true;
     const directUrl = getEpisodeUrl(targetEpisode);
-    if (directUrl && !getEpisodeUrl(episode)) episode.videoUrl = directUrl;
-    if (targetEpisode.externalUrl && !episode.externalUrl) {
-      episode.externalUrl = targetEpisode.externalUrl;
-      episode.externalType = targetEpisode.externalType || "iframe";
+    if (directUrl) {
+      foundPlayable = true;
+      if (!getEpisodeUrl(episode)) episode.videoUrl = directUrl;
+      addEpisodeSourceOption(episode, {
+        id: `${scrapedIdBase}-direct`,
+        label: scrapedLabel,
+        type: "direct",
+        videoUrl: directUrl,
+        downloadUrl: targetEpisode.downloadUrl || targetEpisode.download || targetEpisode.download_url || directUrl
+      });
+    }
+    if (targetEpisode.externalUrl) {
+      foundPlayable = true;
+      if (!episode.externalUrl) {
+        episode.externalUrl = targetEpisode.externalUrl;
+        episode.externalType = targetEpisode.externalType || "iframe";
+      }
+      addEpisodeSourceOption(episode, {
+        id: `${scrapedIdBase}-embed`,
+        label: scrapedLabel,
+        type: "iframe",
+        externalUrl: targetEpisode.externalUrl,
+        externalType: targetEpisode.externalType || "iframe",
+        downloadUrl: targetEpisode.downloadUrl || targetEpisode.download || targetEpisode.download_url || ""
+      });
+    }
+    if (foundPlayable) {
+      episode.locked = false;
+      episode.server = episode.server || scrapedLabel;
+      episode.serverChecks = episode.serverChecks || {};
     }
   });
+}
+
+function scrapedPlaybackLabel(targetEpisode = {}, matched = {}, section = {}) {
+  const directLabel = targetEpisode.server || targetEpisode.source || targetEpisode.provider || matched.source || "";
+  if (directLabel) return cleanPlaybackSourceLabel(directLabel);
+  const url = targetEpisode.siteUrl || targetEpisode.externalUrl || matched.siteUrl || "";
+  if (/tioanime/i.test(url)) return "TioAnime";
+  if (/animeflv/i.test(url)) return "AnimeFLV";
+  if (/mega\\.nz/i.test(url)) return "MEGA";
+  return cleanPlaybackSourceLabel(section.name || "Scraped Link");
+}
+
+function getShowAnilistId(show) {
+  if (!show) return "";
+  if (show.anilistId) return String(show.anilistId);
+  const match = (show.id || "").match(/apk-1anime-(\d+)/);
+  if (match) return match[1];
+  if (show.anime1vUrl && /^\d+$/.test(String(show.anime1vUrl))) return String(show.anime1vUrl);
+  return "";
 }
 
 function playbackLookupWithTimeout(label, promise, timeoutMs = 6500) {
@@ -1712,17 +2136,50 @@ async function attachPlaybackSourceOptions(show, episode, seasonNumber = 1) {
   if (!show || !episode) return episode;
   const episodeNumber = Number(episode.episode || episode.number || 1);
   const lookupKey = `${normalizeTitle(show.title)}:s${seasonNumber}:e${episodeNumber}`;
-  if (episode.sourceOptionsChecked === lookupKey) return episode;
+  if (episode.sourceOptionsChecked === lookupKey && episode.tioAnimeSourcesChecked && episode.animeAv1SourcesChecked) return episode;
+
+  // Initialize per-server status tracking (undefined = still pending; "found" / "notfound")
+  episode.serverChecks = {};
+
   const beforeCount = getEpisodePlaybackSources(episode).length;
-  await playbackLookupWithTimeout("AniPub", attachAniPubFallback(show, episode), 3200);
+
+  const refreshPicker = () => {
+    const frame = document.querySelector("#videoFrame");
+    if (frame?.querySelector(".source-picker")) {
+      renderSourcePickerIn(frame);
+    }
+  };
+
+  const updateServerCheck = (key, match) => {
+    episode.sourceOptions = normalizeEpisodeSourceOptions(episode);
+    const found = getEpisodePlaybackSources(episode).some(match);
+    episode.serverChecks[key] = found ? "found" : "notfound";
+    // Record when each server first became ready, so the picker can float the
+    // first-ready scraper (TioAnime / AnimeAV1) to the top.
+    if (found) {
+      episode.serverReadyAt = episode.serverReadyAt || {};
+      if (!episode.serverReadyAt[key]) episode.serverReadyAt[key] = Date.now();
+    }
+    refreshPicker();
+  };
+
   await Promise.allSettled([
-    playbackLookupWithTimeout("Anime1v", resolveEpisodeWithAnime1vFallback(show, episode, seasonNumber), 5200),
-    playbackLookupWithTimeout("KickAssAnime", resolveEpisodeWithConsumetFallback(show, episode, seasonNumber), 6200),
-    playbackLookupWithTimeout("JIMOV", resolveEpisodeWithJimovFallback(show, episode, seasonNumber), 6200),
-    playbackLookupWithTimeout("RapidAPI", resolveEpisodeWithRapidAnimeFallback(show, episode, seasonNumber), 16000),
-    playbackLookupWithTimeout("Loaded addons", attachLoadedAddonFallbacks(show, episode, seasonNumber), 2200)
+    playbackLookupWithTimeout("AniPub", attachAniPubFallback(show, episode), 2600)
+      .then(() => updateServerCheck("anipub", KNOWN_SOURCE_SERVERS[0].match)),
+    playbackLookupWithTimeout("Loaded addons", attachLoadedAddonFallbacks(show, episode, seasonNumber), 1800)
+      .then(() => refreshPicker()),
+    // This uses the scraper-discovered provider URLs directly as playable sources.
+    playbackLookupWithTimeout("TioAnime scraper", attachTioAnimeSources(show, episode), 6500)
+      .then(() => updateServerCheck("tioanime", getKnownSourceServer("tioanime").match)),
+    playbackLookupWithTimeout("AnimeAV1 scraper", attachAnimeAv1Sources(show, episode), 6500)
+      .then(() => updateServerCheck("animeav1", getKnownSourceServer("animeav1").match))
   ]);
-  episode.sourceOptions = normalizeEpisodeSourceOptions(episode);
+
+  // Ensure any timed-out servers are marked not-found after every source has had a chance.
+  for (const def of KNOWN_SOURCE_SERVERS) {
+    if (!episode.serverChecks[def.key]) episode.serverChecks[def.key] = "notfound";
+  }
+
   episode.sourceOptionsChecked = lookupKey;
   if (episode.sourceOptions.length > beforeCount) {
     console.info(`Loaded ${episode.sourceOptions.length} playback server option(s) for ${show.title} episode ${episodeNumber}.`);
@@ -1736,9 +2193,13 @@ function playbackLookupKey(show, episode, seasonNumber = 1) {
   return `${normalizeTitle(show.title)}:s${seasonNumber}:e${episodeNumber}`;
 }
 
+function getKnownSourceServer(key) {
+  return KNOWN_SOURCE_SERVERS.find((def) => def.key === key) || { match: () => false };
+}
+
 function schedulePlaybackSourceOptions(show, episode, seasonNumber = 1, options = {}) {
   const lookupKey = playbackLookupKey(show, episode, seasonNumber);
-  if (!lookupKey || episode.sourceOptionsChecked === lookupKey) return Promise.resolve(episode);
+  if (!lookupKey || (episode.sourceOptionsChecked === lookupKey && episode.tioAnimeSourcesChecked && episode.animeAv1SourcesChecked)) return Promise.resolve(episode);
   if (pendingSourceLookups.has(lookupKey)) return pendingSourceLookups.get(lookupKey);
 
   episode.sourceOptionsPending = true;
@@ -1754,6 +2215,11 @@ function schedulePlaybackSourceOptions(show, episode, seasonNumber = 1, options 
       if (selected?.episode === episode && state.activeShow === show) {
         renderEpisodeList(show);
         if (options.autoReplay) playActiveShow({ allowSourceLookup: false });
+        // Refresh source picker if it's currently open (user pressed ✕ and sees picker)
+        const frame = document.querySelector("#videoFrame");
+        if (frame?.querySelector(".source-picker")) {
+          renderSourcePickerIn(frame);
+        }
       }
       refreshFocusables();
     });
@@ -1806,8 +2272,23 @@ function isAniPubShow(show) {
 
 function renderAddonSections() {
   if (!addonSections) return;
-  const sections = state.addonSections
-    .filter((section) => section.id !== "anipub-catalog" && section.items?.length)
+
+  const loadedSections = state.addonSections
+    .filter((section) =>
+      section.id !== "anipub-catalog"
+      && !section.source?.hidden
+      && !section.source?.playbackOnly
+      && section.items?.length
+    );
+
+  // Show loading skeleton while sources are still being fetched
+  if (!state.externalSourcesLoaded && !loadedSections.length && state.route === "home") {
+    addonSections.innerHTML = `<div class="addon-loading-hint">Loading sources…</div>`;
+    addonSections.hidden = false;
+    return;
+  }
+
+  const sections = loadedSections
     .map((section) => {
       const railId = `addonRail-${cssSafeId(section.id)}`;
       const matchingItems = section.items.filter((show) => {
@@ -1820,12 +2301,15 @@ function renderAddonSections() {
         : state.addonVisible[section.id] || ADDON_CARD_LIMIT;
       const items = matchingItems.slice(0, visibleLimit).map(resolveAddonShow);
       if (!items.length) return "";
+      const totalLabel = section.totalResults
+        ? `${matchingItems.length} of ${section.totalResults}`
+        : `${matchingItems.length}`;
       return `
         <section class="content-band addon-band" data-addon-source="${section.id}">
           <div class="section-heading">
             <span class="addon-dot" aria-hidden="true"></span>
             <h2>${escapeHtml(section.name)}</h2>
-            <small>${matchingItems.length} available</small>
+            <small>${totalLabel} available</small>
           </div>
           <div class="rail-shell">
             <button class="rail-arrow rail-arrow-left focusable" data-scroll-rail="${railId}" data-scroll-dir="-1" aria-label="Scroll ${escapeHtml(section.name)} left">‹</button>
@@ -1906,26 +2390,19 @@ function resolveAddonShow(show) {
 
 
 
-function renderSources() {
-  if (!sourcesGrid || !sourceSummary) return;
-  const count = state.localSources.length;
-  const enabled = state.localSources.filter((source) => source.enabled).length;
-  sourceSummary.textContent = count
-    ? `${enabled} enabled source/addon${enabled === 1 ? "" : "s"} | Metadata API: ${state.apiStatus.metadata} | Direct APIs: ${state.apiStatus.direct}`
-    : t("sourceSummaryDefault");
-
-  sourcesGrid.innerHTML = `
+function buildSourceCardsHtml() {
+  return `
     <article class="source-card source-card-add">
       <div>
         <strong>Add Server or Online Addon</strong>
         <span>Local or HTTPS</span>
       </div>
-      <p>Paste a local server URL or online HTTPS addon that returns anime JSON. AnimeTV will merge it with AniList/Jikan and unlock episodes when items include videoUrl, streamUrl, or file.</p>
+      <p>Paste a local server URL or online HTTPS addon that returns anime JSON. ZenkaiTV will merge it with AniList/Jikan and unlock episodes when items include videoUrl, streamUrl, or file.</p>
       <button class="primary-action focusable" data-source-add>Add Source</button>
     </article>
     <article class="source-card source-card-feature">
       <div>
-        <strong>AnimeTV Metadata API</strong>
+        <strong>ZenkaiTV Metadata API</strong>
         <span>${state.apiStatus.metadata}</span>
       </div>
       <p>Local server endpoint that merges AniList and Jikan before the TV app renders. If it is unavailable, the app falls back to direct public API calls.</p>
@@ -1942,11 +2419,11 @@ function renderSources() {
     ${state.localSources.map((source) => `
     <article class="source-card ${source.enabled ? "is-enabled" : ""}">
       <div>
-        <strong>${source.name || "Unnamed Source"}</strong>
-        <span>${source.type || "catalog"} | ${source.status || "Disabled"}</span>
+        <strong>${escapeHtml(source.name || "Unnamed Source")}</strong>
+        <span>${escapeHtml(source.type || "catalog")} | ${escapeHtml(source.status || "Disabled")}</span>
       </div>
-      <p>${source.description || "Local catalog connector."}</p>
-      <code>${resolveSourceEndpoint(source.endpoint) || "No endpoint configured"}</code>
+      <p>${escapeHtml(source.description || "Local catalog connector.")}</p>
+      <code>${escapeHtml(resolveSourceEndpoint(source.endpoint) || "No endpoint configured")}</code>
       ${source.id === "anime1v-spanish" ? `
         <label class="source-key-field">
           <span>Anime1v API key</span>
@@ -1954,15 +2431,77 @@ function renderSources() {
         </label>
       ` : ""}
       <div class="source-actions">
-        <button class="secondary-action focusable" data-source-toggle="${source.id}">
+        <button class="secondary-action focusable" data-source-toggle="${escapeHtml(source.id)}">
           ${source.enabled ? "Disable" : "Enable"}
         </button>
-        <button class="secondary-action focusable" data-source-test="${source.id}">Test</button>
-        <button class="secondary-action source-remove-action focusable" data-source-remove="${source.id}">Remove</button>
+        <button class="secondary-action focusable" data-source-test="${escapeHtml(source.id)}">Test</button>
+        <button class="secondary-action source-remove-action focusable" data-source-remove="${escapeHtml(source.id)}">Remove</button>
       </div>
     </article>
   `).join("")}`;
-  wireSourceButtons();
+}
+
+function renderSources() {
+  if (!sourcesGrid || !sourceSummary) return;
+  const count = state.localSources.length;
+  const enabled = state.localSources.filter((source) => source.enabled).length;
+  sourceSummary.textContent = count
+    ? `${enabled} enabled source/addon${enabled === 1 ? "" : "s"} | Metadata API: ${state.apiStatus.metadata} | Direct APIs: ${state.apiStatus.direct}`
+    : t("sourceSummaryDefault");
+  sourcesGrid.innerHTML = buildSourceCardsHtml();
+  wireSourceButtons(sourcesGrid);
+}
+
+function renderTermsHtml() {
+  return `<div class="settings-legal-section">
+    <h4>Terms of Service</h4>
+    <p>Last updated: May 2026</p>
+    <h4>1. Acceptance of Terms</h4>
+    <p>By using ZenkaiTV you agree to these Terms of Service. If you do not agree, please stop using the application immediately.</p>
+    <h4>2. Purpose of the Application</h4>
+    <p>ZenkaiTV is a personal media organizer and catalog browser. It aggregates publicly available metadata from third-party APIs (AniList, Jikan, and configured external addons) to help you discover, track, and play anime content.</p>
+    <h4>3. Content & Copyright</h4>
+    <p>ZenkaiTV does not host, store, or distribute any copyrighted video content. All video streams are provided by third-party sources that you configure. You are solely responsible for ensuring that your use of any linked content complies with applicable copyright laws in your jurisdiction.</p>
+    <h4>4. Third-Party Sources</h4>
+    <p>You may connect external addons and catalog endpoints. ZenkaiTV is not responsible for the content, availability, or legality of any third-party source. By adding a source you confirm that you have the right to access it.</p>
+    <h4>5. No Warranty</h4>
+    <p>ZenkaiTV is provided "as is" without warranties of any kind. We do not guarantee uninterrupted access, accuracy of metadata, or availability of any streaming endpoint. Catalog data depends entirely on third-party APIs that may change or become unavailable.</p>
+    <h4>6. Limitation of Liability</h4>
+    <p>To the fullest extent permitted by law, the developers of ZenkaiTV are not liable for any indirect, incidental, or consequential damages arising from your use of this application.</p>
+    <h4>7. Changes to Terms</h4>
+    <p>These terms may be updated at any time. Continued use of the application after changes are posted constitutes acceptance of the revised terms.</p>
+    <h4>8. Governing Law</h4>
+    <p>These terms are governed by the laws of the jurisdiction in which the application developer resides, without regard to conflict-of-law principles.</p>
+  </div>`;
+}
+
+function renderPrivacyHtml() {
+  return `<div class="settings-legal-section">
+    <h4>Privacy Policy</h4>
+    <p>Last updated: May 2026</p>
+    <h4>1. Data We Collect</h4>
+    <p>ZenkaiTV stores all user data locally on your device using <code>localStorage</code>. This includes:</p>
+    <ul>
+      <li>Your favorite shows and watch history</li>
+      <li>UI preferences (language, theme, volume, motion)</li>
+      <li>Configured source endpoints and API keys</li>
+      <li>Cached API responses (metadata, episode lists)</li>
+    </ul>
+    <h4>2. Data We Do NOT Collect</h4>
+    <p>We do not collect, transmit, or store any of your personal data on external servers. ZenkaiTV has no analytics, no telemetry, no accounts, and no login system.</p>
+    <h4>3. Third-Party API Requests</h4>
+    <p>When you use ZenkaiTV, the app makes requests to third-party APIs (AniList, Jikan, and any sources you configure). These services have their own privacy policies. Your IP address may be visible to those services as part of normal internet traffic.</p>
+    <h4>4. Local Storage</h4>
+    <p>All cached metadata and preferences are stored in your browser's <code>localStorage</code>. You can clear this data at any time from Settings → Player → Clear Cache, or through your browser's developer tools. Cache entries expire automatically based on their configured TTL.</p>
+    <h4>5. API Keys</h4>
+    <p>Any API keys you enter (e.g., for Anime1v) are stored locally in your browser only. They are never transmitted to the ZenkaiTV developers or any third party other than the specific service the key belongs to.</p>
+    <h4>6. Children's Privacy</h4>
+    <p>ZenkaiTV is not directed at children under 13. We do not knowingly collect information from children. If you believe a child is using the application inappropriately, please refer to your device's parental controls.</p>
+    <h4>7. Changes to This Policy</h4>
+    <p>We may update this Privacy Policy from time to time. The "last updated" date at the top reflects when changes were last made. Continued use of the application constitutes acceptance.</p>
+    <h4>8. Contact</h4>
+    <p>For privacy-related questions, please open an issue in the project repository or contact the developer directly.</p>
+  </div>`;
 }
 
 function renderSettings() {
@@ -1970,23 +2509,47 @@ function renderSettings() {
   const language = state.appLanguage;
   const preferences = getLanguagePreferences();
   const ui = state.uiPreferences;
+  const tabs = ["general", "player", "sources", "shortcuts", "legal"];
+  const activeTab = tabs.includes(state.activeSettingsTab) ? state.activeSettingsTab : "general";
+  const activeLegalTab = state.activeLegalTab || "terms";
+  const tc = (tab) => `settings-rail-item focusable ${activeTab === tab ? "is-selected" : ""}`;
+  const pa = (tab) => `class="settings-panel ${activeTab === tab ? "is-active" : ""}" id="settings-${tab}" data-settings-panel="${tab}" ${activeTab === tab ? "" : "hidden"}`;
+  const volPct = Math.round(Math.min(1, Math.max(0, Number(ui.defaultVolume ?? 0.1))) * 100);
+  const enabled = state.localSources.filter((s) => s.enabled).length;
+
   settingsGrid.innerHTML = `
     <aside class="settings-rail" aria-label="Settings categories">
-      <button class="settings-rail-item focusable is-selected" data-settings-nav="general" type="button">General</button>
-      <button class="settings-rail-item focusable" data-settings-nav="player" type="button">Player</button>
-      <button class="settings-rail-item focusable" data-settings-nav="streaming" type="button">Streaming</button>
-      <button class="settings-rail-item focusable" data-settings-nav="shortcuts" type="button">Shortcuts</button>
-      <span class="settings-version">AnimeTV 2.0<br>Web / Android TV</span>
+      <button class="${tc("general")}" data-settings-nav="general" type="button">
+        <span class="rail-icon" aria-hidden="true">⚙</span> General
+      </button>
+      <button class="${tc("player")}" data-settings-nav="player" type="button">
+        <span class="rail-icon" aria-hidden="true">▶</span> Player
+      </button>
+      <button class="${tc("sources")}" data-settings-nav="sources" type="button">
+        <span class="rail-icon" aria-hidden="true">◉</span> Sources
+      </button>
+      <button class="${tc("shortcuts")}" data-settings-nav="shortcuts" type="button">
+        <span class="rail-icon" aria-hidden="true">⌨</span> Shortcuts
+      </button>
+      <button class="${tc("legal")}" data-settings-nav="legal" type="button">
+        <span class="rail-icon" aria-hidden="true">⚖</span> Legal
+      </button>
+      <span class="settings-version">ZenkaiTV 2.0<br>Web / Android TV</span>
     </aside>
+
     <div class="settings-console">
-      <section class="settings-panel" id="settings-general">
+
+      <!-- ── General ── -->
+      <section ${pa("general")}>
         <div class="settings-panel-head">
-          <span class="settings-icon" aria-hidden="true">◐</span>
+          <span class="settings-icon" aria-hidden="true">⚙</span>
           <div>
             <h3>General</h3>
-            <p>${t("appLanguage")}, layout, and app behavior.</p>
+            <p>Language, layout, and app behavior.</p>
           </div>
         </div>
+
+        <div class="settings-group-label">Interface</div>
         <div class="settings-line">
           <span>${t("appLanguage")}</span>
           <div class="settings-row settings-segment">
@@ -1995,27 +2558,47 @@ function renderSettings() {
           </div>
         </div>
         <div class="settings-line">
-          <span>${t("compactSidebar")}</span>
+          <span>${t("compactSidebar")} <small>Collapse navigation to icon-only</small></span>
           <button class="settings-switch focusable ${state.sidebarCollapsed ? "is-on" : ""}" data-toggle-sidebar-setting type="button"><b></b></button>
         </div>
         <div class="settings-line">
-          <span>${t("tvFocus")}</span>
+          <span>Anime title language <small>How titles appear across the app</small></span>
+          <div class="settings-row settings-segment">
+            <button class="settings-choice focusable ${ui.titleLanguage !== "romaji" ? "is-selected" : ""}" data-title-language="english">English</button>
+            <button class="settings-choice focusable ${ui.titleLanguage === "romaji" ? "is-selected" : ""}" data-title-language="romaji">Romaji</button>
+          </div>
+        </div>
+
+        <div class="settings-divider"></div>
+        <div class="settings-group-label">Accessibility</div>
+        <div class="settings-line">
+          <span>${t("tvFocus")} <small>Highlight ring on focused elements</small></span>
           <button class="settings-switch focusable ${ui.focusGlow ? "is-on" : ""}" data-toggle-pref="focusGlow" type="button"><b></b></button>
         </div>
         <div class="settings-line">
-          <span>${t("motion")}</span>
+          <span>${t("motion")} <small>Enable UI animations and transitions</small></span>
           <button class="settings-switch focusable ${ui.motion ? "is-on" : ""}" data-toggle-pref="motion" type="button"><b></b></button>
+        </div>
+
+        <div class="settings-divider"></div>
+        <div class="settings-group-label">Data</div>
+        <div class="settings-actions">
+          <button class="secondary-action focusable" data-clear-cache>${t("clearCache")}</button>
+          <button class="secondary-action focusable" data-reset-settings>${t("resetSettings")}</button>
         </div>
       </section>
 
-      <section class="settings-panel" id="settings-player">
+      <!-- ── Player ── -->
+      <section ${pa("player")}>
         <div class="settings-panel-head">
           <span class="settings-icon" aria-hidden="true">▶</span>
           <div>
             <h3>${t("playback")}</h3>
-            <p>Default audio, subtitles, and in-player behavior.</p>
+            <p>Audio language, subtitles, volume, and autoplay behavior.</p>
           </div>
         </div>
+
+        <div class="settings-group-label">Language</div>
         <label class="settings-line">
           <span>${t("defaultAudio")}</span>
           <select class="language-select focusable settings-select" id="settingsAudio">
@@ -2033,76 +2616,164 @@ function renderSettings() {
             <option value="none" ${preferences.subtitles === "none" ? "selected" : ""}>${t("noSubtitles")}</option>
           </select>
         </label>
+
+        <div class="settings-divider"></div>
+        <div class="settings-group-label">Playback</div>
         <div class="settings-line">
-          <span>Hero autoplay</span>
+          <span>Player engine <small>Use the APK-style video.js player for direct streams</small></span>
+          <div class="settings-row settings-segment">
+            <button class="settings-choice focusable ${ui.playerEngine !== "native" ? "is-selected" : ""}" data-player-engine="apk" type="button">APK</button>
+            <button class="settings-choice focusable ${ui.playerEngine === "native" ? "is-selected" : ""}" data-player-engine="native" type="button">Native</button>
+          </div>
+        </div>
+        <div class="settings-line">
+          <span>Video fit <small>Same contain, cover, and fill modes as the APK player</small></span>
+          <div class="settings-row settings-segment">
+            ${["contain", "cover", "fill"].map((fit) => `
+              <button class="settings-choice focusable ${ui.playerFit === fit ? "is-selected" : ""}" data-player-fit-setting="${fit}" type="button">${fit}</button>
+            `).join("")}
+          </div>
+        </div>
+        <label class="settings-line">
+          <span>Stream quality <small>Auto or fixed HLS quality rank when available</small></span>
+          <select class="language-select focusable settings-select" id="settingsQuality">
+            <option value="0" ${Number(ui.playerQuality || 0) === 0 ? "selected" : ""}>Auto</option>
+            <option value="1" ${Number(ui.playerQuality || 0) === 1 ? "selected" : ""}>Highest</option>
+            <option value="2" ${Number(ui.playerQuality || 0) === 2 ? "selected" : ""}>Second</option>
+            <option value="3" ${Number(ui.playerQuality || 0) === 3 ? "selected" : ""}>Third</option>
+          </select>
+        </label>
+        <div class="settings-line">
+          <span>Hero autoplay <small>Auto-play featured trailer on home screen</small></span>
           <button class="settings-switch focusable ${ui.autoplayHero ? "is-on" : ""}" data-toggle-pref="autoplayHero" type="button"><b></b></button>
         </div>
-      </section>
+        <div class="settings-line">
+          <span>Live subtitle translation <small>Translate available subtitle files to Spanish during playback</small></span>
+          <button class="settings-switch focusable ${ui.subtitleTranslation ? "is-on" : ""}" data-toggle-pref="subtitleTranslation" type="button"><b></b></button>
+        </div>
+        <div class="settings-line">
+          <span>Rich metadata <small>Show AniList/MAL IDs, status, score, and source info in anime details</small></span>
+          <button class="settings-switch focusable ${ui.metadataDetail ? "is-on" : ""}" data-toggle-pref="metadataDetail" type="button"><b></b></button>
+        </div>
 
-      <section class="settings-panel" id="settings-streaming">
-        <div class="settings-panel-head">
-          <span class="settings-icon" aria-hidden="true">◎</span>
-          <div>
-            <h3>Streaming</h3>
-            <p>Sources, cache, online mode, and recovery tools.</p>
+        <div class="settings-divider"></div>
+        <div class="settings-group-label">Volume</div>
+        <div class="settings-volume-line settings-line">
+          <div class="settings-volume-label">
+            <span>Default volume</span>
+            <small class="settings-volume-value" id="volDisplay">${volPct}%</small>
+          </div>
+          <div class="settings-volume-wrap">
+            <span class="settings-volume-icon" aria-hidden="true">🔇</span>
+            <input
+              type="range" min="0" max="100" step="1" value="${volPct}"
+              class="settings-volume-slider focusable"
+              data-settings-volume
+              aria-label="Default volume"
+              style="--vol-pct:${volPct}%"
+            >
+            <span class="settings-volume-icon" aria-hidden="true">🔊</span>
           </div>
         </div>
-        <div class="settings-line">
-          <span>Server</span>
-          <strong class="settings-status-pill">Online when APIs respond</strong>
+      </section>
+
+      <!-- ── Sources ── -->
+      <section ${pa("sources")}>
+        <div class="settings-panel-head">
+          <span class="settings-icon" aria-hidden="true">◉</span>
+          <div>
+            <h3>Sources &amp; Addons</h3>
+            <p>Manage catalog connectors, APIs, and streaming endpoints.</p>
+          </div>
         </div>
-        <div class="settings-line">
-          <span>Preferred source</span>
-          <strong class="settings-status-pill">${escapeHtml(state.preferredSource === "auto" ? "Auto" : state.preferredSource)}</strong>
-        </div>
-        <div class="settings-actions">
-          <button class="secondary-action focusable" data-clear-cache>${t("clearCache")}</button>
-          <button class="secondary-action focusable" data-reset-settings>${t("resetSettings")}</button>
+        <p class="settings-source-summary">${
+          state.localSources.length
+            ? `${enabled} enabled source${enabled === 1 ? "" : "s"} · Metadata: ${escapeHtml(state.apiStatus.metadata)} · Direct: ${escapeHtml(state.apiStatus.direct)}`
+            : t("sourceSummaryDefault")
+        }</p>
+        <div class="settings-sources-grid" id="settingsSourcesGrid">
+          ${buildSourceCardsHtml()}
         </div>
       </section>
 
-      <section class="settings-panel" id="settings-shortcuts">
+      <!-- ── Shortcuts ── -->
+      <section ${pa("shortcuts")}>
         <div class="settings-panel-head">
-          <span class="settings-icon" aria-hidden="true">⌘</span>
+          <span class="settings-icon" aria-hidden="true">⌨</span>
           <div>
             <h3>Shortcuts</h3>
-            <p>Keyboard and remote-friendly player actions.</p>
+            <p>Keyboard and remote control actions.</p>
           </div>
         </div>
+
+        <div class="settings-group-label">Player Controls</div>
         ${[
           ["Play / Pause", "Space"],
-          ["Fullscreen", "F"],
-          ["Back", "Esc"],
-          ["Previous episode", "Shift + P"],
-          ["Next episode", "Shift + N"],
-          ["Open settings", "Ctrl + ,"]
+          ["Seek back 10 s", "←"],
+          ["Seek forward 10 s", "→"],
+          ["Volume up", "↑"],
+          ["Volume down", "↓"],
+          ["Toggle fullscreen", "F"],
+          ["Exit / Back", "Esc"],
         ].map(([label, keys]) => `
           <div class="settings-shortcut-row">
             <span>${label}</span>
             <kbd>${keys}</kbd>
           </div>
         `).join("")}
-        <div class="settings-legal-links">
-          <a class="focusable settings-link" href="#terms">${t("terms")}</a>
-          <a class="focusable settings-link" href="#privacy">${t("privacy")}</a>
+
+        <div class="settings-divider"></div>
+        <div class="settings-group-label">Navigation</div>
+        ${[
+          ["Previous episode", "Shift + P"],
+          ["Next episode", "Shift + N"],
+          ["Open settings", "Ctrl + ,"],
+          ["Search", "Ctrl + K"],
+        ].map(([label, keys]) => `
+          <div class="settings-shortcut-row">
+            <span>${label}</span>
+            <kbd>${keys}</kbd>
+          </div>
+        `).join("")}
+      </section>
+
+      <!-- ── Legal ── -->
+      <section ${pa("legal")}>
+        <div class="settings-panel-head">
+          <span class="settings-icon" aria-hidden="true">⚖</span>
+          <div>
+            <h3>Legal</h3>
+            <p>Terms of Service and Privacy Policy.</p>
+          </div>
+        </div>
+        <div class="settings-legal-tabs">
+          <button class="settings-choice focusable ${activeLegalTab === "terms" ? "is-selected" : ""}" data-legal-tab="terms" type="button">${t("terms")}</button>
+          <button class="settings-choice focusable ${activeLegalTab === "privacy" ? "is-selected" : ""}" data-legal-tab="privacy" type="button">${t("privacy")}</button>
+        </div>
+        <div class="settings-legal-content" id="legalContent">
+          ${activeLegalTab === "terms" ? renderTermsHtml() : renderPrivacyHtml()}
         </div>
       </section>
+
     </div>
   `;
   wireSettingsButtons();
 }
 
 function wireSettingsButtons() {
-  settingsGrid?.querySelectorAll("[data-settings-nav]").forEach((button) => {
+  if (!settingsGrid) return;
+
+  // Tab navigation
+  settingsGrid.querySelectorAll("[data-settings-nav]").forEach((button) => {
     button.addEventListener("click", () => {
-      settingsGrid.querySelectorAll("[data-settings-nav]").forEach((item) => item.classList.remove("is-selected"));
-      button.classList.add("is-selected");
-      const target = settingsGrid.querySelector(`#settings-${button.dataset.settingsNav}`);
-      target?.scrollIntoView({ behavior: state.uiPreferences.motion ? "smooth" : "auto", block: "start" });
+      state.activeSettingsTab = button.dataset.settingsNav || "general";
+      renderSettings();
+      refreshFocusables();
     });
   });
 
-  settingsGrid?.querySelectorAll("[data-app-language]").forEach((button) => {
+  // Language picker
+  settingsGrid.querySelectorAll("[data-app-language]").forEach((button) => {
     button.addEventListener("click", () => {
       state.appLanguage = button.dataset.appLanguage;
       localStorage.setItem(APP_LANGUAGE_KEY, state.appLanguage);
@@ -2112,21 +2783,55 @@ function wireSettingsButtons() {
     });
   });
 
-  settingsGrid?.querySelectorAll("#settingsAudio, #settingsSubtitles").forEach((select) => {
+  // Title language toggle (English ↔ Romaji)
+  settingsGrid.querySelectorAll("[data-title-language]").forEach((button) => {
+    button.addEventListener("click", () => {
+      saveUiPreferences({ titleLanguage: button.dataset.titleLanguage });
+      render();          // re-render cards, schedule, carousel
+      renderSettings();
+      showToast(`Title language set to ${button.dataset.titleLanguage}`);
+    });
+  });
+
+  // Audio / subtitle selects
+  settingsGrid.querySelectorAll("#settingsAudio, #settingsSubtitles").forEach((select) => {
     select.addEventListener("change", () => {
-      const audio = document.querySelector("#settingsAudio")?.value || "japanese";
-      const subtitles = document.querySelector("#settingsSubtitles")?.value || "spanish";
+      const audio = settingsGrid.querySelector("#settingsAudio")?.value || "japanese";
+      const subtitles = settingsGrid.querySelector("#settingsSubtitles")?.value || "spanish";
       setDefaultLanguage(audio, subtitles);
       showToast(t("settingsSaved"));
     });
   });
 
-  settingsGrid?.querySelector("[data-toggle-sidebar-setting]")?.addEventListener("click", () => {
+  settingsGrid.querySelectorAll("[data-player-engine]").forEach((button) => {
+    button.addEventListener("click", () => {
+      saveUiPreferences({ playerEngine: button.dataset.playerEngine || "apk" });
+      renderSettings();
+      showToast("Player setting saved");
+    });
+  });
+
+  settingsGrid.querySelectorAll("[data-player-fit-setting]").forEach((button) => {
+    button.addEventListener("click", () => {
+      saveUiPreferences({ playerFit: button.dataset.playerFitSetting || "contain" });
+      renderSettings();
+      showToast("Video fit saved");
+    });
+  });
+
+  settingsGrid.querySelector("#settingsQuality")?.addEventListener("change", (event) => {
+    saveUiPreferences({ playerQuality: Number(event.target.value) || 0 });
+    showToast("Quality preference saved");
+  });
+
+  // Sidebar collapse toggle
+  settingsGrid.querySelector("[data-toggle-sidebar-setting]")?.addEventListener("click", () => {
     toggleSidebar();
     renderSettings();
   });
 
-  settingsGrid?.querySelectorAll("[data-toggle-pref]").forEach((button) => {
+  // Boolean pref toggles (switches)
+  settingsGrid.querySelectorAll("[data-toggle-pref]").forEach((button) => {
     button.addEventListener("click", () => {
       const key = button.dataset.togglePref;
       saveUiPreferences({ [key]: !state.uiPreferences[key] });
@@ -2139,7 +2844,25 @@ function wireSettingsButtons() {
     });
   });
 
-  settingsGrid?.querySelector("[data-clear-cache]")?.addEventListener("click", () => {
+  // Volume slider
+  const volSlider = settingsGrid.querySelector("[data-settings-volume]");
+  const volDisplay = settingsGrid.querySelector("#volDisplay");
+  if (volSlider) {
+    const updateVol = () => {
+      const pct = Number(volSlider.value);
+      const raw = pct / 100;
+      volSlider.style.setProperty("--vol-pct", `${pct}%`);
+      if (volDisplay) volDisplay.textContent = `${pct}%`;
+      saveUiPreferences({ defaultVolume: raw });
+      const livePlayer = document.querySelector("#animePlayer");
+      if (livePlayer) livePlayer.volume = raw;
+    };
+    volSlider.addEventListener("input", updateVol);
+    volSlider.addEventListener("change", updateVol);
+  }
+
+  // Clear cache
+  settingsGrid.querySelector("[data-clear-cache]")?.addEventListener("click", () => {
     Object.keys(localStorage)
       .filter((key) => key.startsWith(RESPONSE_CACHE_PREFIX) || key.startsWith(ANIPUB_EPISODE_FALLBACK_PREFIX))
       .forEach((key) => localStorage.removeItem(key));
@@ -2148,7 +2871,8 @@ function wireSettingsButtons() {
     showToast(t("cacheCleared"));
   });
 
-  settingsGrid?.querySelector("[data-reset-settings]")?.addEventListener("click", () => {
+  // Reset settings
+  settingsGrid.querySelector("[data-reset-settings]")?.addEventListener("click", () => {
     localStorage.removeItem(APP_THEME_KEY);
     localStorage.removeItem(APP_UI_PREFS_KEY);
     state.theme = "dark";
@@ -2158,16 +2882,34 @@ function wireSettingsButtons() {
     refreshFocusables();
     showToast(t("settingsSaved"));
   });
+
+  // Legal sub-tabs
+  settingsGrid.querySelectorAll("[data-legal-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activeLegalTab = button.dataset.legalTab || "terms";
+      const content = settingsGrid.querySelector("#legalContent");
+      if (content) {
+        content.innerHTML = state.activeLegalTab === "terms" ? renderTermsHtml() : renderPrivacyHtml();
+      }
+      settingsGrid.querySelectorAll("[data-legal-tab]").forEach((btn) => {
+        btn.classList.toggle("is-selected", btn.dataset.legalTab === state.activeLegalTab);
+      });
+    });
+  });
+
+  // Source buttons scoped to settings panel
+  const settingsSourcesGrid = settingsGrid.querySelector("#settingsSourcesGrid");
+  if (settingsSourcesGrid) wireSourceButtons(settingsSourcesGrid);
 }
 
-function wireSourceButtons() {
-  document.querySelector("[data-source-add]")?.addEventListener("click", addCustomSource);
+function wireSourceButtons(root = document) {
+  root.querySelector("[data-source-add]")?.addEventListener("click", addCustomSource);
 
-  document.querySelectorAll("[data-source-remove]").forEach((button) => {
+  root.querySelectorAll("[data-source-remove]").forEach((button) => {
     button.onclick = () => removeSource(button.dataset.sourceRemove);
   });
 
-  document.querySelectorAll("[data-source-toggle]").forEach((button) => {
+  root.querySelectorAll("[data-source-toggle]").forEach((button) => {
     button.onclick = () => {
       const source = state.localSources.find((item) => item.id === button.dataset.sourceToggle);
       if (!source) return;
@@ -2176,11 +2918,12 @@ function wireSourceButtons() {
         item.id === source.id ? applySourceOverride({ ...item, enabled: !source.enabled }) : item
       );
       renderSources();
+      if (state.route === "settings") renderSettings();
       loadExternalSources();
     };
   });
 
-  document.querySelectorAll("[data-source-test]").forEach((button) => {
+  root.querySelectorAll("[data-source-test]").forEach((button) => {
     button.onclick = async () => {
       const source = state.localSources.find((item) => item.id === button.dataset.sourceTest);
       if (!source) return;
@@ -2204,7 +2947,7 @@ function wireSourceButtons() {
     };
   });
 
-  document.querySelector("[data-anime1v-key]")?.addEventListener("change", (event) => {
+  root.querySelector("[data-anime1v-key]")?.addEventListener("change", (event) => {
     const value = event.target.value.trim();
     if (value) localStorage.setItem(ANIME1V_API_KEY_STORAGE, value);
     else localStorage.removeItem(ANIME1V_API_KEY_STORAGE);
@@ -2215,8 +2958,8 @@ function wireSourceButtons() {
 function render() {
   const filtered = visibleShows();
   if (state.isLoadingCatalog && !filtered.length) {
-    renderSkeletonCards(latestGrid, 12);
-    renderSkeletonCards(libraryGrid, 18);
+    renderSkeletonCards(latestGrid, 14);
+    renderSkeletonCards(libraryGrid, 14);
   } else {
     renderCards(latestGrid, filtered.slice(0, HOME_CARD_LIMIT));
     renderCards(libraryGrid, filtered.slice(0, state.search ? SEARCH_CARD_LIMIT : LIBRARY_CARD_LIMIT));
@@ -2227,7 +2970,7 @@ function render() {
   if (emptyFavorites && favoritesGrid) emptyFavorites.hidden = favoritesGrid.children.length > 0;
   renderSchedule();
   renderAddonSections();
-  renderSettings();
+  if (state.route === "settings") renderSettings();
   renderCarousel();
   applyAppLanguage();
   wireOpenButtons();
@@ -2258,6 +3001,8 @@ function setRoute(route) {
 
   syncRouteVisibility();
   if (route === "anipub") ensureAniPubCatalogLoaded();
+  if (route === "settings") renderSettings();
+  if (route === "sources") renderSources();
   if ((route === "sources" || route === "search") && !state.externalSourcesLoaded) {
     scheduleExternalSourcesLoad();
   }
@@ -2304,29 +3049,51 @@ async function openShow(id, target = {}) {
   state.activeSeasonIndex = 0;
   const openToken = `${show.id || getShowKey(show)}:${Date.now()}`;
   state.activeOpenToken = openToken;
+
+  // ── Show the overlay shell INSTANTLY (poster + title) so opening feels snappy.
   resetVideoFrame();
-  applyOpenTarget(show, target);
-  renderEpisodeList(show);
   syncWatchHeading(show);
   document.querySelector("#watchDescription").textContent = show.description;
   favoriteButton.textContent = state.favorites.includes(show.id) ? t("favorited") : t("favorite");
   overlay.hidden = false;
-  refreshFocusables();
   closeOverlay.focus();
-  hydrateOpenShowDetails(show, target, openToken);
+
+  // ── Defer the heavier episode-list / season build to the next frame so the
+  //    browser can paint the overlay first (avoids the "couple seconds" lag).
+  requestAnimationFrame(() => {
+    if (state.activeOpenToken !== openToken) return; // user already closed/navigated
+    applyOpenTarget(show, target);
+    renderEpisodeList(show);
+    refreshFocusables();
+    hydrateOpenShowDetails(show, target, openToken);
+  });
 }
 
 async function hydrateOpenShowDetails(show, target = {}, openToken = "") {
   try {
+    // For metadata-only shows (scrapled, AniList/Jikan, etc.) that have no
+    // native episode endpoint, run ALL source hydrators in parallel so the
+    // episode list fills in from whichever provider matches the title fastest.
+    const isNativeSource = isAniPubShow(show) || isJimovShow(show);
     await Promise.allSettled([
-      isAniPubShow(show) ? hydrateAniPubEpisodes(show) : Promise.resolve(show),
-      isConsumetShow(show) ? hydrateConsumetEpisodes(show) : Promise.resolve(show),
-      isAnime1vShow(show) ? hydrateAnime1vEpisodes(show) : Promise.resolve(show),
-      isJimovShow(show) ? hydrateJimovEpisodes(show) : Promise.resolve(show),
-      isRapidAnimeShow(show) ? hydrateRapidAnimeEpisodes(show) : Promise.resolve(show)
+      isAniPubShow(show)  ? hydrateAniPubEpisodes(show)  : Promise.resolve(show),
+      isJimovShow(show)   ? hydrateJimovEpisodes(show)   : Promise.resolve(show),
+      // For scrapled/metadata-only shows, fan out title search to all sources
+      !isNativeSource     ? enrichShowFromAllSources(show) : Promise.resolve(show),
+      // AniList franchise/relations — non-blocking, enriches the Seasons tab
+      hydrateShowAniListFranchise(show),
+      // TioAnime slug resolution — stores show.tioAnimeSlug for episode playback
+      hydrateTioAnimeSlug(show)
     ]);
     if (state.activeOpenToken !== openToken || state.activeShow?.id !== show.id) return;
-    applyOpenTarget(show, target);
+    // Ensure every franchise entry (movies, OVAs, related seasons) has a minimal
+    // show object in state.shows so openShow() can navigate to them on click.
+    ensureFranchiseShowsInCatalog(show);
+    // Only re-apply the open target if no episode was selected yet (e.g. episodes
+    // weren't loaded at openShow time). Skip if the user already navigated manually.
+    if (!state.activeEpisode) {
+      applyOpenTarget(show, target);
+    }
     if (state.activeEpisode?.episode) {
       await attachPlaybackSourceOptions(show, state.activeEpisode.episode, state.activeEpisode?.season?.season || state.activeSeasonIndex + 1 || 1);
       if (state.activeOpenToken !== openToken || state.activeShow?.id !== show.id) return;
@@ -2336,7 +3103,21 @@ async function hydrateOpenShowDetails(show, target = {}, openToken = "") {
     const descriptionNode = document.querySelector("#watchDescription");
     if (descriptionNode) descriptionNode.textContent = show.description;
     favoriteButton.textContent = state.favorites.includes(show.id) ? t("favorited") : t("favorite");
-    if (state.activeEpisode) playActiveShow();
+    // Pre-fetch sources in the background so they're ready, but only OPEN the
+    // source picker when the user explicitly intends to play (Play button or an
+    // episode click). Opening a show from a card/poster lands on the detail view.
+    if (state.activeEpisode) {
+      const ep = state.activeEpisode;
+      schedulePlaybackSourceOptions(show, ep.episode, ep.season?.season || ep.seasonIndex + 1 || 1);
+      if (target.playIntent) {
+        const frame = document.querySelector("#videoFrame");
+        if (frame && !document.body.classList.contains("player-cinema-open")) {
+          const background = show.banner || show.image || "";
+          frame.style.setProperty("--watch-bg", background ? `url("${background}")` : "none");
+          renderSourcePickerIn(frame);
+        }
+      }
+    }
     refreshFocusables();
   } catch (error) {
     console.warn("Anime details continued without remote episode hydration:", error);
@@ -2581,6 +3362,48 @@ function isJimovShow(show) {
     || Boolean(show?.jimovUrl);
 }
 
+// Enrich a metadata-only show (scrapled-catalog, AniList/Jikan) by searching
+// all available sources by title in parallel. Each successful hit patches the
+// show's image/banner/description and unlocks the matching episode objects so
+// they are playable without re-fetching.
+async function enrichShowFromAllSources(show) {
+  if (!show || show.enriched) return show;
+  show.enriched = true;
+  const title = normalizeTitle(show.title);
+  if (!title) return show;
+
+  // Search each addon section for a title match and copy metadata + episode URLs
+  const addonMatches = state.addonSections.flatMap((section) =>
+    (section.items || []).filter((item) => {
+      const score = titleMatchScore(item, show);
+      return score >= 80;
+    })
+  );
+  addonMatches.forEach((match) => {
+    if (!show.image && match.image) show.image = match.image;
+    if (!show.banner && match.banner) show.banner = match.banner;
+    if (show.description?.length < 60 && match.description?.length > show.description?.length) {
+      show.description = match.description;
+    }
+    // Copy any direct video URL or externalUrl from matched episode 0
+    const matchEp = match.episodes?.[0] || {};
+    const existingEp = show.episodes?.[0];
+    if (existingEp && !getEpisodeUrl(existingEp) && getEpisodeUrl(matchEp)) {
+      existingEp.videoUrl = getEpisodeUrl(matchEp);
+      existingEp.locked = false;
+    }
+    if (existingEp && !existingEp.externalUrl && matchEp.externalUrl) {
+      existingEp.externalUrl = matchEp.externalUrl;
+      existingEp.externalType = matchEp.externalType || "iframe";
+      existingEp.locked = false;
+    }
+  });
+
+  // Sync updated show back into state
+  state.shows = state.shows.map((entry) => entry.id === show.id ? show : entry);
+  return show;
+}
+
 function inferAnime1vProvider(url = "") {
   try {
     const host = new URL(url).hostname.replace(/^www\./, "");
@@ -2611,10 +3434,11 @@ async function hydrateAniPubEpisodes(show) {
       episode: episode.number || episode.episode,
       externalUrl: episode.externalUrl,
       externalType: episode.externalType || "iframe",
-      sourceOptions: normalizeEpisodeSourceOptions(episode),
+      sourceOptions: normalizeEpisodeSourceOptions({ ...episode, viaAniPub: true }),
       audioTracks: episode.audioTracks || ["japanese"],
       subtitles: episode.subtitles || ["spanish"],
       server: "AniPub",
+      viaAniPub: true,
       locked: false
     })), seasonNumber);
     show.episode = episodes.length;
@@ -2718,22 +3542,44 @@ function resetVideoFrame() {
   const poster = show?.image || show?.banner || "";
   const frame = document.querySelector("#videoFrame");
   frame.style.setProperty("--watch-bg", background ? `url("${background}")` : "none");
+
+  // Count available episodes across all seasons for the hint text
+  const seasons = show ? getDetailSeasons(show) : [];
+  const totalEps = seasons.reduce((sum, s) => sum + (s.episodes?.length || 0), 0);
+  const sourceCount = show ? getEpisodePlaybackSources(show.episodes?.[0] || {}).length : 0;
+
+  const hintLine = totalEps
+    ? `${totalEps} episode${totalEps === 1 ? "" : "s"} · select one below to watch`
+    : "Select an episode below to load playback sources";
+
+  const sourceLine = sourceCount
+    ? `${sourceCount} source${sourceCount === 1 ? "" : "s"} ready`
+    : show?.source
+      ? `Source: ${escapeHtml(show.source)}`
+      : "";
+
   frame.innerHTML = `
-    <div class="watch-art" id="watchArt">
-      ${
-        poster
-          ? `<img class="watch-poster" src="${poster}" alt="">`
-          : `<div class="watch-poster-placeholder"><div class="play-symbol" aria-hidden="true"></div></div>`
-      }
+    <div class="watch-ready-state" id="watchArt">
+      <div class="watch-ready-poster-wrap">
+        ${
+          poster
+            ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="${escapeHtml(getShowTitle(show))}" loading="lazy">`
+            : `<div class="watch-poster-placeholder"><div class="play-symbol" aria-hidden="true"></div></div>`
+        }
+      </div>
+      <div class="watch-ready-cta">
+        ${sourceLine ? `<span class="watch-ready-source">${sourceLine}</span>` : ""}
+        <p class="watch-ready-hint">${hintLine}</p>
+        <div class="watch-ready-arrow" aria-hidden="true">↓</div>
+      </div>
     </div>
-    <p>${getPlayableUrl(show) ? "Ready to play." : "Choose an episode to load available playback servers."}</p>
   `;
 }
 
 function currentEpisodeLabel() {
   const selected = state.activeEpisode;
-  if (!selected) return state.activeShow?.title || "Selected anime";
-  return `${selected.season?.title || `Season ${selected.seasonIndex + 1}`} Episode ${selected.episode?.episode || selected.episodeIndex + 1}`;
+  if (!selected) return getShowTitle(state.activeShow) || "Selected anime";
+  return `${selected.season?.title || `Season ${selected.season?.season || selected.seasonIndex + 1}`} Episode ${selected.episode?.episode || selected.episodeIndex + 1}`;
 }
 
 function baseSeasonTitle(title) {
@@ -2752,7 +3598,11 @@ function getSeasonDisplayTitle(show, season) {
     ? season.sourceTitle
     : "";
   if (exactSeasonTitle && exactSeasonTitle !== show?.title) return exactSeasonTitle;
-  const baseTitle = baseSeasonTitle(show?.title || exactSeasonTitle || "Selected anime");
+  // Respect romaji preference for the watch-overlay heading
+  const titleSource = getShowTitle(show) || show?.title || exactSeasonTitle || "Selected anime";
+  // If the title already encodes this season number don't append "Season N" again
+  if (seasonNumber > 1 && extractSeasonNumber(titleSource, 0) === seasonNumber) return titleSource;
+  const baseTitle = baseSeasonTitle(titleSource);
   return seasonNumber > 1 ? `${baseTitle} Season ${seasonNumber}` : baseTitle;
 }
 
@@ -2765,13 +3615,53 @@ function syncWatchHeading(show = state.activeShow, season = null) {
   const metaNode = document.querySelector("#watchMeta");
   if (titleNode) titleNode.textContent = title;
   if (metaNode) {
-    metaNode.textContent = `${show.genre.toUpperCase()} | ${show.source}${show.score ? ` | ${show.score}%` : ""}`;
+    metaNode.textContent = compactMetadataLine(show);
   }
+}
+
+function compactMetadataLine(show = {}) {
+  return [
+    show.genre ? String(show.genre).toUpperCase() : "",
+    show.status ? String(show.status).replace(/_/g, " ") : "",
+    show.score ? `${show.score}%` : "",
+    show.source || ""
+  ].filter(Boolean).join(" | ");
+}
+
+function renderRichMetadata(show = {}, seasons = []) {
+  if (!state.uiPreferences.metadataDetail) return "";
+  const episodeCount = countLoadedEpisodes([show]) || seasons.reduce((total, season) => total + (season.episodes?.length || 0), 0);
+  const rows = [
+    ["AniList", show.anilistId],
+    ["MAL", show.malId],
+    ["Status", show.status && String(show.status).replace(/_/g, " ")],
+    ["Format", show.format],
+    ["Episodes", episodeCount || show.episode],
+    ["Duration", show.duration ? `${show.duration} min` : ""],
+    ["Year", show.year],
+    ["Source", show.source]
+  ].filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== "");
+  const aliases = [show.romajiTitle, show.nativeTitle, ...(show.aliases || [])]
+    .filter(Boolean)
+    .filter((value, index, list) => list.indexOf(value) === index && value !== show.title)
+    .slice(0, 3);
+  return `
+    <div class="anime-metadata-grid" aria-label="Anime metadata">
+      ${rows.map(([label, value]) => `
+        <span class="anime-metadata-item">
+          <b class="anime-metadata-label">${escapeHtml(label)}</b>
+          <span class="anime-metadata-value">${escapeHtml(String(value))}</span>
+        </span>
+      `).join("")}
+    </div>
+    ${aliases.length ? `<p class="anime-aliases">${aliases.map(escapeHtml).join(" · ")}</p>` : ""}
+  `;
 }
 
 function renderEpisodeList(show) {
   if (!episodeList) return;
   const seasons = getDetailSeasons(show);
+  const franchiseSeasons = getFranchiseSeasonList(show);
   if (state.activeSeasonIndex >= seasons.length) state.activeSeasonIndex = 0;
   const activeSeason = seasons[state.activeSeasonIndex] || seasons[0];
   const seasonTitle = getSeasonDisplayTitle(show, activeSeason);
@@ -2793,7 +3683,8 @@ function renderEpisodeList(show) {
         ${show.image ? `<img class="anime-detail-poster" src="${show.image}" alt="">` : ""}
         <div>
           <h3>${seasonTitle}</h3>
-          <p>${show.genre.toUpperCase()} | ${show.source}${show.score ? ` | ${show.score}%` : ""}</p>
+          <p>${compactMetadataLine(show)}</p>
+          ${renderRichMetadata(show, seasons)}
           <p>${show.description}</p>
         </div>
       </div>
@@ -2802,22 +3693,30 @@ function renderEpisodeList(show) {
     <section class="detail-pane ${state.activeDetailTab === "seasons" ? "is-active" : ""}" data-detail-pane="seasons">
       <span>Seasons</span>
       <div class="season-tab-list">
-        ${seasons.map((season, seasonIndex) => `
-          <button class="season-tab focusable ${state.activeSeasonIndex === seasonIndex ? "is-selected" : ""}" data-season-tab="${seasonIndex}">
-            ${season.title || `Season ${season.season || seasonIndex + 1}`}
+        ${franchiseSeasons.map((season, seasonIndex) => {
+          // Only regular TV seasons appear as tabs — Movies/OVAs/Specials are cards only
+          if (season.formatBadge) return "";
+          return `
+          <button class="season-tab focusable ${season.isCurrentShow ? "is-selected" : ""}" data-season-tab="${seasonIndex}" ${season.relatedShowId ? `data-related-show-id="${escapeHtml(season.relatedShowId)}"` : ""}>
+            ${escapeHtml(season.title || `Season ${season.season || seasonIndex + 1}`)}
             <small>${season.episodes.length} eps</small>
-          </button>
-        `).join("")}
+          </button>`;
+        }).join("")}
       </div>
       <div class="season-card-grid">
-        ${seasons.map((season, seasonIndex) => `
-          <button class="season-card focusable ${state.activeSeasonIndex === seasonIndex ? "is-selected" : ""}" data-season-card="${seasonIndex}">
+        ${franchiseSeasons.map((season, seasonIndex) => {
+          const epCount = season.episodes.length;
+          const badge = season.formatBadge ? `<span class="season-format-badge">${escapeHtml(season.formatBadge)}</span>` : "";
+          const year = season.year ? `<span class="season-year">${season.year}</span>` : "";
+          const epLabel = epCount ? `${epCount} episode${epCount === 1 ? "" : "s"}` : "";
+          return `
+          <button class="season-card focusable ${season.isCurrentShow ? "is-selected" : ""}" data-season-card="${seasonIndex}" ${season.relatedShowId ? `data-related-show-id="${escapeHtml(season.relatedShowId)}"` : ""}>
             ${season.image ? `<img src="${season.image}" alt="">` : ""}
-            <strong>${season.title || `Season ${season.season || seasonIndex + 1}`}</strong>
-            <small>${getSeasonDisplayTitle(show, season)}</small>
-            <span>${season.episodes.length} episode${season.episodes.length === 1 ? "" : "s"}</span>
-          </button>
-        `).join("")}
+            <strong>${escapeHtml(season.title || `Season ${season.season || seasonIndex + 1}`)}</strong>
+            <small>${escapeHtml(season.sourceTitle || getSeasonDisplayTitle(show, season))}</small>
+            <span>${epLabel}${badge}${year}</span>
+          </button>`;
+        }).join("")}
       </div>
     </section>
 
@@ -2841,7 +3740,6 @@ function renderEpisodeList(show) {
           <span class="season-count">${activeSeason?.episodes.length || 0} episode${activeSeason?.episodes.length === 1 ? "" : "s"}</span>
         </div>
         ${activeSeason?.playable ? "" : `<p class="episode-empty">Episodes are listed from metadata. Playback servers load when a matching source is available.</p>`}
-        ${renderSelectedEpisodePanel(activeSeason)}
         <div class="episode-buttons">
           ${(activeSeason?.episodes || []).map((episode, episodeIndex) => `
             <button class="episode-button focusable ${episode.locked ? "is-locked" : ""} ${isActiveEpisode(state.activeSeasonIndex, episodeIndex) ? "is-selected" : ""}" data-season-index="${state.activeSeasonIndex}" data-episode-index="${episodeIndex}">
@@ -2864,6 +3762,10 @@ function renderEpisodeList(show) {
 
   episodeList.querySelectorAll("[data-season-tab], [data-season-card]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (button.dataset.relatedShowId) {
+        openShow(button.dataset.relatedShowId);
+        return;
+      }
       state.activeSeasonIndex = Number(button.dataset.seasonTab ?? button.dataset.seasonCard);
       state.activeDetailTab = button.dataset.seasonCard ? "episodes" : state.activeDetailTab;
       state.activeEpisode = null;
@@ -2874,48 +3776,14 @@ function renderEpisodeList(show) {
     });
   });
 
-  episodeList.querySelector("[data-play-selected]")?.addEventListener("click", () => playActiveShow());
-
   episodeList.querySelectorAll("[data-season-index][data-episode-index]").forEach((button) => {
     button.addEventListener("click", () => {
       const season = seasons[Number(button.dataset.seasonIndex)];
       const episode = season?.episodes?.[Number(button.dataset.episodeIndex)];
-      selectEpisode(season, episode, Number(button.dataset.seasonIndex), Number(button.dataset.episodeIndex));
+      if (!season || !episode) return;
+      selectEpisodeByPosition(Number(button.dataset.seasonIndex), Number(button.dataset.episodeIndex), true);
     });
   });
-}
-
-function renderSelectedEpisodePanel(activeSeason) {
-  const selected = state.activeEpisode;
-  if (!selected || selected.seasonIndex !== state.activeSeasonIndex) {
-    return `
-      <div class="episode-player-card">
-        <strong>Select an episode</strong>
-        <span>Choose an episode below to load its player space.</span>
-      </div>
-    `;
-  }
-
-  const episode = selected.episode;
-  const canPlay = Boolean(getEpisodeUrl(episode));
-  const hasExternal = isExternalIframeEpisode(episode);
-  const canResolveAniPub = episode.streamResolver?.type === "anipub";
-  const pending = Boolean(episode.sourceOptionsPending);
-  const unavailable = isEpisodeUnavailable(episode);
-  const statusText = pending
-    ? "Checking available servers..."
-    : canPlay || hasExternal || canResolveAniPub
-      ? "Ready to play in the video area."
-      : unavailable
-        ? episodeAvailabilityText(episode)
-        : "No playback server is available for this episode yet.";
-  return `
-    <div class="episode-player-card ${canPlay ? "is-ready" : hasExternal || canResolveAniPub ? "is-external" : pending ? "is-loading" : "is-missing"}">
-      <strong>${activeSeason?.title || `Season ${selected.seasonIndex + 1}`} - Episode ${episode.episode || selected.episodeIndex + 1}</strong>
-      <span>${statusText}</span>
-      <button class="episode-play-inline focusable" data-play-selected ${unavailable && !pending ? "disabled" : ""}>${canPlay || hasExternal || canResolveAniPub ? "Play Episode" : pending ? "Checking..." : "Try Episode"}</button>
-    </div>
-  `;
 }
 
 function episodeDisplaySubtitle(episode = {}) {
@@ -2939,8 +3807,68 @@ function episodeAvailabilityText(episode = {}) {
   return "Not available yet";
 }
 
+// Provider group for source ordering: scraper sources (TioAnime/AnimeAV1) on top,
+// then AniPub, then anything else.
+function _sourceGroupPriority(source = {}) {
+  const id = (source.id || "").toLowerCase();
+  const label = (source.label || "").toLowerCase();
+  if (id.includes("tioanime") || id.includes("animeav1") ||
+      label.includes("tioanime") || label.includes("animeav1")) return 0;
+  if (KNOWN_SOURCE_SERVERS.find(d => d.key === "anipub")?.match(source)) return 1;
+  return 2;
+}
+
+// Fine-grained "best server" preference. Lower = shown / auto-selected first.
+// AnimeAV1 is the most reliable provider — its HLS stream is the #1 pick.
+function sourcePreferenceScore(source = {}) {
+  const id    = (source.id || "").toLowerCase();
+  const label = (source.label || "").toLowerCase();
+  const url   = (source.videoUrl || source.externalUrl || "").toLowerCase();
+  const isDirect = source.type === "direct";
+  const isHls    = /\.m3u8(\?|#|$)/i.test(url) || /\bhls\b/.test(label);
+  const isAnimeAv1 = id.includes("animeav1") || label.includes("animeav1");
+  const isMega = /\bmega\b/.test(label) || /mega\.nz/.test(url);
+  const isMp4  = /mp4\s*upload|mp4upload/.test(label) || /mp4upload/.test(url);
+  const isAdFree = /yourupload|you\s*upload|youupload|ok\.?ru|okru|streamwish|filelions/.test(label);
+  const isAdWalled = /\bvoe\b|netu|hqq|streamsb|embedsb|\bsb\b|dood|filemoon|vidhide|mixdrop/.test(label);
+
+  // ── AnimeAV1 first (most reliable) — HLS is the very top pick ────────────
+  if (isAnimeAv1 && isHls)              return 0; // AnimeAV1 — HLS  (best)
+  if (isAnimeAv1 && isDirect)           return 1; // AnimeAV1 — other direct
+  if (isAnimeAv1 && (isMega || isMp4))  return 2; // AnimeAV1 — Mega / MP4Upload
+  if (isAnimeAv1 && !isAdWalled)        return 3; // AnimeAV1 — other ad-free embed
+  // ── Then the other dependable, ad-free servers ─────────────────────────
+  if (isHls || isDirect)               return 4; // any other direct / HLS stream
+  if (isMega || isMp4)                 return 5; // Mega / MP4Upload (TioAnime etc.)
+  if (isAdFree)                        return 6; // YourUpload / Ok.ru / …
+  // ── Ad-walled hosts sink to the bottom ─────────────────────────────────
+  if (isAdWalled)                      return 9;
+  return 7;                                       // neutral / unknown
+}
+
+// Order sources so the auto-selected one (index 0) is the best playable pick:
+//   1. preference tier   → AnimeAV1-HLS / Mega / MP4Upload float to the very top
+//   2. scraper group     → TioAnime/AnimeAV1 before AniPub before others
+//   3. ad-free rank      → ad-walled hosts sink (no "Sandbox not allowed" wall)
+//   4. stable arrival    → first server that resolved wins on a tie
+function orderSourceOptions(sources = []) {
+  return sources
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => {
+      const pa = sourcePreferenceScore(a.s), pb = sourcePreferenceScore(b.s);
+      if (pa !== pb) return pa - pb;
+      const ga = _sourceGroupPriority(a.s), gb = _sourceGroupPriority(b.s);
+      if (ga !== gb) return ga - gb;
+      const ra = Number.isFinite(a.s.sourceRank) ? a.s.sourceRank : 1;
+      const rb = Number.isFinite(b.s.sourceRank) ? b.s.sourceRank : 1;
+      if (ra !== rb) return ra - rb;
+      return a.i - b.i;
+    })
+    .map(o => o.s);
+}
+
 function getEpisodePlaybackSources(episode = {}) {
-  return normalizeEpisodeSourceOptions(episode);
+  return orderSourceOptions(normalizeEpisodeSourceOptions(episode));
 }
 
 function getSelectedEpisodeSource(episode = {}) {
@@ -2991,24 +3919,27 @@ function renderPlayerEpisodeActions(url = "") {
   const nav = getEpisodeNavigationTargets();
   const downloadUrl = getActiveDownloadUrl(url);
   const canDownload = downloadUrl && !isEmbedUrl(downloadUrl) && /^https?:/i.test(String(downloadUrl));
+  const epLabel = state.activeEpisode
+    ? `S${state.activeEpisode.seasonIndex + 1} E${state.activeEpisode.episode?.episode || state.activeEpisode.episodeIndex + 1}`
+    : "Episodes";
   return `
     <div class="player-episode-actions" aria-label="Episode controls">
       <button class="player-nav-action focusable" type="button" data-player-prev ${nav.previous ? "" : "disabled"}>
-        <span aria-hidden="true">‹</span>
-        Previous
+        <span aria-hidden="true">⏮</span>
+        Prev
       </button>
       <button class="player-nav-action focusable is-list" type="button" data-player-list>
         <span aria-hidden="true">☰</span>
-        Episodes
+        ${escapeHtml(epLabel)}
         ${nav.total ? `<small>${nav.total}</small>` : ""}
       </button>
       <button class="player-nav-action focusable" type="button" data-player-next ${nav.next ? "" : "disabled"}>
         Next
-        <span aria-hidden="true">›</span>
+        <span aria-hidden="true">⏭</span>
       </button>
       ${canDownload
-        ? `<a class="player-download-action focusable" href="${escapeHtml(downloadUrl)}" download>Download</a>`
-        : `<button class="player-download-action focusable" type="button" disabled title="No direct download file is available from this server">Download</button>`}
+        ? `<a class="player-download-action focusable" href="${escapeHtml(downloadUrl)}" download>↓ Save</a>`
+        : ""}
     </div>
   `;
 }
@@ -3024,28 +3955,63 @@ function formatPlayerTime(value = 0) {
 }
 
 function renderVidstreamTopbar(label = "") {
+  const nav = getEpisodeNavigationTargets();
   return `
     <div class="vid-topbar">
-      <button class="vid-icon-button focusable" type="button" data-player-back aria-label="Back to episodes">‹</button>
+      <button class="vid-icon-button vid-topbar-nav focusable" type="button"
+        data-player-prev ${nav.previous ? "" : "disabled"}
+        aria-label="Previous episode" title="Previous episode">⏮</button>
       <strong>${escapeHtml(label || currentEpisodeLabel())}</strong>
-      <button class="vid-icon-button focusable" type="button" data-player-fullscreen aria-label="Fullscreen">⛶</button>
+      <button class="vid-icon-button vid-topbar-nav focusable" type="button"
+        data-player-next ${nav.next ? "" : "disabled"}
+        aria-label="Next episode" title="Next episode">⏭</button>
+      <button class="vid-icon-button vid-exit-button focusable" type="button"
+        data-player-exit aria-label="Close player">✕</button>
     </div>
   `;
 }
 
+function renderPlayerPopupMessage(frame, title = "Loading episode", message = "Preparing the player.", stateClass = "is-loading") {
+  if (!frame) return;
+  frame.innerHTML = `
+    <div class="video-player-shell vidstream-player is-popup-message">
+      <div class="vid-player-stage">
+        <div class="episode-video-empty ${escapeHtml(stateClass)}">
+          <div class="play-symbol" aria-hidden="true"></div>
+          <strong>${escapeHtml(title)}</strong>
+          <p>${escapeHtml(message)}</p>
+        </div>
+        ${renderVidstreamTopbar(currentEpisodeLabel())}
+      </div>
+      ${renderPlayerEpisodeActions("")}
+    </div>
+  `;
+  const shell = frame.querySelector(".vidstream-player");
+  setPlayerCinema(shell, true, { silent: true });
+  frame.querySelector("[data-player-exit]")?.addEventListener("click", exitPlayerToSources);
+  frame.querySelector("[data-player-back]")?.addEventListener("click", () => showEpisodeListTab());
+  wirePlayerChrome(frame);
+  refreshFocusables();
+}
+
 function renderVidstreamControls() {
+  const nav = getEpisodeNavigationTargets();
+  const fit = state.uiPreferences.playerFit || "contain";
   return `
     <div class="vid-controls" aria-label="Video controls">
       <input class="vid-seek focusable" id="playerSeek" type="range" min="0" max="1000" value="0" aria-label="Seek">
       <div class="vid-control-row">
+        <button class="vid-icon-button focusable" type="button" data-player-prev ${nav.previous ? "" : "disabled"} aria-label="Previous episode" title="Previous episode">⏮</button>
         <button class="vid-icon-button focusable" type="button" data-player-toggle aria-label="Play or pause">▶</button>
+        <button class="vid-icon-button focusable" type="button" data-player-next ${nav.next ? "" : "disabled"} aria-label="Next episode" title="Next episode">⏭</button>
         <button class="vid-icon-button focusable" type="button" data-player-volume aria-label="Mute or unmute">▸</button>
         <span class="vid-time" id="playerTime">0:00 / 0:00</span>
         <span class="vid-spacer"></span>
-        <button class="vid-tool-button focusable" type="button" data-player-panel="network" aria-label="Network status">◎</button>
+        <button class="vid-tool-button focusable" type="button" data-player-fit aria-label="Video fit mode">${fit === "cover" ? "□" : fit === "fill" ? "▣" : "▭"}</button>
         <button class="vid-tool-button focusable" type="button" data-player-panel="speed" aria-label="Playback speed">◴</button>
         <button class="vid-tool-button focusable" type="button" data-player-panel="subtitles" aria-label="Subtitles">▤</button>
         <button class="vid-tool-button focusable" type="button" data-player-cast aria-label="Cast">▱</button>
+        <button class="vid-tool-button focusable" type="button" data-player-fullscreen aria-label="Fullscreen (F)">⛶</button>
         <button class="vid-tool-button focusable" type="button" data-player-panel="more" aria-label="More options">⋮</button>
       </div>
       <div class="vid-panel" id="playerPanel" hidden></div>
@@ -3060,9 +4026,173 @@ function setPlayerCinema(container, enabled, options = {}) {
   if (!options.silent) showToast(enabled ? "Cinema mode" : "Normal player");
 }
 
-function requestPlayerFullscreen(container) {
-  if (!container) return;
-  setPlayerCinema(container, !container.classList.contains("is-cinema"));
+function toggleNativeFullscreen() {
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  } else {
+    // Always use documentElement — avoids traversing compositing layers from
+    // nested elements and eliminates the lag caused by ancestor CSS animations
+    document.documentElement.requestFullscreen({ navigationUI: "hide" }).catch(() =>
+      showToast("Fullscreen blocked by this browser.")
+    );
+  }
+}
+
+// Called when the ✕ button is clicked — exits cinema mode and shows the
+// source picker so the user can choose a different server without any
+// broken player content in the way.
+function renderSourcePickerIn(frame) {
+  const episode = state.activeEpisode?.episode || {};
+  const allSources = getEpisodePlaybackSources(episode);
+  const serverChecks = episode.serverChecks || {};
+  const isPending = Boolean(episode.sourceOptionsPending);
+  const show = state.activeShow;
+  const poster = show?.image || show?.banner || "";
+  const epLabel = state.activeEpisode
+    ? `S${state.activeEpisode.season?.season || state.activeEpisode.seasonIndex + 1} E${(episode.episode || episode.number || 1)} · ${escapeHtml(episode.title || `Episode ${episode.episode || 1}`)}`
+    : "";
+
+  // Track which source IDs are covered by known server definitions
+  const claimedIds = new Set();
+
+  // Order server slots dynamically: ready servers first (earliest-ready on top),
+  // then still-checking, then unavailable. Ties keep the KNOWN order (scrapers
+  // before AniPub). This makes whichever of TioAnime/AnimeAV1 resolves first
+  // appear at the very top.
+  const readyAt = episode.serverReadyAt || {};
+  const orderedServers = KNOWN_SOURCE_SERVERS
+    .map((def, knownIndex) => {
+      const matching = allSources.filter(def.match);
+      const hasSources = matching.length > 0;
+      const status = serverChecks[def.key];
+      const stateRank = hasSources ? 0 : (isPending && status === undefined ? 1 : 2);
+      // Best (lowest) preference score among this server's sources — lets a server
+      // holding an AnimeAV1-HLS / Mega / MP4Upload (tier 0) float to the top card.
+      const bestPref = hasSources
+        ? Math.min(...matching.map(sourcePreferenceScore))
+        : 99;
+      return { def, knownIndex, stateRank, bestPref, ready: readyAt[def.key] || Infinity };
+    })
+    .sort((a, b) =>
+      a.stateRank - b.stateRank ||
+      a.bestPref - b.bestPref ||
+      a.ready - b.ready ||
+      a.knownIndex - b.knownIndex
+    )
+    .map(o => o.def);
+
+  // Build a card for each known server (in readiness order)
+  const serverCards = orderedServers.map((def) => {
+    const matchingSources = allSources.filter(def.match);
+    matchingSources.forEach((s) => claimedIds.add(s.id));
+
+    const status = serverChecks[def.key]; // "found" | "notfound" | undefined
+
+    if (matchingSources.length > 0) {
+      // ── Found: one clickable button per matching source option ──────────
+      return matchingSources.map((source) => `
+        <button class="source-picker-option source-picker-option-found focusable" data-player-source="${escapeHtml(source.id)}" type="button">
+          <span class="source-picker-slot-icon source-picker-slot-play-icon" aria-hidden="true">▶</span>
+          <span class="source-picker-slot-body">
+            <strong>${escapeHtml(source.label || def.label)}</strong>
+            <small>${source.type === "direct" ? "Direct video" : source.type === "resolver" ? "Resolver" : "Embedded player"}</small>
+          </span>
+          <span class="source-picker-slot-play-badge">Play</span>
+        </button>
+      `).join("");
+    }
+
+    if (isPending && status === undefined) {
+      // ── Still checking ────────────────────────────────────────────────
+      return `
+        <div class="source-picker-option source-picker-option-checking">
+          <span class="source-picker-slot-icon source-picker-slot-checking-icon" aria-hidden="true">
+            <span class="source-picker-spinner"></span>
+          </span>
+          <span class="source-picker-slot-body">
+            <strong>${escapeHtml(def.label)}</strong>
+            <small>${escapeHtml(def.desc)} · Checking…</small>
+          </span>
+        </div>
+      `;
+    }
+
+    // ── Not available ─────────────────────────────────────────────────
+    return `
+      <div class="source-picker-option source-picker-option-unavail">
+        <span class="source-picker-slot-icon source-picker-slot-off-icon" aria-hidden="true">—</span>
+        <span class="source-picker-slot-body">
+          <strong>${escapeHtml(def.label)}</strong>
+          <small>${escapeHtml(def.desc)} · Not available</small>
+        </span>
+      </div>
+    `;
+  }).join("");
+
+  // Extra sources from addons that don't belong to a known server
+  const extraCards = allSources
+    .filter((s) => !claimedIds.has(s.id))
+    .map((source) => `
+      <button class="source-picker-option source-picker-option-found focusable" data-player-source="${escapeHtml(source.id)}" type="button">
+        <span class="source-picker-slot-icon source-picker-slot-play-icon" aria-hidden="true">▶</span>
+        <span class="source-picker-slot-body">
+          <strong>${escapeHtml(source.label || source.id || "Server")}</strong>
+          <small>${source.type === "direct" ? "Direct video" : source.type === "resolver" ? "Resolver" : "Embedded player"}</small>
+        </span>
+        <span class="source-picker-slot-play-badge">Play</span>
+      </button>
+    `).join("");
+
+  const foundCount = allSources.length;
+
+  frame.innerHTML = `
+    <div class="source-picker-shell vidstream-player is-source-picker">
+      <div class="vid-player-stage">
+        <div class="source-picker">
+          <div class="source-picker-hero">
+            ${poster
+              ? `<img class="source-picker-art" src="${escapeHtml(poster)}" alt="${escapeHtml(getShowTitle(show))}" loading="lazy">`
+              : `<div class="source-picker-art source-picker-art-placeholder"></div>`
+            }
+            <div class="source-picker-hero-text">
+              <strong class="source-picker-show-title">${escapeHtml(getShowTitle(show))}</strong>
+              ${epLabel ? `<span class="source-picker-ep-label">${epLabel}</span>` : ""}
+            </div>
+          </div>
+
+          <div class="source-picker-heading">
+            <strong>${foundCount > 0 ? `${foundCount} server${foundCount === 1 ? "" : "s"} found` : isPending ? "Scanning servers…" : "No servers found"}</strong>
+            <span>${foundCount > 0 ? "Choose a server to play" : isPending ? "Checking all providers, please wait…" : "Try another episode or add a source in Settings"}</span>
+          </div>
+
+          <div class="source-picker-options">
+            ${serverCards}
+            ${extraCards}
+          </div>
+        </div>
+        ${renderVidstreamTopbar(currentEpisodeLabel())}
+      </div>
+      ${renderPlayerEpisodeActions("")}
+    </div>
+  `;
+  const shell = frame.querySelector(".vidstream-player");
+  setPlayerCinema(shell, true, { silent: true });
+  frame.querySelector("[data-player-exit]")?.addEventListener("click", exitPlayerToSources);
+  frame.querySelector("[data-player-back]")?.addEventListener("click", () => showEpisodeListTab());
+  wirePlayerChrome(frame);
+  refreshFocusables();
+}
+
+function exitPlayerToSources() {
+  stopActivePlayback();
+  document.body.classList.remove("player-cinema-open");
+  document.body.classList.remove("has-embedded-player");
+
+  const frame = document.querySelector("#videoFrame");
+  if (!frame) return;
+
+  resetVideoFrame();
+  showEpisodeListTab();
 }
 
 let hlsScriptPromise = null;
@@ -3082,8 +4212,195 @@ function loadHlsScript() {
   return hlsScriptPromise;
 }
 
+function streamTypeFromUrl(url = "") {
+  const value = String(url || "").split("?")[0].split("#")[0].toLowerCase();
+  if (value.endsWith(".m3u8")) return "hls";
+  if (value.endsWith(".mpd")) return "dash";
+  if (value.endsWith(".mp4") || value.endsWith(".m4v") || value.endsWith(".webm") || value.endsWith(".mov")) return "file";
+  return "";
+}
+
+function streamProxyHost(url = "") {
+  try {
+    const host = new URL(url).host.toLowerCase();
+    if (/owocdn\.top|uwucdn\.top|kwik\.cx/i.test(host)) return "kwik.cx";
+    if (/mewstream\.buzz|prxy\.miruro\.to|ultracloud\.cc/i.test(host)) return "www.miruro.tv";
+    if (/cinewave|streamzone/i.test(host)) return "megaplay.buzz";
+    if (/anime-dunya/i.test(host)) return "anime-dunya.com";
+    if (/watching\.onl|vidwish\.live|anivideo\.sbs|cloudbuzz\.lol|trycloud\.pro/i.test(host)) return "vidwish.live";
+    if (/mp4upload\.com/i.test(host)) return "mp4upload.com";
+    return host;
+  } catch (error) {
+    return "";
+  }
+}
+
+function isProxyableStreamUrl(url = "") {
+  return /^https?:\/\//i.test(String(url || ""));
+}
+
+function proxiedStreamUrl(url = "") {
+  const resolved = resolveSourceEndpoint(url);
+  if (!isProxyableStreamUrl(resolved) || location.protocol === "file:") return resolved;
+  const proxyHost = streamProxyHost(resolved);
+  const proxy = new URL(LOCAL_SOURCE_PROXY_ENDPOINT, location.href);
+  proxy.searchParams.set("url", resolved);
+  if (proxyHost) proxy.searchParams.set("refererHost", proxyHost);
+  return proxy.toString();
+}
+
+function playerFitScaleValue(fit = state.uiPreferences.playerFit || "contain") {
+  if (fit === "cover") return 1;
+  if (fit === "fill") return 2;
+  return 0;
+}
+
+function buildApkPlayerUrl(url = "") {
+  const playerUrl = new URL("./player/player.html", location.href);
+  playerUrl.searchParams.set("src", resolveSourceEndpoint(url));
+  playerUrl.searchParams.set("audio", getLanguagePreferences().audio || "");
+  playerUrl.searchParams.set("quality", String(Number(state.uiPreferences.playerQuality || 0)));
+  const hash = streamTypeFromUrl(url) === "dash"
+    ? "#dash"
+    : streamTypeFromUrl(url) === "file"
+      ? "#file"
+      : "";
+  return `${playerUrl.toString()}${hash}`;
+}
+
+function createApkPlayerController(iframe, options = {}) {
+  const events = document.createDocumentFragment();
+  const controller = {
+    duration: 0,
+    currentTime: 0,
+    bufferedEnd: 0,
+    paused: true,
+    muted: false,
+    volume: Number(state.uiPreferences.defaultVolume ?? 0.1),
+    playbackRate: 1,
+    resolution: "",
+    qualities: [],
+    audioLanguages: [],
+    isApkPlayer: true,
+    addEventListener: (...args) => events.addEventListener(...args),
+    removeEventListener: (...args) => events.removeEventListener(...args),
+    dispatchEvent: (...args) => events.dispatchEvent(...args),
+    play() {
+      this.paused = false;
+      postApkPlayerCommand(iframe, "play", 1);
+      events.dispatchEvent(new Event("play"));
+      return Promise.resolve();
+    },
+    pause() {
+      this.paused = true;
+      postApkPlayerCommand(iframe, "pause", 0);
+      events.dispatchEvent(new Event("pause"));
+    }
+  };
+
+  Object.defineProperty(controller, "currentTime", {
+    get() { return this._currentTime || 0; },
+    set(value) {
+      this._currentTime = Number(value) || 0;
+      postApkPlayerCommand(iframe, "seek", this._currentTime);
+    }
+  });
+  Object.defineProperty(controller, "playbackRate", {
+    get() { return this._playbackRate || 1; },
+    set(value) {
+      this._playbackRate = Number(value) || 1;
+      postApkPlayerCommand(iframe, "speed", this._playbackRate);
+    }
+  });
+  Object.defineProperty(controller, "volume", {
+    get() { return Number.isFinite(this._volume) ? this._volume : Number(state.uiPreferences.defaultVolume ?? 0.1); },
+    set(value) {
+      this._volume = Math.max(0, Math.min(1, Number(value) || 0));
+      postApkPlayerCommand(iframe, "volume", this._volume);
+    }
+  });
+  Object.defineProperty(controller, "muted", {
+    get() { return Boolean(this._muted); },
+    set(value) {
+      this._muted = Boolean(value);
+      postApkPlayerCommand(iframe, "muted", this._muted);
+    }
+  });
+
+  function emit(type) {
+    events.dispatchEvent(new Event(type));
+  }
+
+  function onMessage(event) {
+    if (event.source !== iframe.contentWindow) return;
+    let data = event.data;
+    try {
+      if (typeof data === "string") data = JSON.parse(data);
+    } catch (error) {
+      return;
+    }
+    if (!data?.vcmd) return;
+    const command = data.vcmd;
+    const value = data.val;
+    if (value && typeof value === "object") {
+      controller._currentTime = Number(value.position || 0);
+      controller.duration = Number(value.duration || 0);
+      controller.bufferedEnd = Number(value.buffer || 0);
+    }
+    if (command === "ready" || command === "loadedmetadata") {
+      emit("loadedmetadata");
+      postApkPlayerCommand(iframe, "scale", playerFitScaleValue());
+      postApkPlayerCommand(iframe, "quality", Number(state.uiPreferences.playerQuality || 0));
+      postApkPlayerCommand(iframe, "audiolang", getLanguagePreferences().audio || "");
+      controller.volume = Number(state.uiPreferences.defaultVolume ?? 0.1);
+    } else if (command === "play") {
+      controller.paused = false;
+      emit("play");
+    } else if (command === "pause") {
+      controller.paused = true;
+      emit("pause");
+    } else if (command === "time") {
+      emit("timeupdate");
+    } else if (command === "waiting" || command === "initializing") {
+      emit("waiting");
+    } else if (command === "canplay" || command === "playing") {
+      controller.paused = false;
+      emit("canplay");
+      emit("playing");
+    } else if (command === "complete") {
+      emit("ended");
+    } else if (command === "error") {
+      emit("error");
+    } else if (command === "resolution") {
+      controller.resolution = String(value || "");
+      options.onResolution?.(controller.resolution);
+    } else if (command === "qualities") {
+      controller.qualities = Array.isArray(value) ? value : [];
+      options.onQualities?.(controller.qualities);
+    } else if (command === "langavail") {
+      controller.audioLanguages = String(value || "").split(",").filter(Boolean);
+    }
+  }
+
+  window.addEventListener("message", onMessage);
+  controller.destroy = () => window.removeEventListener("message", onMessage);
+  iframe.addEventListener("load", () => {
+    postApkPlayerCommand(iframe, "scale", playerFitScaleValue());
+    postApkPlayerCommand(iframe, "quality", Number(state.uiPreferences.playerQuality || 0));
+    postApkPlayerCommand(iframe, "audiolang", getLanguagePreferences().audio || "");
+    controller.volume = Number(state.uiPreferences.defaultVolume ?? 0.1);
+  });
+  return controller;
+}
+
+function postApkPlayerCommand(iframe, command, value) {
+  iframe?.contentWindow?.postMessage(JSON.stringify({ vcmd: command, val: value }), "*");
+}
+
 async function setupVideoSource(video, url) {
   if (!video || !url) return;
+  const sourceUrl = proxiedStreamUrl(url);
+  const streamType = streamTypeFromUrl(sourceUrl) || streamTypeFromUrl(url);
   if (video._animeTvHls) {
     try {
       video._animeTvHls.destroy();
@@ -3092,21 +4409,25 @@ async function setupVideoSource(video, url) {
     }
     video._animeTvHls = null;
   }
-  if (/\.m3u8(\?|#|$)/i.test(url) && !video.canPlayType("application/vnd.apple.mpegurl")) {
+  if (streamType === "hls" && !video.canPlayType("application/vnd.apple.mpegurl")) {
     const Hls = await loadHlsScript();
     if (Hls?.isSupported?.()) {
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
-        backBufferLength: 60
+        backBufferLength: 60,
+        xhrSetup: (xhr) => {
+          const proxyHost = streamProxyHost(url);
+          if (proxyHost) xhr.setRequestHeader("X-Stream-Prox", proxyHost);
+        }
       });
-      hls.loadSource(url);
+      hls.loadSource(sourceUrl);
       hls.attachMedia(video);
       video._animeTvHls = hls;
       return;
     }
   }
-  video.src = url;
+  video.src = sourceUrl;
 }
 
 function renderPlayerPanelContent(type, episode, url, tracks = []) {
@@ -3174,7 +4495,7 @@ function openPlayerPanel(frame, type, video, episode, url, tracks = []) {
   panel.querySelectorAll("[data-sub-choice]").forEach((button) => {
     button.addEventListener("click", () => {
       setDefaultLanguage(getLanguagePreferences().audio, button.dataset.subChoice);
-      setupSpanishSubtitles(episode, tracks);
+      setupSpanishSubtitles(episode, tracks, video);
       showToast(`Subtitles: ${button.dataset.subChoice === "none" ? "off" : button.dataset.subChoice}`);
     });
   });
@@ -3220,9 +4541,24 @@ function wireVidstreamControls(frame, video, episode, url, tracks = []) {
     if (!video.duration) return;
     video.currentTime = (Number(seek.value) / 1000) * video.duration;
   });
-  frame.querySelector("[data-player-fullscreen]")?.addEventListener("click", () => requestPlayerFullscreen(shell));
+  frame.querySelector("[data-player-exit]")?.addEventListener("click", exitPlayerToSources);
   frame.querySelector("[data-player-back]")?.addEventListener("click", () => showEpisodeListTab());
   frame.querySelector("[data-player-cast]")?.addEventListener("click", () => castActiveEpisode());
+  frame.querySelector("[data-player-fullscreen]")?.addEventListener("click", () => toggleNativeFullscreen());
+  frame.querySelector("[data-player-fit]")?.addEventListener("click", () => {
+    const modes = ["contain", "cover", "fill"];
+    const current = state.uiPreferences.playerFit || "contain";
+    const next = modes[(modes.indexOf(current) + 1) % modes.length] || "contain";
+    saveUiPreferences({ playerFit: next });
+    shell?.classList.remove("fit-contain", "fit-cover", "fit-fill");
+    shell?.classList.add(`fit-${next}`);
+    if (video?.isApkPlayer) {
+      postApkPlayerCommand(frame.querySelector("#animePlayerFrame"), "scale", playerFitScaleValue(next));
+    }
+    const fitButton = frame.querySelector("[data-player-fit]");
+    if (fitButton) fitButton.textContent = next === "cover" ? "□" : next === "fill" ? "▣" : "▭";
+    showToast(`Video fit: ${next}`);
+  });
   frame.querySelectorAll("[data-player-panel]").forEach((button) => {
     button.addEventListener("click", () => openPlayerPanel(frame, button.dataset.playerPanel, video, episode, url, tracks));
   });
@@ -3265,14 +4601,38 @@ function selectEpisodeByPosition(seasonIndex, episodeIndex, shouldPlay = true) {
   state.activeEpisode = { season, episode, seasonIndex, episodeIndex };
   state.activeEpisodeUrl = getEpisodeUrl(episode);
   renderEpisodeList(state.activeShow);
-  if (shouldPlay) playActiveShow();
+  if (shouldPlay) {
+    const frame = document.querySelector("#videoFrame");
+    const show = state.activeShow;
+    if (frame && show) {
+      stopActivePlayback();
+      document.body.classList.remove("player-cinema-open");
+      const background = show.banner || show.image || "";
+      frame.style.setProperty("--watch-bg", background ? `url("${background}")` : "none");
+      schedulePlaybackSourceOptions(show, episode, season?.season || seasonIndex + 1 || 1);
+      renderSourcePickerIn(frame);
+    }
+  }
   refreshFocusables();
 }
 
 function showEpisodeListTab() {
+  // If in cinema / fullscreen mode, exit it first so the episode panel is visible
+  if (document.body.classList.contains("player-cinema-open")) {
+    const container = document.querySelector(".vidstream-player");
+    if (container) {
+      container.classList.remove("is-cinema");
+      document.body.classList.remove("player-cinema-open");
+    }
+  }
   state.activeDetailTab = "episodes";
   renderEpisodeList(state.activeShow);
-  episodeList?.scrollIntoView({ behavior: "smooth", block: "start" });
+  // Scroll the watch-info panel (right panel) to the episode list
+  window.setTimeout(() => {
+    const watchInfo = document.querySelector(".watch-info");
+    if (watchInfo) watchInfo.scrollTo({ top: watchInfo.scrollHeight, behavior: "smooth" });
+    episodeList?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, 80);
   refreshFocusables();
 }
 
@@ -3294,17 +4654,26 @@ function wirePlayerChrome(frame) {
     });
   });
 
-  frame.querySelector("[data-player-prev]")?.addEventListener("click", () => {
-    const nav = getEpisodeNavigationTargets();
-    if (nav.previous) selectEpisodeByPosition(nav.previous.seasonIndex, nav.previous.episodeIndex);
+  // When the source picker is open, prev/next jump to the adjacent episode's
+  // SOURCE SELECTOR. When actually playing, they play the adjacent episode.
+  const goAdjacent = (target) => {
+    if (!target) return;
+    const inPicker = Boolean(frame.querySelector(".source-picker"));
+    if (inPicker) selectEpisodeByPosition(target.seasonIndex, target.episodeIndex, true);
+    else playEpisodeByPosition(target.seasonIndex, target.episodeIndex);
+  };
+
+  frame.querySelectorAll("[data-player-prev]").forEach((button) => {
+    button.addEventListener("click", () => goAdjacent(getEpisodeNavigationTargets().previous));
   });
 
-  frame.querySelector("[data-player-next]")?.addEventListener("click", () => {
-    const nav = getEpisodeNavigationTargets();
-    if (nav.next) selectEpisodeByPosition(nav.next.seasonIndex, nav.next.episodeIndex);
+  frame.querySelectorAll("[data-player-next]").forEach((button) => {
+    button.addEventListener("click", () => goAdjacent(getEpisodeNavigationTargets().next));
   });
 
-  frame.querySelector("[data-player-list]")?.addEventListener("click", () => showEpisodeListTab());
+  frame.querySelectorAll("[data-player-list]").forEach((button) => {
+    button.addEventListener("click", () => showEpisodeListTab());
+  });
 }
 
 function getWatchKey(show = state.activeShow, episode = state.activeEpisode?.episode) {
@@ -3358,8 +4727,16 @@ async function selectEpisode(season, episode, seasonIndex, episodeIndex) {
   state.activeEpisode = { season, episode, seasonIndex, episodeIndex };
   state.activeEpisodeUrl = getEpisodeUrl(episode);
   renderEpisodeList(state.activeShow);
-  playActiveShow();
-  schedulePlaybackSourceOptions(state.activeShow, episode, season?.season || seasonIndex + 1 || 1, { autoReplay: true });
+  const frame = document.querySelector("#videoFrame");
+  const show = state.activeShow;
+  if (frame && show) {
+    stopActivePlayback();
+    document.body.classList.remove("player-cinema-open");
+    const background = show.banner || show.image || "";
+    frame.style.setProperty("--watch-bg", background ? `url("${background}")` : "none");
+    schedulePlaybackSourceOptions(show, episode, season?.season || seasonIndex + 1 || 1);
+    renderSourcePickerIn(frame);
+  }
   refreshFocusables();
 }
 
@@ -3369,18 +4746,691 @@ function getPlayableUrl(show) {
   return state.activeEpisodeUrl || show.videoUrl || getEpisodeUrl(show.seasons?.[0]?.episodes?.[0]) || getEpisodeUrl(show.episodes?.[0]) || "";
 }
 
+function _buildShowsByAniListId() {
+  const map = new Map();
+  for (const s of state.shows) {
+    if (s.anilistId) map.set(String(s.anilistId), s);
+  }
+  return map;
+}
+
+function getFranchiseSeasonList(show) {
+  // ── AniList-powered franchise (most accurate) ────────────────────────────
+  if (show.anilistFranchise) {
+    const showsMap = _buildShowsByAniListId();
+    const list = buildSeasonListFromAniListFranchise(
+      show, showsMap, getDetailSeasons, makePlaceholderEpisodes
+    );
+    if (list && list.length > 0) return list;
+  }
+
+  // ── Fallback: title-based matching ───────────────────────────────────────
+  const franchiseKey = getFranchiseKey(show.title);
+  const related = state.shows
+    .filter((entry) => getFranchiseKey(entry.title) === franchiseKey)
+    .sort((a, b) => extractSeasonNumber(a.title, 1) - extractSeasonNumber(b.title, 1));
+  if (related.length <= 1) return getDetailSeasons(show);
+  const usedNumbers = new Set();
+  return related.map((entry, idx) => {
+    let seasonNumber = extractSeasonNumber(entry.title, idx + 1);
+    while (usedNumbers.has(seasonNumber)) seasonNumber += 1;
+    usedNumbers.add(seasonNumber);
+    if (entry.id === show.id) {
+      const currentSeasons = getDetailSeasons(show);
+      return {
+        season: seasonNumber,
+        title: `Season ${seasonNumber}`,
+        sourceTitle: show.title,
+        image: show.image,
+        isCurrentShow: true,
+        episodes: currentSeasons.flatMap((s) => s.episodes || []),
+        playable: currentSeasons.some((s) => s.playable)
+      };
+    }
+    return {
+      season: seasonNumber,
+      title: `Season ${seasonNumber}`,
+      sourceTitle: entry.title,
+      image: entry.image,
+      relatedShowId: entry.id,
+      episodes: makePlaceholderEpisodes(entry, seasonNumber),
+      playable: false
+    };
+  });
+}
+
+// ── TioAnime source integration ───────────────────────────────────────────────
+
+const _tioAnimeSlugCache = new Map(); // anilistId/showKey → slug
+const _tioAnimeMissCache = new Set();
+const _tioAnimeEpisodeSourceCache = new Map();
+let _tioAnimeSlugCatalogPromise = null;
+let _tioAnimeSlugTitleMap = null;
+let _tioAnimeWarmStarted = false;
+const TIOANIME_SEARCH_TIMEOUT_MS = 4200;
+const TIOANIME_SOURCE_TIMEOUT_MS = 6500;
+
+function tioAnimeSearchCandidates(show = {}) {
+  const candidates = [
+    show.title,
+    getShowTitle(show),
+    show.romajiTitle,
+    show.nativeTitle,
+    show.englishTitle,
+    show.sourceTitle,
+    ...(show.aliases || []),
+    ...(show.alternativeTitles || []),
+    ...(show.synonyms || [])
+  ];
+  const withCleaned = [];
+  candidates.filter(Boolean).forEach((title) => {
+    withCleaned.push(title);
+    withCleaned.push(String(title).replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim());
+    withCleaned.push(stripSeasonFromTitle(title));
+    tioAnimeSeasonTitleVariants(title).forEach((variant) => withCleaned.push(variant));
+  });
+
+  const seen = new Set();
+  return withCleaned
+    .map((title) => String(title || "").trim())
+    .filter((title) => {
+      if (title.length < 2) return false;
+      const key = normalizeTitle(title);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 8);
+}
+
+function tioAnimeSeasonTitleVariants(title = "") {
+  const text = String(title || "").trim();
+  if (!text) return [];
+  const variants = new Set();
+  const add = (value) => {
+    const clean = String(value || "").replace(/\s+/g, " ").trim();
+    if (clean) variants.add(clean);
+  };
+  const base = stripSeasonFromTitle(text);
+  const seasonMatch = text.match(/\bseason\s*(\d+)\b/i) || text.match(/\b(\d+)(?:st|nd|rd|th)\s*season\b/i);
+  const partMatch = text.match(/\bpart\s*(\d+)\b/i);
+  if (base && seasonMatch) {
+    const num = Number(seasonMatch[1]);
+    const ordinal = ordinalSeasonLabel(num);
+    add(`${base} ${num}`);
+    add(`${base} season ${num}`);
+    add(`${base} ${ordinal}`);
+    add(`${base} ${ordinal} season`);
+  }
+  if (base && partMatch) {
+    const num = Number(partMatch[1]);
+    add(`${base} part ${num}`);
+    add(`${base} ${num}`);
+  }
+  return [...variants];
+}
+
+function ordinalSeasonLabel(value) {
+  const num = Number(value) || 0;
+  const mod100 = num % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${num}th`;
+  const suffix = num % 10 === 1 ? "st" : num % 10 === 2 ? "nd" : num % 10 === 3 ? "rd" : "th";
+  return `${num}${suffix}`;
+}
+
+function tioAnimeSlugFromSearchPayload(data = {}) {
+  return data.slug
+    || data.anime?.slug
+    || data.result?.slug
+    || data.item?.slug
+    || data.results?.[0]?.slug
+    || data.items?.[0]?._slug
+    || data.items?.[0]?.slug
+    || "";
+}
+
+async function fetchTioAnimeSlugSearch(paramName, value, cacheKey) {
+  if (!value || _tioAnimeMissCache.has(cacheKey)) return "";
+  if (_tioAnimeSlugCache.has(cacheKey)) return _tioAnimeSlugCache.get(cacheKey);
+  const qs = `${paramName}=${encodeURIComponent(value)}`;
+  const res = await fetchWithTimeout(`./api/tioanime/search?${qs}`, { cache: "no-store" }, TIOANIME_SEARCH_TIMEOUT_MS);
+  if (!res.ok) return "";
+  const data = await res.json();
+  const slug = data.ok ? tioAnimeSlugFromSearchPayload(data) : "";
+  if (slug) {
+    _tioAnimeSlugCache.set(cacheKey, slug);
+    return slug;
+  }
+  _tioAnimeMissCache.add(cacheKey);
+  return "";
+}
+
+async function ensureTioAnimeSlugCatalog() {
+  if (_tioAnimeSlugTitleMap) return _tioAnimeSlugTitleMap;
+  if (!_tioAnimeSlugCatalogPromise) {
+    _tioAnimeSlugCatalogPromise = fetchWithTimeout(TIOANIME_SLUGS_ENDPOINT, { cache: "no-store" }, 18000)
+      .then((res) => res.ok ? res.json() : null)
+      .then((payload) => {
+        _tioAnimeSlugTitleMap = payload?.ok && payload.byTitle ? payload.byTitle : {};
+        Object.entries(_tioAnimeSlugTitleMap).forEach(([key, slug]) => {
+          if (key && slug) _tioAnimeSlugCache.set(`t:${key}`, slug);
+        });
+        return _tioAnimeSlugTitleMap;
+      })
+      .catch((error) => {
+        console.warn("TioAnime slug catalog unavailable:", error);
+        _tioAnimeSlugTitleMap = {};
+        return _tioAnimeSlugTitleMap;
+      });
+  }
+  return _tioAnimeSlugCatalogPromise;
+}
+
+function applyTioAnimeSlugFromMap(show, slugMap = _tioAnimeSlugTitleMap || {}) {
+  if (!show || !slugMap) return null;
+  if (show.tioAnimeSlug) return { slug: show.tioAnimeSlug, matchedTitle: show.tioAnimeSlugSource || show.title || "", key: "cached-show" };
+  for (const title of tioAnimeSearchCandidates(show)) {
+    const key = normalizeTitle(title);
+    const slug = slugMap[key];
+    if (slug) {
+      show.tioAnimeSlug = slug;
+      show.tioAnimeSlugSource = title;
+      _tioAnimeSlugCache.set(`t:${key}`, slug);
+      return { slug, matchedTitle: title, key };
+    }
+    const strippedKey = normalizeTitle(stripSeasonFromTitle(title));
+    if (strippedKey && slugMap[strippedKey]) {
+      show.tioAnimeSlug = slugMap[strippedKey];
+      show.tioAnimeSlugSource = title;
+      _tioAnimeSlugCache.set(`t:${strippedKey}`, show.tioAnimeSlug);
+      return { slug: show.tioAnimeSlug, matchedTitle: title, key: strippedKey };
+    }
+  }
+  return null;
+}
+
+async function resolveTioAnimeSlugFromCatalog(show) {
+  const slugMap = await ensureTioAnimeSlugCatalog();
+  return applyTioAnimeSlugFromMap(show, slugMap);
+}
+
+function warmTioAnimeSlugCatalog(shows = state.shows) {
+  if (_tioAnimeSlugTitleMap) {
+    (shows || []).forEach((show) => applyTioAnimeSlugFromMap(show, _tioAnimeSlugTitleMap));
+    return;
+  }
+  if (_tioAnimeWarmStarted) return;
+  _tioAnimeWarmStarted = true;
+  ensureTioAnimeSlugCatalog()
+    .then((slugMap) => {
+      const currentShows = state.shows?.length ? state.shows : shows;
+      (currentShows || []).forEach((show) => applyTioAnimeSlugFromMap(show, slugMap));
+      const matched = (currentShows || []).filter((show) => show.tioAnimeSlug).length;
+      if (matched) console.info(`Prepared TioAnime source matching for ${matched} anime.`);
+    })
+    .catch((error) => {
+      _tioAnimeWarmStarted = false;
+      console.warn("TioAnime slug warmup failed:", error);
+    });
+}
+
+/**
+ * Resolve and store show.tioAnimeSlug by calling the Python service.
+ * Never throws — silently skips if the service is offline.
+ */
+async function hydrateTioAnimeSlug(show, options = {}) {
+  if (!show || (show.tioAnimeSlugChecked && !options.force)) return show;
+  try {
+    const catalogMatch = await resolveTioAnimeSlugFromCatalog(show);
+    if (catalogMatch?.slug) {
+      show.tioAnimeSlug = catalogMatch.slug;
+      show.tioAnimeSlugSource = catalogMatch.matchedTitle;
+      _tioAnimeSlugCache.set(`t:${catalogMatch.key}`, catalogMatch.slug);
+      show.tioAnimeSlugChecked = true;
+      return show;
+    }
+
+    if (show.anilistId) {
+      const idKey = `al:${show.anilistId}`;
+      const idSlug = await fetchTioAnimeSlugSearch("id", show.anilistId, idKey);
+      if (idSlug) {
+        show.tioAnimeSlug = idSlug;
+        show.tioAnimeSlugChecked = true;
+        return show;
+      }
+    }
+
+    for (const title of tioAnimeSearchCandidates(show)) {
+      const titleKey = `t:${normalizeTitle(title)}`;
+      const slug = await fetchTioAnimeSlugSearch("title", title, titleKey);
+      if (slug) {
+        show.tioAnimeSlug = slug;
+        show.tioAnimeSlugSource = title;
+        show.tioAnimeSlugChecked = true;
+        return show;
+      }
+    }
+  } catch (error) {
+    console.warn("TioAnime search unavailable:", error);
+  }
+  show.tioAnimeSlugChecked = true;
+  return show;
+}
+
+/**
+ * Fetch TioAnime sources for a specific episode and merge them into the
+ * episode's sourceOptions array so they appear in the source picker.
+ */
+async function attachTioAnimeSources(show, episode) {
+  if (!show || !episode) return;
+  if (!show.tioAnimeSlug) await hydrateTioAnimeSlug(show, { force: true });
+  const slug = show.tioAnimeSlug;
+  if (!slug) {
+    episode.tioAnimeSourcesChecked = true;
+    return;
+  }
+  const epNum = episode.episode || episode.number;
+  if (!epNum) {
+    episode.tioAnimeSourcesChecked = true;
+    return;
+  }
+  const cacheKey = `${slug}:${epNum}`;
+  const cached = _tioAnimeEpisodeSourceCache.get(cacheKey);
+  if (cached) {
+    mergeTioAnimeSourcesIntoEpisode(show, episode, cached, slug, epNum);
+    episode.tioAnimeSourcesChecked = true;
+    return;
+  }
+  try {
+    const res = await fetchWithTimeout(
+      `./api/tioanime/sources?slug=${encodeURIComponent(slug)}&episode=${encodeURIComponent(epNum)}`,
+      { cache: "no-store" }, TIOANIME_SOURCE_TIMEOUT_MS
+    );
+    if (!res.ok) {
+      episode.tioAnimeSourcesChecked = true;
+      return;
+    }
+    const data = await res.json();
+    if (!data.ok || !Array.isArray(data.sources)) {
+      episode.tioAnimeSourcesChecked = true;
+      return;
+    }
+    _tioAnimeEpisodeSourceCache.set(cacheKey, data);
+    mergeTioAnimeSourcesIntoEpisode(show, episode, data, slug, epNum);
+  } catch (error) {
+    console.warn("TioAnime episode sources unavailable:", error);
+  }
+  episode.tioAnimeSourcesChecked = true;
+}
+
+// Rank embed providers by ad behaviour so the player auto-selects ad-free hosts.
+//   0 = ad-free / plays under iframe sandbox (no "Sandbox not allowed" wall)
+//   1 = neutral / usually fine
+//   2 = ad-walled (VOE, Netu/hqq, StreamSB) — block sandbox to force ads
+function embedProviderRank(provider = "") {
+  const p = String(provider).toLowerCase().replace(/[^a-z0-9]/g, "");
+  const adFree  = ["mega", "mp4upload", "yourupload", "youupload", "okru", "ok", "streamwish", "filelions"];
+  const adWalled = ["voe", "netu", "hqq", "streamsb", "embedsb", "sb", "dood", "doodstream", "filemoon", "vidhide", "mixdrop"];
+  if (adFree.some(k => p.includes(k)))   return 0;
+  if (adWalled.some(k => p.includes(k))) return 2;
+  return 1;
+}
+
+function mergeTioAnimeSourcesIntoEpisode(show, episode, data, slug, epNum) {
+  if (!episode || !Array.isArray(data?.sources)) return;
+  const existing = new Set((episode.sourceOptions || []).map(s => s.videoUrl || s.externalUrl));
+  const newOptions = data.sources
+    .filter(s => s.url && !existing.has(s.url))
+    .map((s, index) => {
+      const rank = embedProviderRank(s.provider);
+      return {
+        id:          `tioanime-${normalizeTitle(s.provider || "source")}-${simpleHash(`${slug}:${epNum}:${s.provider || index}:${s.url}`)}`,
+        label:       `TioAnime - ${s.provider || `Source ${index + 1}`}${rank === 2 ? " (ads)" : ""}`,
+        type:        "iframe",
+        externalUrl: s.url,
+        videoUrl:    "",
+        downloadUrl: "",
+        streamResolver: null,
+        sourceRank:  rank,
+        adWalled:    rank === 2,
+      };
+    })
+    // Ad-free first, ad-walled last; keep scraper order within a rank
+    .sort((a, b) => a.sourceRank - b.sourceRank);
+
+  if (newOptions.length > 0) {
+    episode.sourceOptions = [...(episode.sourceOptions || []), ...newOptions];
+    episode.locked = false;
+    episode.server = episode.server || "TioAnime";
+  }
+
+  if (data.mega?.length && !episode.downloadUrl) {
+    episode.downloadUrl = data.mega[0];
+  }
+}
+
+// ── AnimeAV1 source integration ──────────────────────────────────────────────
+
+const _animeAv1SlugCache = new Map();
+const _animeAv1MissCache = new Set();
+const _animeAv1EpisodeSourceCache = new Map();
+let _animeAv1SlugCatalogPromise = null;
+let _animeAv1SlugTitleMap = null;
+let _animeAv1WarmStarted = false;
+const ANIMEAV1_SEARCH_TIMEOUT_MS = 4200;
+const ANIMEAV1_SOURCE_TIMEOUT_MS = 6500;
+
+function animeAv1SearchCandidates(show = {}) {
+  return tioAnimeSearchCandidates(show);
+}
+
+function animeAv1SlugFromSearchPayload(data = {}) {
+  return data.slug
+    || data.anime?.slug
+    || data.result?.slug
+    || data.item?.slug
+    || data.results?.[0]?.slug
+    || data.items?.[0]?._slug
+    || data.items?.[0]?.slug
+    || "";
+}
+
+async function fetchAnimeAv1SlugSearch(paramName, value, cacheKey) {
+  if (!value || _animeAv1MissCache.has(cacheKey)) return "";
+  if (_animeAv1SlugCache.has(cacheKey)) return _animeAv1SlugCache.get(cacheKey);
+  const qs = `${paramName}=${encodeURIComponent(value)}`;
+  const res = await fetchWithTimeout(`./api/animeav1/search?${qs}`, { cache: "no-store" }, ANIMEAV1_SEARCH_TIMEOUT_MS);
+  if (!res.ok) {
+    _animeAv1MissCache.add(cacheKey);
+    return "";
+  }
+  const data = await res.json();
+  const slug = data.ok ? animeAv1SlugFromSearchPayload(data) : "";
+  if (slug) {
+    _animeAv1SlugCache.set(cacheKey, slug);
+    return slug;
+  }
+  _animeAv1MissCache.add(cacheKey);
+  return "";
+}
+
+async function ensureAnimeAv1SlugCatalog() {
+  if (_animeAv1SlugTitleMap) return _animeAv1SlugTitleMap;
+  if (!_animeAv1SlugCatalogPromise) {
+    _animeAv1SlugCatalogPromise = fetchWithTimeout(ANIMEAV1_SLUGS_ENDPOINT, { cache: "no-store" }, 16000)
+      .then((res) => res.ok ? res.json() : null)
+      .then((payload) => {
+        _animeAv1SlugTitleMap = payload?.ok && payload.byTitle ? payload.byTitle : {};
+        Object.entries(_animeAv1SlugTitleMap).forEach(([key, slug]) => {
+          if (key && slug) _animeAv1SlugCache.set(`t:${key}`, slug);
+        });
+        return _animeAv1SlugTitleMap;
+      })
+      .catch((error) => {
+        console.warn("AnimeAV1 slug catalog unavailable:", error);
+        _animeAv1SlugTitleMap = {};
+        return _animeAv1SlugTitleMap;
+      });
+  }
+  return _animeAv1SlugCatalogPromise;
+}
+
+function applyAnimeAv1SlugFromMap(show, slugMap = _animeAv1SlugTitleMap || {}) {
+  if (!show || !slugMap) return null;
+  if (show.animeAv1Slug) return { slug: show.animeAv1Slug, matchedTitle: show.animeAv1SlugSource || show.title || "", key: "cached-show" };
+  for (const title of animeAv1SearchCandidates(show)) {
+    const key = normalizeTitle(title);
+    const slug = slugMap[key];
+    if (slug) {
+      show.animeAv1Slug = slug;
+      show.animeAv1SlugSource = title;
+      _animeAv1SlugCache.set(`t:${key}`, slug);
+      return { slug, matchedTitle: title, key };
+    }
+    const strippedKey = normalizeTitle(stripSeasonFromTitle(title));
+    if (strippedKey && slugMap[strippedKey]) {
+      show.animeAv1Slug = slugMap[strippedKey];
+      show.animeAv1SlugSource = title;
+      _animeAv1SlugCache.set(`t:${strippedKey}`, show.animeAv1Slug);
+      return { slug: show.animeAv1Slug, matchedTitle: title, key: strippedKey };
+    }
+  }
+  return null;
+}
+
+async function resolveAnimeAv1SlugFromCatalog(show) {
+  const slugMap = await ensureAnimeAv1SlugCatalog();
+  return applyAnimeAv1SlugFromMap(show, slugMap);
+}
+
+function warmAnimeAv1SlugCatalog(shows = state.shows) {
+  if (_animeAv1SlugTitleMap) {
+    (shows || []).forEach((show) => applyAnimeAv1SlugFromMap(show, _animeAv1SlugTitleMap));
+    return;
+  }
+  if (_animeAv1WarmStarted) return;
+  _animeAv1WarmStarted = true;
+  ensureAnimeAv1SlugCatalog()
+    .then((slugMap) => {
+      const currentShows = state.shows?.length ? state.shows : shows;
+      (currentShows || []).forEach((show) => applyAnimeAv1SlugFromMap(show, slugMap));
+      const matched = (currentShows || []).filter((show) => show.animeAv1Slug).length;
+      if (matched) console.info(`Prepared AnimeAV1 source matching for ${matched} anime.`);
+    })
+    .catch((error) => {
+      _animeAv1WarmStarted = false;
+      console.warn("AnimeAV1 slug warmup failed:", error);
+    });
+}
+
+async function hydrateAnimeAv1Slug(show, options = {}) {
+  if (!show || (show.animeAv1SlugChecked && !options.force)) return show;
+  try {
+    const catalogMatch = await resolveAnimeAv1SlugFromCatalog(show);
+    if (catalogMatch?.slug) {
+      show.animeAv1Slug = catalogMatch.slug;
+      show.animeAv1SlugSource = catalogMatch.matchedTitle;
+      _animeAv1SlugCache.set(`t:${catalogMatch.key}`, catalogMatch.slug);
+      show.animeAv1SlugChecked = true;
+      return show;
+    }
+
+    if (show.anilistId) {
+      const idKey = `al:${show.anilistId}`;
+      const idSlug = await fetchAnimeAv1SlugSearch("id", show.anilistId, idKey);
+      if (idSlug) {
+        show.animeAv1Slug = idSlug;
+        show.animeAv1SlugChecked = true;
+        return show;
+      }
+    }
+
+    for (const title of animeAv1SearchCandidates(show)) {
+      const titleKey = `t:${normalizeTitle(title)}`;
+      const slug = await fetchAnimeAv1SlugSearch("title", title, titleKey);
+      if (slug) {
+        show.animeAv1Slug = slug;
+        show.animeAv1SlugSource = title;
+        show.animeAv1SlugChecked = true;
+        return show;
+      }
+    }
+  } catch (error) {
+    console.warn("AnimeAV1 search unavailable:", error);
+  }
+  show.animeAv1SlugChecked = true;
+  return show;
+}
+
+async function attachAnimeAv1Sources(show, episode) {
+  if (!show || !episode) return;
+  if (!show.animeAv1Slug) await hydrateAnimeAv1Slug(show, { force: true });
+  const slug = show.animeAv1Slug;
+  if (!slug) {
+    episode.animeAv1SourcesChecked = true;
+    return;
+  }
+  const epNum = episode.episode || episode.number;
+  if (!epNum) {
+    episode.animeAv1SourcesChecked = true;
+    return;
+  }
+  const cacheKey = `${slug}:${epNum}:SUB`;
+  const cached = _animeAv1EpisodeSourceCache.get(cacheKey);
+  if (cached) {
+    mergeAnimeAv1SourcesIntoEpisode(show, episode, cached, slug, epNum);
+    episode.animeAv1SourcesChecked = true;
+    return;
+  }
+  try {
+    const res = await fetchWithTimeout(
+      `./api/animeav1/sources?slug=${encodeURIComponent(slug)}&episode=${encodeURIComponent(epNum)}&variant=SUB`,
+      { cache: "no-store" }, ANIMEAV1_SOURCE_TIMEOUT_MS
+    );
+    if (!res.ok) {
+      episode.animeAv1SourcesChecked = true;
+      return;
+    }
+    const data = await res.json();
+    if (!data.ok || !Array.isArray(data.sources)) {
+      episode.animeAv1SourcesChecked = true;
+      return;
+    }
+    _animeAv1EpisodeSourceCache.set(cacheKey, data);
+    mergeAnimeAv1SourcesIntoEpisode(show, episode, data, slug, epNum);
+  } catch (error) {
+    console.warn("AnimeAV1 episode sources unavailable:", error);
+  }
+  episode.animeAv1SourcesChecked = true;
+}
+
+function mergeAnimeAv1SourcesIntoEpisode(show, episode, data, slug, epNum) {
+  if (!episode || !Array.isArray(data?.sources)) return;
+  const existing = new Set((episode.sourceOptions || []).map(s => s.videoUrl || s.externalUrl));
+  const newOptions = data.sources
+    .filter(s => (s.url || s.videoUrl || s.externalUrl) && !existing.has(s.url || s.videoUrl || s.externalUrl))
+    .map((s, index) => {
+      const url = s.videoUrl || s.externalUrl || s.url || "";
+      const direct = s.type === "direct" || /\.(m3u8|mp4|webm|m4v)(?:$|[?#])/i.test(url);
+      // Direct streams are always ad-free (rank 0); otherwise rank by provider
+      const rank = direct ? 0 : embedProviderRank(s.provider);
+      return {
+        id:          `animeav1-${normalizeTitle(s.provider || "source")}-${simpleHash(`${slug}:${epNum}:${s.provider || index}:${url}`)}`,
+        label:       `AnimeAV1 - ${s.provider || `Source ${index + 1}`}${rank === 2 ? " (ads)" : ""}`,
+        type:        direct ? "direct" : "iframe",
+        externalUrl: direct ? "" : url,
+        videoUrl:    direct ? url : "",
+        downloadUrl: "",
+        streamResolver: null,
+        sourceRank:  rank,
+        adWalled:    rank === 2,
+      };
+    })
+    .sort((a, b) => a.sourceRank - b.sourceRank);
+
+  if (newOptions.length > 0) {
+    episode.sourceOptions = [...(episode.sourceOptions || []), ...newOptions];
+    episode.locked = false;
+    episode.server = episode.server || "AnimeAV1";
+  }
+
+  const download = (data.downloads || []).find((item) => item.downloadUrl || item.url);
+  if (download && !episode.downloadUrl) {
+    episode.downloadUrl = download.downloadUrl || download.url;
+  }
+}
+
+/**
+ * After AniList franchise hydration, make sure every franchise entry
+ * (movie, OVA, related TV seasons) has a minimal show object in state.shows.
+ * This allows openShow() to find them when the user clicks a season card.
+ */
+function ensureFranchiseShowsInCatalog(show) {
+  const franchise = show.anilistFranchise;
+  if (!franchise) return;
+
+  const allEntries = [
+    ...franchise.tvSeasons,
+    ...franchise.movies,
+    ...franchise.ovas,
+    ...franchise.onas,
+    ...franchise.specials,
+  ];
+
+  const added = [];
+  for (const entry of allEntries) {
+    const aniId   = String(entry.anilistId || "");
+    const extraId = String(entry.extraAnilistId || "");
+    if (!aniId) continue;
+
+    const syntheticId = `anilist-${aniId}`;
+    const alreadyIn = state.shows.some(s =>
+      s.id === syntheticId ||
+      (s.anilistId && String(s.anilistId) === aniId) ||
+      (extraId && s.anilistId && String(s.anilistId) === extraId)
+    );
+    if (alreadyIn) continue;
+
+    const epCount = getSeasonEpisodeLimit(entry);
+    added.push({
+      id:           syntheticId,
+      anilistId:    Number(aniId),
+      malId:        entry.malId || null,
+      title:        entry.title || syntheticId,
+      romajiTitle:  entry.romajiTitle || "",
+      nativeTitle:  entry.nativeTitle || "",
+      episode:      epCount || "?",
+      totalEpisodes: entry.episodes || null,
+      latestAiredEp: entry.latestAiredEp || null,
+      nextAiringEp: entry.nextAiringEp || null,
+      nextAiringEpisodeNumber: entry.nextAiringEp || null,
+      genre:        show.genre || "anime",
+      genres:       entry.genres?.length ? entry.genres : (show.genres || []),
+      format:       entry.format || "",
+      status:       entry.status || "",
+      year:         entry.seasonYear || "",
+      source:       "AniList",
+      image:        entry.image || show.image || "",
+      banner:       show.banner || "",
+      description:  entry.description || show.description || "",
+      videoUrl:     "",
+      seasons:      [],
+      episodes:     [],
+      colors:       show.colors || ["#40dfc2", "#251d47"],
+      day:          "TBA",
+      time:         "",
+      score:        entry.score || null,
+    });
+  }
+
+  if (added.length > 0) {
+    state.shows = [...state.shows, ...added];
+  }
+}
+
 function getDetailSeasons(show) {
-  const sourceSeasons = show.seasons?.length ? show.seasons : groupEpisodesBySeason(show.episodes || []);
-  if (sourceSeasons.length) {
-    return sourceSeasons.map((season, index) => ({
+  const inferredSeason = extractSeasonNumber(show?.title || show?.romajiTitle || show?.nativeTitle || "", 1);
+  const sourceSeasons = (show.seasons?.length ? show.seasons : groupEpisodesBySeason(show.episodes || []))
+    .map((season, index) => ({
       ...season,
-      season: season.season || index + 1,
-      title: season.title || `Season ${season.season || index + 1}`,
-      sourceTitle: show.title,
-      image: show.image,
-      episodes: repairEpisodeGaps(season.episodes || [], season.season || index + 1),
-      playable: (season.episodes || []).some((episode) => getEpisodeUrl(episode) || isExternalIframeEpisode(episode) || episode.streamResolver)
-    }));
+      season: Number(season.season || season.seasonNumber || index + 1) || index + 1
+    }))
+    .sort((a, b) => Number(a.season || 0) - Number(b.season || 0));
+  if (sourceSeasons.length) {
+    return sourceSeasons.map((season, index) => {
+      const seasonNumber = sourceSeasons.length === 1 && inferredSeason > 1
+        ? inferredSeason
+        : season.season || index + 1;
+      return {
+        ...season,
+        season: seasonNumber,
+        title: `Season ${seasonNumber}`,
+        sourceTitle: show.title,
+        image: show.image,
+        episodes: clampSeasonEpisodes(repairEpisodeGaps(season.episodes || [], seasonNumber), show, season),
+        playable: (season.episodes || []).some((episode) => getEpisodeUrl(episode) || isExternalIframeEpisode(episode) || episode.streamResolver)
+      };
+    });
   }
 
   const franchiseKey = getFranchiseKey(show.title);
@@ -3408,7 +5458,8 @@ function getDetailSeasons(show) {
 }
 
 function makePlaceholderEpisodes(show, seasonNumber) {
-  const knownCount = Number(show.episode);
+  const knownCount = getSeasonEpisodeLimit(show);
+  if (knownCount === 0) return [];
   const count = Number.isFinite(knownCount) && knownCount > 0 ? knownCount : 12;
   return Array.from({ length: Math.min(count, 200) }, (_, index) => ({
     season: seasonNumber,
@@ -3418,6 +5469,62 @@ function makePlaceholderEpisodes(show, seasonNumber) {
     locked: true,
     unavailable: true
   }));
+}
+
+function getSeasonEpisodeLimit(show = {}, season = {}) {
+  const status = String(season.status || show.status || "").toUpperCase();
+  const format = String(season.format || show.format || "").toUpperCase();
+  if (format === "MOVIE") return 1;
+
+  const latestAired = Number(
+    season.latestAiredEp
+    || season.latestAiredEpisode
+    || show.latestAiredEp
+    || show.latestAiredEpisode
+    || show.latestEpisode
+    || 0
+  );
+  const nextAiring = Number(
+    season.nextAiringEp
+    || season.nextAiringEpisodeNumber
+    || show.nextAiringEp
+    || show.nextAiringEpisodeNumber
+    || 0
+  );
+  const displayedEpisode = Number(season.episode || show.episode || 0);
+  const numericShowEpisodes = Number(show.episodes);
+  const plannedTotal = Number(
+    season.totalEpisodes
+    || season.episodesCount
+    || show.totalEpisodes
+    || show.episodeCount
+    || show.episodesCount
+    || (Number.isFinite(numericShowEpisodes) ? numericShowEpisodes : 0)
+    || 0
+  );
+  const isAiring = status === "RELEASING" || status === "AIRING";
+  const isFuture = status === "NOT_YET_RELEASED" || status === "UPCOMING";
+
+  if (isFuture) return 0;
+  if (isAiring) {
+    if (Number.isFinite(latestAired) && latestAired > 0) return latestAired;
+    if (Number.isFinite(nextAiring) && nextAiring > 1) return nextAiring - 1;
+    if (Number.isFinite(displayedEpisode) && displayedEpisode > 0) return displayedEpisode;
+    return 0;
+  }
+
+  if (Number.isFinite(plannedTotal) && plannedTotal > 0) return plannedTotal;
+  if (Number.isFinite(latestAired) && latestAired > 0) return latestAired;
+  if (Number.isFinite(displayedEpisode) && displayedEpisode > 0) return displayedEpisode;
+  return null;
+}
+
+function clampSeasonEpisodes(episodes = [], show = {}, season = {}) {
+  if (!Array.isArray(episodes) || !episodes.length) return [];
+  const limit = getSeasonEpisodeLimit(show, season);
+  if (limit === null || limit === undefined) return episodes;
+  if (!Number.isFinite(limit) || limit <= 0) return [];
+  return episodes.filter((episode) => Number(episode.episode || episode.number || 0) <= limit);
 }
 
 function validateEpisodeIntegrity(show) {
@@ -3441,14 +5548,26 @@ function validateEpisodeIntegrity(show) {
 }
 
 function repairEpisodeGaps(episodes = [], seasonNumber = 1) {
+  const normalizedSeason = Number(seasonNumber) || 1;
   const byNumber = new Map();
   episodes.filter(Boolean).forEach((episode) => {
     const number = Number(episode.episode || episode.number);
     if (!Number.isFinite(number) || number < 1) return;
+    const existing = byNumber.get(number);
     byNumber.set(number, {
+      ...existing,
       ...episode,
+      videoUrl: getEpisodeUrl(episode) || existing?.videoUrl || "",
+      sourceOptions: normalizeEpisodeSourceOptions({
+        ...existing,
+        ...episode,
+        sourceOptions: [
+          ...(existing?.sourceOptions || []),
+          ...(episode.sourceOptions || [])
+        ]
+      }),
       episode: number,
-      season: episode.season || seasonNumber
+      season: normalizedSeason
     });
   });
   const maxEpisode = Math.max(0, ...byNumber.keys());
@@ -3459,7 +5578,7 @@ function repairEpisodeGaps(episodes = [], seasonNumber = 1) {
     return byNumber.get(episode) || {
       id: `missing-s${seasonNumber}-e${episode}`,
       title: "Not available yet",
-      season: seasonNumber,
+      season: normalizedSeason,
       episode,
       locked: true,
       missing: true,
@@ -3495,7 +5614,22 @@ async function playActiveShow(options = {}) {
   }
   const activeEpisode = state.activeEpisode?.episode;
   const seasonNumber = state.activeEpisode?.season?.season || state.activeSeasonIndex + 1 || activeEpisode?.season || 1;
-  if (allowSourceLookup && activeEpisode && activeEpisode.sourceOptionsChecked !== playbackLookupKey(show, activeEpisode, seasonNumber)) {
+  if (activeEpisode) {
+    renderPlayerPopupMessage(
+      frame,
+      `${currentEpisodeLabel()} - loading`,
+      "Opening the episode in the theater player."
+    );
+  }
+  if (
+    allowSourceLookup
+    && activeEpisode
+    && (
+      activeEpisode.sourceOptionsChecked !== playbackLookupKey(show, activeEpisode, seasonNumber)
+      || !activeEpisode.tioAnimeSourcesChecked
+      || !activeEpisode.animeAv1SourcesChecked
+    )
+  ) {
     schedulePlaybackSourceOptions(show, activeEpisode, seasonNumber, { autoReplay: true });
     if (!getEpisodePlaybackSources(activeEpisode).length) {
       await playbackLookupWithTimeout("AniPub quick start", attachAniPubFallback(show, activeEpisode), 1500);
@@ -3516,13 +5650,11 @@ async function playActiveShow(options = {}) {
   const resolver = source?.streamResolver || activeEpisode?.streamResolver;
   if (!url && resolver) {
     activeEpisode.streamResolver = resolver;
-    frame.innerHTML = `
-      <div class="episode-video-empty is-loading">
-        <div class="play-symbol" aria-hidden="true"></div>
-        <strong>Loading ${source?.label || "episode"}...</strong>
-        <p>Checking ${activeEpisode.server || "the addon"} for a direct stream or external playback option.</p>
-      </div>
-    `;
+    renderPlayerPopupMessage(
+      frame,
+      `Loading ${source?.label || "episode"}...`,
+      `Checking ${activeEpisode.server || "the addon"} for a direct stream or external playback option.`
+    );
     url = await resolveEpisodeStream(activeEpisode);
     source = getSelectedEpisodeSource(activeEpisode);
   }
@@ -3538,13 +5670,11 @@ async function playActiveShow(options = {}) {
   }
 
   if (!url && activeEpisode && activeEpisode.sourceOptionsPending) {
-    frame.innerHTML = `
-      <div class="episode-video-empty is-loading">
-        <div class="play-symbol" aria-hidden="true"></div>
-        <strong>Checking servers...</strong>
-        <p>Finding every available playback source for this episode.</p>
-      </div>
-    `;
+    renderPlayerPopupMessage(
+      frame,
+      "Checking servers...",
+      "Finding every available playback source for this episode."
+    );
     return;
   }
 
@@ -3552,15 +5682,17 @@ async function playActiveShow(options = {}) {
     const selected = state.activeEpisode;
     const label = selected
       ? `${selected.season?.title || `Season ${selected.seasonIndex + 1}`} Episode ${selected.episode?.episode || selected.episodeIndex + 1}`
-      : show?.title || "Selected episode";
-    frame.innerHTML = `
-      <div class="episode-video-empty">
-        <div class="play-symbol" aria-hidden="true"></div>
-        <strong>${label}</strong>
-        <p>${isEpisodeUnavailable(activeEpisode) ? episodeAvailabilityText(activeEpisode) : "No playable server was found for this episode yet. Check your connection or try another source."}</p>
-        <button class="external-play-button focusable" type="button" data-retry-episode>Retry Episode</button>
-      </div>
-    `;
+      : getShowTitle(show) || "Selected episode";
+    renderPlayerPopupMessage(
+      frame,
+      label,
+      isEpisodeUnavailable(activeEpisode) ? episodeAvailabilityText(activeEpisode) : "No playable server was found for this episode yet. Check your connection or try another source.",
+      ""
+    );
+    frame.querySelector(".episode-video-empty")?.insertAdjacentHTML(
+      "beforeend",
+      `<button class="external-play-button focusable" type="button" data-retry-episode>Retry Episode</button>`
+    );
     frame.querySelector("[data-retry-episode]")?.addEventListener("click", () => playActiveShow());
     refreshFocusables();
     return;
@@ -3585,20 +5717,27 @@ function renderDirectVideoPlayer(frame, url, episode) {
     ? null
     : preferredTrack || tracks.find((track) => isSpanishLanguage(track.language || track.label));
   const selectedSource = getSelectedEpisodeSource(episode);
+  const streamType = streamTypeFromUrl(url);
+  const useApkPlayer = state.uiPreferences.playerEngine !== "native";
+  if (useApkPlayer && (!state.uiPreferences.playerFit || state.uiPreferences.playerFit === "contain")) {
+    saveUiPreferences({ playerFit: "cover" });
+  }
+  const fit = state.uiPreferences.playerFit || "cover";
   frame.innerHTML = `
-    <div class="video-player-shell vidstream-player">
-      ${renderPlayerSourceOptions(episode, selectedSource)}
+    <div class="video-player-shell vidstream-player fit-${escapeHtml(fit)}" data-stream-type="${escapeHtml(streamType || "direct")}">
       <div class="vid-player-stage">
-        <video id="animePlayer" autoplay playsinline x-webkit-airplay="allow" crossorigin="anonymous">
-          ${spanishTrack ? `<track kind="subtitles" srclang="es" label="Español" src="${escapeHtml(spanishTrack.url)}" default>` : ""}
-        </video>
+        ${useApkPlayer
+          ? `<iframe id="animePlayerFrame" class="apk-video-frame" src="${escapeHtml(buildApkPlayerUrl(url))}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="no-referrer" sandbox="allow-same-origin allow-scripts allow-forms allow-presentation" title="ZenkaiTV video player"></iframe>`
+          : `<video id="animePlayer" autoplay playsinline x-webkit-airplay="allow" crossorigin="anonymous">
+              ${spanishTrack ? `<track kind="subtitles" srclang="es" label="Español" src="${escapeHtml(spanishTrack.url)}" default>` : ""}
+            </video>`}
         <div class="vid-loader" aria-live="polite">
           <div class="play-symbol" aria-hidden="true"></div>
           <span>Loading stream...</span>
         </div>
         ${renderVidstreamTopbar(currentEpisodeLabel())}
         <div class="translated-caption" id="translatedCaption" hidden></div>
-        <div class="subtitle-status" id="subtitleStatus">Spanish subtitles preferred</div>
+        <div class="subtitle-status" id="subtitleStatus">${streamType ? streamType.toUpperCase() : "Direct"} stream · Spanish subtitles preferred</div>
         ${renderVidstreamControls()}
       </div>
       ${renderPlayerEpisodeActions(url)}
@@ -3606,15 +5745,32 @@ function renderDirectVideoPlayer(frame, url, episode) {
   `;
   const shell = frame.querySelector(".vidstream-player");
   setPlayerCinema(shell, true, { silent: true });
-  const player = frame.querySelector("#animePlayer");
-  setupVideoSource(player, url).then(() => {
-    player?.play?.().catch(() => {
-      frame.querySelector(".vid-loader")?.setAttribute("hidden", "");
-      showToast("Press play to start this episode.");
+  const iframe = frame.querySelector("#animePlayerFrame");
+  const player = useApkPlayer
+    ? createApkPlayerController(iframe, {
+        onResolution: (resolution) => {
+          const status = document.querySelector("#subtitleStatus");
+          if (status && resolution && state.uiPreferences.metadataDetail) {
+            status.textContent = `${streamType ? streamType.toUpperCase() : "Direct"} stream · ${resolution}`;
+          }
+        }
+      })
+    : frame.querySelector("#animePlayer");
+  // Apply the saved default volume (factory default is 10% so it's not jarring)
+  if (player) {
+    const savedVol = Number(state.uiPreferences.defaultVolume ?? 0.1);
+    player.volume = Math.min(1, Math.max(0, Number.isFinite(savedVol) ? savedVol : 0.1));
+  }
+  if (!useApkPlayer) {
+    setupVideoSource(player, url).then(() => {
+      player?.play?.().catch(() => {
+        frame.querySelector(".vid-loader")?.setAttribute("hidden", "");
+        showToast("Press play to start this episode.");
+      });
+    }).catch((error) => {
+      console.error("Video source setup failed", { url, error });
     });
-  }).catch((error) => {
-    console.error("Video source setup failed", { url, error });
-  });
+  }
   player?.addEventListener("error", () => {
     console.error("Direct video playback failed", { url, episode });
     if (isExternalIframeEpisode(episode)) {
@@ -3625,7 +5781,7 @@ function renderDirectVideoPlayer(frame, url, episode) {
       <div class="episode-video-empty">
         <div class="play-symbol" aria-hidden="true"></div>
         <strong>Playback failed</strong>
-        <p>The direct video stream could not play. If an AniPub embed is available, AnimeTV will use the embedded player; otherwise retry this episode.</p>
+        <p>The direct video stream could not play. If an AniPub embed is available, ZenkaiTV will use the embedded player; otherwise retry this episode.</p>
         <button class="external-play-button focusable" type="button" data-retry-episode>Retry Episode</button>
       </div>
     `;
@@ -3642,22 +5798,68 @@ function renderDirectVideoPlayer(frame, url, episode) {
     if (Math.floor(player.currentTime) % 5 === 0) saveWatchProgress(player, episode);
   });
   player?.addEventListener("pause", () => saveWatchProgress(player, episode));
-  setupSpanishSubtitles(episode, tracks);
+  player?.addEventListener("ended", () => {
+    saveWatchProgress(player, episode);
+    const nav = getEpisodeNavigationTargets();
+    if (!nav.next) {
+      showToast("You've reached the last episode.");
+      return;
+    }
+    const seasons = getDetailSeasons(state.activeShow || {});
+    const nextSeason = seasons[nav.next.seasonIndex];
+    const nextEpisode = nextSeason?.episodes?.[nav.next.episodeIndex];
+    if (!nextSeason || !nextEpisode) return;
+    state.activeSeasonIndex = nav.next.seasonIndex;
+    state.activeDetailTab = "episodes";
+    state.activeEpisode = {
+      season: nextSeason,
+      episode: nextEpisode,
+      seasonIndex: nav.next.seasonIndex,
+      episodeIndex: nav.next.episodeIndex
+    };
+    state.activeEpisodeUrl = getEpisodeUrl(nextEpisode);
+    renderEpisodeList(state.activeShow);
+    showToast(`▶ Episode ${nextEpisode.episode || nav.next.episodeIndex + 1} — loading…`);
+    playActiveShow();
+  });
+  setupSpanishSubtitles(episode, tracks, player);
   wireVidstreamControls(frame, player, episode, url, tracks);
   wirePlayerChrome(frame);
   refreshFocusables();
 }
 
-async function setupSpanishSubtitles(episode, tracks = []) {
+function playEpisodeByPosition(seasonIndex, episodeIndex) {
+  const seasons = getDetailSeasons(state.activeShow || {});
+  const season = seasons[seasonIndex];
+  const episode = season?.episodes?.[episodeIndex];
+  if (!season || !episode) return;
+  const wasCinema = document.body.classList.contains("player-cinema-open");
+  state.activeSeasonIndex = seasonIndex;
+  state.activeDetailTab = "episodes";
+  state.activeEpisode = { season, episode, seasonIndex, episodeIndex };
+  state.activeEpisodeUrl = getEpisodeUrl(episode);
+  renderEpisodeList(state.activeShow);
+  showToast(`Episode ${episode.episode || episodeIndex + 1} - loading...`);
+  playActiveShow().then(() => {
+    if (wasCinema) {
+      const shell = document.querySelector(".vidstream-player");
+      if (shell) setPlayerCinema(shell, true, { silent: true });
+    }
+  });
+}
+
+async function setupSpanishSubtitles(episode, tracks = [], media = null) {
   const status = document.querySelector("#subtitleStatus");
-  const video = document.querySelector("#animePlayer");
+  const video = media || document.querySelector("#animePlayer");
   const caption = document.querySelector("#translatedCaption");
   if (!video || !caption || !status) return;
   const preferences = getLanguagePreferences();
-  Array.from(video.textTracks || []).forEach((track) => {
-    const language = normalizeLanguagePreference(track.language || track.label);
-    track.mode = preferences.subtitles !== "none" && language === preferences.subtitles ? "showing" : "disabled";
-  });
+  if (video.textTracks) {
+    Array.from(video.textTracks || []).forEach((track) => {
+      const language = normalizeLanguagePreference(track.language || track.label);
+      track.mode = preferences.subtitles !== "none" && language === preferences.subtitles ? "showing" : "disabled";
+    });
+  }
   caption.hidden = true;
   caption.textContent = "";
   if (preferences.subtitles === "none") {
@@ -3670,8 +5872,13 @@ async function setupSpanishSubtitles(episode, tracks = []) {
   }
 
   const spanishTrack = tracks.find((track) => isSpanishLanguage(track.language || track.label));
-  if (spanishTrack && preferences.subtitles !== "spanish-translated") {
+  if (spanishTrack && preferences.subtitles !== "spanish-translated" && !video.isApkPlayer) {
     status.textContent = "Spanish subtitles available";
+    return;
+  }
+
+  if (!state.uiPreferences.subtitleTranslation && preferences.subtitles === "spanish-translated") {
+    status.textContent = "Subtitle translation disabled in Settings";
     return;
   }
 
@@ -3831,10 +6038,9 @@ function renderEmbeddedAniPubPlayer(show, externalUrl) {
   const selectedSource = selected ? getSelectedEpisodeSource(episode) : null;
   const label = selected
     ? `${selected.season?.title || `Season ${selected.seasonIndex + 1}`} Episode ${selected.episode?.episode || selected.episodeIndex + 1}`
-    : show.title;
+    : getShowTitle(show);
   frame.innerHTML = `
     <div class="embedded-player-container anipub-embedded vidstream-player is-iframe">
-      ${renderPlayerSourceOptions(episode, selectedSource)}
       <div class="vid-player-stage iframe-wrapper">
         <iframe
           id="anipubEmbeddedPlayer"
@@ -3844,7 +6050,7 @@ function renderEmbeddedAniPubPlayer(show, externalUrl) {
           allowfullscreen
           allow="autoplay; fullscreen; picture-in-picture; encrypted-media; web-share"
           referrerpolicy="no-referrer"
-          sandbox="allow-same-origin allow-scripts allow-forms"
+          sandbox="allow-same-origin allow-scripts allow-forms allow-presentation"
         ></iframe>
         ${renderVidstreamTopbar(label)}
       </div>
@@ -3855,8 +6061,9 @@ function renderEmbeddedAniPubPlayer(show, externalUrl) {
   const iframe = frame.querySelector("#anipubEmbeddedPlayer");
   const shell = frame.querySelector(".vidstream-player");
 
+  document.body.classList.add("has-embedded-player");
   setPlayerCinema(shell, true, { silent: true });
-  frame.querySelector("[data-player-fullscreen]")?.addEventListener("click", () => requestPlayerFullscreen(shell));
+  frame.querySelector("[data-player-exit]")?.addEventListener("click", exitPlayerToSources);
   frame.querySelector("[data-player-back]")?.addEventListener("click", () => showEpisodeListTab());
 
   window.setTimeout(() => {
@@ -4053,7 +6260,7 @@ function isAndroidTV() {
 }
 
 function openExternalPlaybackUrl(externalUrl, errorPanel) {
-  console.info("Embedding external playback inside AnimeTV instead of opening a new window.", externalUrl);
+  console.info("Embedding external playback inside ZenkaiTV instead of opening a new window.", externalUrl);
   renderEmbeddedAniPubPlayer(state.activeShow || { title: "AniPub" }, externalUrl);
 }
 
@@ -4086,7 +6293,9 @@ function openCarouselShow() {
   const target = getCardTarget(current);
   openShow(current.id, {
     seasonNumber: carouselOpen.dataset.openSeason || target.seasonNumber,
-    episodeNumber: carouselOpen.dataset.openEpisode || target.episodeNumber
+    episodeNumber: carouselOpen.dataset.openEpisode || target.episodeNumber,
+    // Carousel "Play" is an explicit play action — allow the source picker to open.
+    playIntent: true
   });
 }
 
@@ -4199,7 +6408,26 @@ sidebarToggle?.addEventListener("click", toggleSidebar);
 closeOverlay.addEventListener("click", closeShow);
 favoriteButton.addEventListener("click", toggleFavorite);
 fakePlay.addEventListener("click", () => {
-  playActiveShow();
+  const ep = state.activeEpisode;
+  const frame = document.querySelector("#videoFrame");
+  const show = state.activeShow;
+  if (frame && show && ep) {
+    // If already in cinema mode, just play
+    if (document.body.classList.contains("player-cinema-open")) {
+      playActiveShow();
+      return;
+    }
+    stopActivePlayback();
+    const background = show.banner || show.image || "";
+    frame.style.setProperty("--watch-bg", background ? `url("${background}")` : "none");
+    schedulePlaybackSourceOptions(show, ep.episode, ep.season?.season || ep.seasonIndex + 1 || 1);
+    renderSourcePickerIn(frame);
+  } else if (show) {
+    // No episode selected — select the first one
+    const seasons = getDetailSeasons(show);
+    const firstEpisode = seasons[0]?.episodes?.[0];
+    if (firstEpisode) selectEpisodeByPosition(0, 0);
+  }
 });
 castButton?.addEventListener("click", () => {
   castActiveEpisode();
@@ -4230,6 +6458,14 @@ document.addEventListener("keydown", (event) => {
       closeShow();
     }
   }
+
+  if ((event.key === "f" || event.key === "F") && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    const cinema = document.querySelector(".vidstream-player.is-cinema");
+    if (cinema && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
+      event.preventDefault();
+      toggleNativeFullscreen(cinema);
+    }
+  }
 });
 
 if ("scrollRestoration" in history) {
@@ -4246,7 +6482,14 @@ if ("serviceWorker" in navigator) {
 }
 
 render();
-setRoute("home");
+// Deep-link support: open the route named in the URL hash (e.g. #settings).
+const VALID_ROUTES = ["home", "library", "schedule", "favorites", "settings", "anipub", "sources"];
+const _hashRoute = (location.hash || "").replace(/^#/, "");
+setRoute(VALID_ROUTES.includes(_hashRoute) ? _hashRoute : "home");
+window.addEventListener("hashchange", () => {
+  const r = (location.hash || "").replace(/^#/, "");
+  if (VALID_ROUTES.includes(r) && r !== state.route) setRoute(r);
+});
 applySidebarState();
 applyUiPreferences();
 renderSources();

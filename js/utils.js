@@ -2,16 +2,22 @@
 // readUiPreferences and readAniPubFallbackCache are here because state.js calls them during init.
 
 function readUiPreferences() {
+  const defaults = {
+    motion: true,
+    focusGlow: true,
+    autoplayHero: true,
+    defaultVolume: 0.1,
+    playerFit: "cover",
+    playerEngine: "apk",
+    playerQuality: 0,
+    metadataDetail: true,
+    subtitleTranslation: true,
+    titleLanguage: "romaji",  // "english" | "romaji"
+  };
   try {
-    return {
-      motion: true,
-      focusGlow: true,
-      autoplayHero: true,
-      defaultVolume: 0.1,
-      ...JSON.parse(localStorage.getItem(APP_UI_PREFS_KEY) || "{}")
-    };
+    return { ...defaults, ...JSON.parse(localStorage.getItem(APP_UI_PREFS_KEY) || "{}") };
   } catch (error) {
-    return { motion: true, focusGlow: true, autoplayHero: true, defaultVolume: 0.1 };
+    return defaults;
   }
 }
 
@@ -26,6 +32,20 @@ function readAniPubFallbackCache() {
   } catch (error) {
     return {};
   }
+}
+
+/**
+ * Return the display title for a show, respecting the user's titleLanguage setting.
+ * Falls back gracefully: romaji -> english -> title field -> "Untitled Anime".
+ */
+function getShowTitle(show) {
+  if (!show) return "Untitled Anime";
+  const pref = (state?.uiPreferences?.titleLanguage) || "english";
+  if (pref === "romaji") {
+    return show.romajiTitle || show.title || "Untitled Anime";
+  }
+  // english (default): prefer stored English title, fall back to romaji
+  return show.title || show.romajiTitle || "Untitled Anime";
 }
 
 function saveAniPubFallbackCache() {
@@ -109,11 +129,24 @@ function normalizeTitle(value) {
 }
 
 function getFranchiseKey(value) {
-  return normalizeTitle(value)
-    .replace(/\b(season|cour|part|chapter)\s*\d+\b/g, "")
-    .replace(/\b\d+(st|nd|rd|th)?\s*season\b/g, "")
-    .replace(/\b(final|new)\s*season\b/g, "")
-    .replace(/\b(s\d+|season\s*[ivxlcdm]+)\b/g, "")
+  // Strip season markers from the RAW title first — normalizeTitle removes the
+  // word "season" itself, so patterns that rely on it must run beforehand.
+  const stripped = String(value || "")
+    // "4th Season: subtitle" / "4th Season Part 2" etc.
+    .replace(/\s+\d+(st|nd|rd|th)\s*season\b.*/gi, "")
+    // "Season 2" / "Season II" / "Season IV" and everything after
+    .replace(/\s+season\s*\d+\b.*/gi, "")
+    .replace(/\s+season\s+(iv|iii|ii|v|vi|vii|viii|ix|x)\b.*/gi, "")
+    // ": The Final Season" / ": Final Season" etc.
+    .replace(/:\s*(the\s+)?(final|new)\s+season\b.*/gi, "")
+    // " Final Season" / " New Season" at end
+    .replace(/\s+(final|new)\s+season\b.*/gi, "")
+    // "Part N" / "Cour N" and everything after
+    .replace(/\s+(cour|part)\s*\d+\b.*/gi, "");
+
+  return normalizeTitle(stripped)
+    // Catch any leftover season tokens that survived normalizeTitle
+    .replace(/\b(s\d+)\b/g, "")
     .replace(/\b(2nd|3rd|4th|5th)\b/g, "")
     .replace(/\b\d+\b/g, "")
     .replace(/\s+/g, " ")

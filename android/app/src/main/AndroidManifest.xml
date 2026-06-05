@@ -9,7 +9,7 @@
         android:allowBackup="false"
         android:banner="@drawable/banner"
         android:icon="@drawable/ic_launcher"
-        android:label="AnimeTV"
+        android:label="ZenkaiTV"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true">
