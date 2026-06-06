@@ -9,7 +9,7 @@
   },
   "headers": [
     {
-      "source": "/(.*)\\.(?:js|css|svg|webmanifest|ico|png|webp)",
+      "source": "/(.*)\\.(js|css|svg|webmanifest|ico|png|webp)",
       "headers": [
         {
           "key": "Strict-Transport-Security",

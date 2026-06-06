@@ -1,223 +1,142 @@
-# AnimeTV
+# ZenkaiTV
 
-![AnimeTV repository banner](docs/branding/animetv-banner.svg)
+![ZenkaiTV banner](docs/branding/zenkai-banner.png)
 
 <p align="center">
-  <strong>A modern anime hub for Web and Android TV with multi-source playback, Japanese audio preference, and Spanish subtitle support.</strong>
+  <strong>A modern, TV-first anime streaming hub for the Web and Android TV — powered by AniList metadata with smart multi-source playback.</strong>
 </p>
 
 <p align="center">
   <a href="https://animetv-umber.vercel.app">Live Demo</a>
   ·
-  <a href="docs/API.md">API Docs</a>
+  <a href="DEPLOY.md">Deployment</a>
   ·
   <a href="docs/ANDROID_TV.md">Android TV</a>
+  ·
+  <a href="docs/API.md">API</a>
   ·
   <a href="docs/TROUBLESHOOTING.md">Troubleshooting</a>
 </p>
 
 <p align="center">
-  <img alt="Node.js" src="https://img.shields.io/badge/Node.js-18%2B-40dfc2?style=for-the-badge&logo=node.js&logoColor=white">
-  <img alt="Android TV" src="https://img.shields.io/badge/Android%20TV-ready-8a5cff?style=for-the-badge&logo=android&logoColor=white">
-  <img alt="License" src="https://img.shields.io/badge/License-MIT-f2bb46?style=for-the-badge">
-  <img alt="Playback" src="https://img.shields.io/badge/Playback-multi--source-00d2ff?style=for-the-badge">
+  <img alt="Node.js" src="https://img.shields.io/badge/Node.js-20%2B-3B82F6?style=for-the-badge&logo=node.js&logoColor=white">
+  <img alt="AniList" src="https://img.shields.io/badge/Metadata-AniList-2563EB?style=for-the-badge&logo=anilist&logoColor=white">
+  <img alt="Android TV" src="https://img.shields.io/badge/Android%20TV-ready-5C9BFF?style=for-the-badge&logo=androidtv&logoColor=white">
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-0D1B2A?style=for-the-badge">
 </p>
+
+---
+
+## Overview
+
+ZenkaiTV organises anime by **seasons and episodes using AniList as the source of truth**, then matches your configured video sources to the correct season. It's built remote-first for Android TV, runs as a fast static site on the web, and keeps a clean, ad-free playback experience by preferring the most reliable servers.
+
+> ZenkaiTV stores no copyrighted video. Metadata comes from public APIs (AniList, Jikan); playback links are provided by the third-party sources you configure.
 
 ## Highlights
 
-- TV-first interface with compact sidebar navigation and remote-friendly focus states.
-- Multi-source catalogs: AniList/Jikan metadata, AniPub, AllAnime, JIMOV/TioAnime, and custom addons.
-- Cinema mode player with opaque episode header, prev/next navigation, and seek controls.
-- Embedded iframe playback and direct `<video>` playback stay separated for safety.
-- Japanese audio and Spanish subtitles are the default playback preference.
-- English subtitle tracks can be translated into Spanish for direct subtitle files.
-- Favorites, watch history, resume positions, settings, light/dark theme, daily refresh, and Android TV wrapper.
-- Windows launcher can supervise AnimeTV and local companion services, restarting after crashes.
+- **AniList-powered seasons** — franchise grouping via AniList relations (prequel/sequel chains), real episode counts, split-cour merging, and correct ordering for movies, OVAs, ONAs and specials.
+- **Smart source selection** — servers are ranked so the most reliable, ad-free options play first: **AnimeAV1 (HLS) → Mega → MP4Upload**, with ad-walled hosts pushed to the bottom.
+- **Multi-provider playback** — TioAnime and AnimeAV1 scrapers, AniPub catalog, plus optional AllAnime / JIMOV / Consumet / RapidAPI addons.
+- **TV-first UI** — compact icon sidebar with an integrated push animation, remote-friendly focus states, cinema-mode player with prev/next episode navigation, and a polished settings console.
+- **Weekly schedule & carousel** — Monday→Sunday airing-only schedule and a "most recently aired" featured carousel.
+- **Personal & private** — favorites, watch history, resume positions, English→Spanish subtitle translation, light/dark theme. All data stays in your browser's `localStorage`; no accounts, analytics, or telemetry.
+- **Cross-platform** — one codebase ships as a web app, an installable PWA, and an Android TV APK.
 
-## Live Deployment
+## Architecture
 
-Production is deployed on Vercel:
+ZenkaiTV is two cooperating services:
 
-```text
-https://animetv-umber.vercel.app
+| Service | Stack | Responsibility |
+|---|---|---|
+| **Web app** | Node 20 (zero runtime deps) | UI, AniList/Jikan metadata, AniPub, and a proxy to the scraper |
+| **Scraper** | Python 3.12 + Flask | TioAnime & AnimeAV1 episode sources |
+
+The browser only talks to the web app via relative `/api/*` calls, so it runs on any domain unchanged. The web app calls the scraper server-to-server through the `TIOANIME_API` environment variable.
+
+```
+Browser ──/api──► Web app (Node) ──TIOANIME_API──► Scraper (Python)
+                       │
+                       └──► AniList · Jikan · AniPub
 ```
 
-The app is also runnable locally at:
-
-```text
-http://127.0.0.1:4173
-```
-
-## Quick Start (local)
-
-```powershell
-npm start
-```
-
-For the full local setup with server monitoring:
-
-```powershell
-.\start-all.bat
-```
-
-Useful options:
-
-```powershell
-.\start-all.bat -NoBrowser
-.\start-all.bat -Anime1vPath "C:\anime1v-api"
-```
-
-## Deploy to Vercel
-
-### 1. Import the repo
-
-Go to [vercel.com/new](https://vercel.com/new), import this GitHub repository.
-
-Vercel will auto-detect the settings from `vercel.json`:
-
-| Setting | Value |
-|---|---|
-| Build Command | `npm run vercel-build` |
-| Output Directory | `dist` |
-| Install Command | *(leave blank — no npm dependencies)* |
-
-### 2. Environment variables (Vercel dashboard → Settings → Environment Variables)
-
-Only these are required for the default online experience:
-
-| Variable | Required | Default | Notes |
-|---|---|---|---|
-| `JIMOV_API` | No | `https://jimov-api.vercel.app` | Override if you self-host JIMOV |
-
-Everything else is optional. AllAnime and AniPub work with no keys.
-
-Optional integrations:
-
-| Variable | Notes |
-|---|---|
-| `CONSUMET_API` | Public HTTPS Consumet instance (e.g. deployed on Railway). Skip for Vercel — `localhost:3000` won't work. |
-| `RAPIDAPI_ANIME_HOST` | Your RapidAPI host for the anime streaming API. |
-| `RAPIDAPI_ANIME_KEY` | Your RapidAPI key. Both must be set together. |
-| `ANIME1V_API` | Public HTTPS Anime1v-compatible API. Skip for Vercel — `localhost:3001` is local only. |
-| `LOG_LEVEL` | `debug` / `info` / `warn` / `error` / `silent`. Default: `info`. |
-| `UPDATE_REPO_URL` | GitHub repo URL for the in-app update checker. |
-
-### 3. Deploy
+## Quick start (local)
 
 ```bash
-git push origin main   # Vercel auto-deploys on push
-```
-
-Or manually from the Vercel dashboard → **Redeploy**.
-
-### 4. Verify
-
-Open `https://your-deployment.vercel.app/api/health` — you should see `{"ok":true,"app":"AnimeTV","api":"ready",...}`.
-
-## Local development setup
-
-```powershell
-# 1. Clone
+# 1. Web app
 git clone https://github.com/JSolanoDev/AnimeTV.git
 cd AnimeTV
+cp .env.example .env.local        # set TIOANIME_API=http://localhost:5000
+npm start                          # → http://localhost:4180
 
-# 2. Copy env file
-cp .env.example .env.local
-
-# 3. Start the server
-npm start
-# → http://localhost:4173
+# 2. Scraper (separate terminal, Python project)
+pip install -r requirements.txt
+python app.py                      # → http://localhost:5000
 ```
 
-No `npm install` is needed — this project has zero runtime npm dependencies.
+No `npm install` is required — the web app has **zero runtime npm dependencies**.
 
-## Build Android APK
+On Windows, `./start-all.bat` can supervise the app and companion services and restart them after crashes.
 
-```powershell
-cd android
-.\gradlew.bat assembleDebug
+## Deployment
+
+See **[DEPLOY.md](DEPLOY.md)** for the full guide. In short:
+
+1. **Scraper** → deploy the Python project (Render Blueprint / Railway / Fly). Copy its URL.
+2. **Web app** → deploy this repo and set `TIOANIME_API` to the scraper URL.
+
+The web app is live on Vercel at **https://animetv-umber.vercel.app** (front-end + serverless `/api`). For the TioAnime/AnimeAV1 sources to work online, host the scraper separately and point `TIOANIME_API` at it — the Python scraper cannot run inside Vercel's serverless runtime.
+
+| Variable | Required | Notes |
+|---|---|---|
+| `TIOANIME_API` | For scraper sources | URL of the deployed Python scraper. |
+| `PORT` / `HOST` | Host-provided | Server binds `0.0.0.0:$PORT`. |
+| `ANIME1V_AUTO_START` | Recommended `false` | Never spawn the local Anime1v addon on a host. |
+| `CONSUMET_API`, `RAPIDAPI_*`, `JIMOV_API`, `LOG_LEVEL` | Optional | See `.env.example`; skipped gracefully if unset. |
+
+Health check: `GET /api/health` → `{"ok":true,"app":"ZenkaiTV","api":"ready", ...}`.
+
+## Android TV
+
+The APK wraps the app in a WebView. It ships the bundled build (browse the full AniList/Jikan catalog offline) and exposes a one-line backend switch for full playback:
+
+```java
+// android/app/src/main/java/com/animetv/app/MainActivity.java
+private static final String SITE_URL = "";   // set to your deployed site for full sources
 ```
 
-APK output:
+Build the APK:
 
-```text
-android\app\build\outputs\apk\debug\app-debug.apk
+```bash
+npm run android:build
+# → android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## Sources
+## Sources & smart ordering
 
-| Source | Type | Playback | Needs key? |
-|---|---|---|---|
-| AniList + Jikan | Metadata only | — | No |
-| AniPub | Online addon | Iframe | No |
-| AllAnime | Online API | Direct / iframe | No |
-| JIMOV / TioAnime | Online addon | Direct / iframe | No |
-| Consumet KickAssAnime | Self-hosted | HLS / M3U8 | No (self-host) |
-| RapidAPI Anime | API addon | HLS / M3U8 | Yes (paid) |
-| Custom sources | User configured | Direct / iframe | — |
+| Provider | Type | Notes |
+|---|---|---|
+| **AnimeAV1** | HLS / direct + embeds | Most reliable; **HLS is the #1 auto-selected source**. |
+| **TioAnime** | Embeds (Mega, MP4Upload, …) | Mega / MP4Upload preferred; ad-walled hosts (VOE/Netu) sink. |
+| **AniPub** | Resolver | Catalog + external playback when available. |
+| AllAnime / JIMOV / Consumet / RapidAPI | Optional | Enabled per `.env.example`. |
 
-## Playback Safety
+The player auto-selects the best available server using the preference order above, so playback starts on a clean, ad-free source whenever one exists.
 
-AnimeTV only sends direct `.mp4`, `.m3u8`, `videoUrl`, `streamUrl`, or `file` values to the main `<video>` player.
+## Tech stack
 
-Iframe embeds are handled separately:
+- **Frontend** — vanilla JS (no framework), CSS with a cohesive motion layer, PWA + service worker.
+- **Backend** — Node HTTP server (no dependencies), with serverless adapters for Vercel.
+- **Metadata** — AniList GraphQL (franchise/season graph) + Jikan, cached 24h.
+- **Scraper** — Python + Flask + Requests.
+- **Android** — native WebView wrapper (Leanback launcher).
 
-- Server returns `externalUrl` + `externalType: "iframe"`.
-- Client detects iframe episodes before direct playback.
-- Iframe embeds render inside the AnimeTV embedded iframe container.
-- Direct video and iframe playback paths stay separate.
+## Privacy & legal
 
-## API
-
-Core endpoints:
-
-```text
-GET /api/health
-GET /api/catalog
-GET /api/anipub/catalog/all?limit=12000
-GET /api/anipub/episodes/:id
-GET /api/allanime/search?q=naruto&limit=8
-GET /api/allanime/watch?id=SHOW_ID&ep=1&lang=sub
-GET /api/jimov/tioanime/catalog
-GET /api/jimov/tioanime/health
-GET /api/rapid-anime/health
-GET /api/rapid-anime/catalog
-GET /api/refresh-daily?background=1
-```
-
-More details are in [docs/API.md](docs/API.md).
-
-## Development commands
-
-```powershell
-npm run check          # syntax check + security audit
-npm run vercel-build   # build dist/ and public/ from root sources
-npm run android:build  # build Android APK
-```
-
-## Project Structure
-
-```text
-AnimeTV/
-├── animetv-local.js      # Local server entrypoint (npm start)
-├── animetv-server.js     # Shared API/server handler (used by local + Vercel)
-├── client.js             # Frontend application
-├── styles.css            # TV-first UI styles
-├── index.html            # App shell
-├── sources.json          # Default source configuration
-├── api/[...path].js      # Vercel serverless API bridge
-├── scripts/
-│   ├── build-static.mjs  # Copies static assets → dist/ and public/
-│   └── security-audit.mjs
-├── js/                   # Frontend constants, utils, normalizer, translations
-├── android/              # Android TV wrapper
-└── docs/                 # API docs, branding, troubleshooting
-```
-
-## Maintainer
-
-Built by [JSolanoDev](https://github.com/JSolanoDev).
+ZenkaiTV is a personal media organiser and catalog browser. It does **not** host, store, or distribute copyrighted video. All streams come from third-party sources you configure, and you are responsible for ensuring your use complies with the law in your jurisdiction. All user data is stored locally — no accounts, no tracking. See the in-app **Settings → Legal** for the full Terms and Privacy notice.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE) — © ZenkaiTV contributors.
+
+<p align="center"><sub>Metadata by <a href="https://anilist.co">AniList</a> &amp; <a href="https://jikan.moe">Jikan</a>. Built for the couch.</sub></p>
