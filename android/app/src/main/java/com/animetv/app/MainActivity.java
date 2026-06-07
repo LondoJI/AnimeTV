@@ -19,12 +19,13 @@ import android.webkit.WebViewClient;
 
 public class MainActivity extends Activity {
     // ── Backend configuration ────────────────────────────────────────────────
-    // Set SITE_URL to your deployed ZenkaiTV website to get FULL functionality on
-    // the TV (TioAnime / AnimeAV1 / AniPub sources need the hosted Node backend).
-    //   e.g. private static final String SITE_URL = "https://zenkaitv.onrender.com";
-    // Leave it empty ("") to run the bundled offline build, which shows the full
-    // AniList/Jikan catalog but cannot load proxied playback sources from file://.
-    private static final String SITE_URL = "";
+    // Points at the deployed ZenkaiTV website so the TV app has FULL functionality
+    // (TioAnime / AnimeAV1 / AniPub playback need the hosted /api backend, which is
+    // unavailable from a bundled file:// build). The custom domain is public and is
+    // not behind Vercel Deployment Protection.
+    // Set to "" to fall back to the bundled offline catalog (browse only, no proxied
+    // playback).
+    private static final String SITE_URL = "https://zenkaitv.com";
 
     private WebView webView;
     private View customView;
