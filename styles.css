@@ -750,13 +750,39 @@ body.sidebar-collapsed .sidebar-toggle span {
   background-color: rgba(92, 155, 255, 0.55);
 }
 
+/* Crisp SVG magnifying glass (the ⌕ glyph rendered inconsistently). Drawn with
+   a CSS mask so it can be tinted and animated. */
 .search-box span:last-child {
   position: absolute;
-  right: 1.25rem;
+  right: 1.2rem;
   top: 50%;
+  width: 1.45rem;
+  height: 1.45rem;
   transform: translateY(-50%);
-  color: #827b9c;
-  font-size: 1.9rem;
+  font-size: 0;                       /* hide the original glyph */
+  background-color: #8b84a6;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M21 21l-4.6-4.6'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M21 21l-4.6-4.6'/%3E%3C/svg%3E") center / contain no-repeat;
+  pointer-events: none;
+  transition: background-color 200ms ease, transform 220ms cubic-bezier(0.34, 1.4, 0.5, 1), filter 200ms ease;
+}
+
+.search-box:hover span:last-child {
+  background-color: #b7b0d0;
+}
+
+/* Focus: tint blue, lift, glow, and play a one-shot search "pop". */
+.search-box:focus-within span:last-child {
+  background-color: #5C9BFF;
+  transform: translateY(-50%) scale(1.12);
+  filter: drop-shadow(0 0 0.35rem rgba(92, 155, 255, 0.55));
+  animation: searchGlassPop 520ms cubic-bezier(0.34, 1.4, 0.5, 1);
+}
+
+@keyframes searchGlassPop {
+  0%   { transform: translateY(-50%) scale(0.78) rotate(-16deg); }
+  55%  { transform: translateY(-50%) scale(1.2) rotate(6deg); }
+  100% { transform: translateY(-50%) scale(1.12) rotate(0); }
 }
 
 main {
