@@ -1068,8 +1068,8 @@ function renderCarouselIndicators(items) {
 
 function simpleCarouselText(show) {
   const clean = show.description || "Featured pick from today's anime lineup.";
-  if (clean.length <= 150) return clean;
-  return `${clean.slice(0, 147).trim()}...`;
+  // Word-safe truncation (no mid-word cuts like "...No").
+  return cleanDescription(clean, 150);
 }
 
 function moveCarousel(step) {
@@ -5022,39 +5022,12 @@ function getFranchiseSeasonList(show) {
     if (list && list.length > 0) return list;
   }
 
-  // ── Fallback: title-based matching ───────────────────────────────────────
-  const franchiseKey = getFranchiseKey(show.title);
-  const related = state.shows
-    .filter((entry) => getFranchiseKey(entry.title) === franchiseKey)
-    .sort((a, b) => extractSeasonNumber(a.title, 1) - extractSeasonNumber(b.title, 1));
-  if (related.length <= 1) return getDetailSeasons(show);
-  const usedNumbers = new Set();
-  return related.map((entry, idx) => {
-    let seasonNumber = extractSeasonNumber(entry.title, idx + 1);
-    while (usedNumbers.has(seasonNumber)) seasonNumber += 1;
-    usedNumbers.add(seasonNumber);
-    if (entry.id === show.id) {
-      const currentSeasons = getDetailSeasons(show);
-      return {
-        season: seasonNumber,
-        title: `Season ${seasonNumber}`,
-        sourceTitle: show.title,
-        image: show.image,
-        isCurrentShow: true,
-        episodes: currentSeasons.flatMap((s) => s.episodes || []),
-        playable: currentSeasons.some((s) => s.playable)
-      };
-    }
-    return {
-      season: seasonNumber,
-      title: `Season ${seasonNumber}`,
-      sourceTitle: entry.title,
-      image: entry.image,
-      relatedShowId: entry.id,
-      episodes: makePlaceholderEpisodes(entry, seasonNumber),
-      playable: false
-    };
-  });
+  // ── No relation-based franchise available ────────────────────────────────
+  // Do NOT group different shows just because they share a normalized title —
+  // that merged separate adaptations/remakes (Doraemon 1973/1979/2005) into
+  // fake seasons. Real seasons only come from AniList SEQUEL/PREQUEL above.
+  // Otherwise show just this entry's own episodes.
+  return getDetailSeasons(show);
 }
 
 // ── TioAnime source integration ───────────────────────────────────────────────
@@ -5691,28 +5664,20 @@ function getDetailSeasons(show) {
     });
   }
 
-  const franchiseKey = getFranchiseKey(show.title);
-  const related = state.shows
-    .filter((entry) => getFranchiseKey(entry.title) === franchiseKey)
-    .sort((a, b) => extractSeasonNumber(a.title, 1) - extractSeasonNumber(b.title, 1));
-
-  const seasonShows = related.length ? related : [show];
-  const usedNumbers = new Set();
-  return seasonShows.map((entry, index) => {
-    let seasonNumber = extractSeasonNumber(entry.title, index + 1);
-    while (usedNumbers.has(seasonNumber)) seasonNumber += 1;
-    usedNumbers.add(seasonNumber);
-    return {
-      season: seasonNumber,
-      title: seasonNumber === 1 && seasonShows.length === 1 ? "Season 1" : `Season ${seasonNumber}`,
-      sourceTitle: entry.title,
-      image: entry.image,
-      source: entry.source,
-      score: entry.score,
-      playable: false,
-      episodes: makePlaceholderEpisodes(entry, seasonNumber)
-    };
-  });
+  // No real per-source seasons → this entry is one continuous anime. Never pull
+  // in same-titled remakes/adaptations as extra "seasons" (Doraemon bug). Show a
+  // single "Episodes" group with only this show's own episodes.
+  const seasonNumber = extractSeasonNumber(show.title, 1);
+  return [{
+    season: seasonNumber,
+    title: seasonNumber > 1 ? `Season ${seasonNumber}` : "Episodes",
+    sourceTitle: show.title,
+    image: show.image,
+    source: show.source,
+    score: show.score,
+    playable: false,
+    episodes: makePlaceholderEpisodes(show, seasonNumber)
+  }];
 }
 
 function makePlaceholderEpisodes(show, seasonNumber) {
@@ -5727,7 +5692,12 @@ function makePlaceholderEpisodes(show, seasonNumber) {
     season: seasonNumber,
     episode: index + 1,
     title: "",
-    needsResolve: true
+    needsResolve: true,
+    // Stable provenance so totals never combine across different anime IDs.
+    animeId: show.anilistId ?? show.id ?? null,
+    anilistId: show.anilistId ?? null,
+    malId: show.malId ?? null,
+    startYear: show.year ?? show.seasonYear ?? show.startDate?.year ?? null
   }));
 }
 

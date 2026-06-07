@@ -14,9 +14,9 @@
 // ── Franchise version ────────────────────────────────────────────────────────
 // Bump this whenever traversal/merge logic changes so every show gets a fresh
 // franchise rebuild on next open (in-memory cached franchises become stale).
-const _FRANCHISE_VERSION = 9;          // traverse through any-format chain, but only display real seasons (no bonus OVAs)
+const _FRANCHISE_VERSION = 10;         // remake guard: don't chain different adaptations (Doraemon) as seasons
 const _MEDIA_CACHE_VERSION_KEY = "animetv-anilist-cache-v";
-const _MEDIA_CACHE_VERSION_VAL = "9";  // clears stale localStorage media cache
+const _MEDIA_CACHE_VERSION_VAL = "10"; // clears stale localStorage media cache
 
 // On first load, clear any localStorage AniList media cache that was built with
 // an older code version.  This prevents stale data from persisting across
@@ -286,6 +286,11 @@ async function _traverseFranchise(startMedia) {
 
     if (!prequelEdge) break;
 
+    // Stop the chain at a separate adaptation/remake. AniList sometimes chains
+    // remakes via PREQUEL across a format change + big year gap (e.g. Doraemon
+    // 2005 TV -> 1979 TV_SHORT). Those are NOT seasons of the same anime.
+    if (!canFollowSeasonLink(current, prequelEdge.node)) break;
+
     const prequelMedia = await _fetchAniListMedia(prequelEdge.node.id);
     if (!prequelMedia) {
       addNode(prequelEdge.node, "PREQUEL");
@@ -324,6 +329,10 @@ async function _traverseFranchise(startMedia) {
       .sort((a, b) => (a.node.seasonYear || 9999) - (b.node.seasonYear || 9999))[0];
 
     if (!sequelEdge) break;
+
+    // Stop at a separate adaptation/remake chained via SEQUEL across a format
+    // change + big year gap (e.g. Doraemon 1979 TV_SHORT -> 2005 TV).
+    if (!canFollowSeasonLink(current, sequelEdge.node)) break;
 
     const sequelMedia = await _fetchAniListMedia(sequelEdge.node.id);
     if (!sequelMedia) {
@@ -513,6 +522,11 @@ function makePlaceholderEpisodesFromAniList(entry) {
     episode:      i + 1,
     title:        entry.format === "MOVIE" ? (entry.title || "Movie") : `Episode ${i + 1}`,
     needsResolve: true,
+    // Stable provenance so episode totals never combine across different anime.
+    animeId:      entry.anilistId ?? null,
+    anilistId:    entry.anilistId ?? null,
+    malId:        entry.malId ?? null,
+    startYear:    entry.seasonYear ?? entry.startDate?.year ?? null,
   }));
 }
 
@@ -597,7 +611,9 @@ function buildSeasonListFromAniListFranchise(show, showsMap, getDetailSeasons, m
 
     result.push({
       season:        entry.seasonNumber,
-      title:         entry.seasonLabel || `Season ${entry.seasonNumber}`,
+      // A lone mainline entry is one continuous anime — show "Episodes", not an
+      // invented "Season 1" (spec: don't invent seasons).
+      title:         franchise.tvSeasons.length === 1 ? "Episodes" : (entry.seasonLabel || `Season ${entry.seasonNumber}`),
       sourceTitle:   isCurrent ? show.title : (entry.title || matchedShow?.title || entry.seasonLabel || `Season ${entry.seasonNumber}`),
       image:         isCurrent ? (show.image || entry.image) : (matchedShow?.image || entry.image || show.image),
       format:        entry.format,

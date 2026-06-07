@@ -184,14 +184,25 @@ function pickGenre(genres = []) {
   return normalized[0] || "anime";
 }
 
-function cleanDescription(value) {
+function cleanDescription(value, maxLength = 320) {
   if (!value) return "No synopsis is available yet. You can still favorite it and connect your own playback link.";
-  return value
+  // Strip HTML safely (incl. entities), collapse whitespace.
+  const text = String(value)
     .replace(/<br\s*\/?>/gi, " ")
     .replace(/<\/?[^>]+(>|$)/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0?39;|&apos;/gi, "'")
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 320);
+    .trim();
+  if (text.length <= maxLength) return text;
+  // Truncate at the last COMPLETE word (never mid-word like "...No") and add "…".
+  const clipped = text.slice(0, maxLength);
+  const lastSpace = clipped.lastIndexOf(" ");
+  const safe = (lastSpace > maxLength * 0.5 ? clipped.slice(0, lastSpace) : clipped)
+    .replace(/[\s,.;:!?-]+$/, "");
+  return `${safe}…`;
 }
 
 function formatCount(value, label) {
@@ -200,10 +211,16 @@ function formatCount(value, label) {
 }
 
 function getShowKey(show) {
-  if (show.malId) return `mal-${show.malId}`;
+  // Stable identifiers first (AniList, then MAL) so different adaptations with
+  // the same title (Doraemon 1973 / 1979 / 2005) never collapse together.
   if (show.anilistId) return `anilist-${show.anilistId}`;
+  if (show.malId) return `mal-${show.malId}`;
+  // Last resort: title + start year + format — never title alone.
   const titles = [show.title, ...(show.aliases || [])].filter(Boolean);
-  return `title-${normalizeTitle(titles[0] || "")}`;
+  const base = normalizeTitle(titles[0] || "");
+  const year = show.year || show.seasonYear || show.startDate?.year || "unknown";
+  const fmt = String(show.format || show.type || "unknown").toLowerCase();
+  return `title-${base}:${year}:${fmt}`;
 }
 
 function cssSafeId(value) {
@@ -299,4 +316,78 @@ function setDefaultLanguage(audio = "japanese", subtitles = "spanish") {
     body: JSON.stringify(preferences)
   }).catch(() => {});
   return preferences;
+}
+
+// ── Season grouping validation ───────────────────────────────────────────────
+// Different adaptations/remakes must NOT be grouped as seasons of one anime,
+// even when AniList chains them via SEQUEL/PREQUEL (e.g. Doraemon 1973 TV ->
+// 1979 TV_SHORT -> 2005 TV) or they share a normalized title.
+
+function mediaStartYear(m) {
+  if (!m) return null;
+  const y = Number(m.seasonYear || m.startDate?.year || m.year || m.startYear);
+  return Number.isFinite(y) && y > 0 ? y : null;
+}
+
+function mediaFormat(m) {
+  return String(m?.format || m?.type || "").toUpperCase();
+}
+
+// Should a SEQUEL/PREQUEL link be followed as the SAME continuous anime (a real
+// next/previous season) rather than a separate adaptation? A format change
+// almost always means a different adaptation (Doraemon TV <-> TV_SHORT), UNLESS
+// it aired within ~3 years — e.g. a "Final Chapters" SPECIAL right after a TV
+// finale, which is a genuine continuation.
+function canFollowSeasonLink(fromMedia, candidate) {
+  const f1 = mediaFormat(fromMedia);
+  const f2 = mediaFormat(candidate);
+  if (f1 && f2 && f1 !== f2) {
+    const y1 = mediaStartYear(fromMedia);
+    const y2 = mediaStartYear(candidate);
+    if (y1 && y2 && Math.abs(y2 - y1) > 3) return false;
+  }
+  return true;
+}
+
+// Validate whether `candidate` is a true season of `parent`. Works on AniList
+// media objects (with `.relations.edges`) and on catalog show objects.
+//   1. same stable id (AniList) or idMal  -> same work
+//   2. otherwise require an explicit SEQUEL/PREQUEL relation
+//   3. and a compatible format / air-year (reject remakes)
+function canGroupAsSeason(parent, candidate) {
+  if (!parent || !candidate) return false;
+
+  const pid = parent.id ?? parent.anilistId;
+  const cid = candidate.id ?? candidate.anilistId;
+  if (pid != null && cid != null && pid === cid) return true;
+
+  const pmal = parent.idMal ?? parent.malId;
+  const cmal = candidate.idMal ?? candidate.malId;
+  if (pmal != null && cmal != null && pmal === cmal) return true;
+
+  const edges = parent.relations?.edges || [];
+  if (!edges.length) return false; // no relation data -> cannot assert a season
+
+  const validRelation = edges.some((edge) =>
+    edge.node && (edge.node.id === cid) &&
+    (edge.relationType === "SEQUEL" || edge.relationType === "PREQUEL")
+  );
+  if (!validRelation) return false;
+
+  return canFollowSeasonLink(parent, candidate);
+}
+
+// Node export so the logic can be unit-tested without a browser/DOM.
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    normalizeTitle,
+    getFranchiseKey,
+    extractSeasonNumber,
+    getShowKey,
+    cleanDescription,
+    mediaStartYear,
+    mediaFormat,
+    canFollowSeasonLink,
+    canGroupAsSeason
+  };
 }
