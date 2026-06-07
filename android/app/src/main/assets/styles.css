@@ -763,12 +763,26 @@ body.sidebar-collapsed .sidebar-toggle span {
   background-color: #8b84a6;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M21 21l-4.6-4.6'/%3E%3C/svg%3E") center / contain no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M21 21l-4.6-4.6'/%3E%3C/svg%3E") center / contain no-repeat;
-  pointer-events: none;
+  pointer-events: auto;              /* clickable search button */
+  cursor: pointer;
+  outline: 0;
   transition: background-color 200ms ease, transform 220ms cubic-bezier(0.34, 1.4, 0.5, 1), filter 200ms ease;
 }
 
 .search-box:hover span:last-child {
   background-color: #b7b0d0;
+}
+
+/* Direct hover / press feedback when the pointer is on the icon itself. */
+.search-box span:last-child:hover,
+.search-box span:last-child:focus-visible {
+  background-color: #5C9BFF;
+  transform: translateY(-50%) scale(1.14);
+  filter: drop-shadow(0 0 0.35rem rgba(92, 155, 255, 0.55));
+}
+
+.search-box span:last-child:active {
+  transform: translateY(-50%) scale(0.9);
 }
 
 /* Focus: tint blue, lift, glow, and play a one-shot search "pop". */

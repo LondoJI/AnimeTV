@@ -6665,6 +6665,26 @@ searchInput?.addEventListener("input", handleSearchInput);
 searchInputTop?.addEventListener("input", handleSearchInput);
 searchInputLibrary?.addEventListener("input", handleSearchInput);
 searchInputAniPub?.addEventListener("input", handleSearchInput);
+
+// Make the magnifying-glass icon clickable: focus its search box and, if there's
+// already a query, run the search (switches to results).
+document.querySelectorAll(".search-box").forEach((box) => {
+  const icon = box.querySelector("span:last-child");
+  const input = box.querySelector("input");
+  if (!icon || !input) return;
+  icon.setAttribute("role", "button");
+  icon.setAttribute("aria-label", "Search");
+  icon.setAttribute("tabindex", "0");
+  const runSearch = () => {
+    input.focus();
+    if (input.value.trim()) handleSearchInput({ target: input });
+  };
+  icon.addEventListener("click", (event) => { event.preventDefault(); runSearch(); });
+  icon.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); runSearch(); }
+  });
+});
+
 sidebarToggle?.addEventListener("click", toggleSidebar);
 
 closeOverlay.addEventListener("click", closeShow);
