@@ -1325,6 +1325,85 @@ function todayShows() {
   return recentlyAiredShows(8);
 }
 
+/**
+ * Shows for the Home "Latest Episodes" rail — the newest episode releases, sorted
+ * so today's drops lead and the rest of the week follows in recency order. Uses
+ * each currently-airing show's broadcast day + time to work out when its latest
+ * episode actually dropped. Unlike the carousel pool this only needs a poster
+ * (not a landscape banner), so the rail can be filled with real recent releases.
+ * Honours the active search/genre filter, and pads with the rest of the catalog
+ * only if there genuinely aren't enough airing titles to fill the rail.
+ */
+function latestEpisodeReleases(limit = HOME_CARD_LIMIT) {
+  const now    = new Date();
+  const nowMs  = now.getTime();
+  const DAY_IDX = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+  const seenTitles = new Set();
+
+  const ranked = state.shows
+    .filter((show) => {
+      if (!matchesShowSearch(show)) return false;
+      if (state.filter !== "all" && show.genre !== state.filter) return false;
+      if (!(show.image || show.poster || show.cover)) return false;
+      if (!show.day || show.day === "TBA" || show.day === "Local") return false;
+      const status = (show.status || "").toUpperCase();
+      if (status === "FINISHED" || status === "CANCELLED" || status.includes("FINISH")) return false;
+      return true;
+    })
+    .map((show) => {
+      const dayNum = DAY_IDX[show.day.toLowerCase().slice(0, 3)];
+      if (dayNum === undefined) return null;
+
+      // Parse the broadcast time (handles "10:30 PM", "23:00", "TBA").
+      let airH = 0, airM = 0;
+      if (show.time && show.time !== "TBA") {
+        const m = show.time.match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+        if (m) {
+          airH = parseInt(m[1], 10);
+          airM = parseInt(m[2], 10);
+          const ap = m[3]?.toLowerCase();
+          if (ap === "pm" && airH !== 12) airH += 12;
+          if (ap === "am" && airH === 12)  airH  = 0;
+        }
+      }
+
+      // Most recent past occurrence of this broadcast day+time = when the latest
+      // episode dropped. If that moment is still in the future, step back a week.
+      const daysBack = (now.getDay() - dayNum + 7) % 7;
+      const d = new Date(now);
+      d.setDate(d.getDate() - daysBack);
+      d.setHours(airH, airM, 0, 0);
+      if (d.getTime() > nowMs) d.setDate(d.getDate() - 7);
+
+      return { show, lastAiredMs: d.getTime() };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (b.lastAiredMs - a.lastAiredMs) || (Number(b.show.score || 0) - Number(a.show.score || 0)));
+
+  const result = [];
+  for (const { show } of ranked) {
+    const key = normalizeTitle(show.title);
+    if (seenTitles.has(key)) continue;
+    seenTitles.add(key);
+    result.push(show);
+    if (result.length >= limit) break;
+  }
+
+  // Pad with the rest of the (filtered) catalog so the rail is never sparse, while
+  // keeping the genuinely-recent releases up front.
+  if (result.length < limit) {
+    for (const show of visibleShows()) {
+      const key = normalizeTitle(show.title);
+      if (seenTitles.has(key)) continue;
+      seenTitles.add(key);
+      result.push(show);
+      if (result.length >= limit) break;
+    }
+  }
+
+  return result;
+}
+
 function getCarouselArtwork(show = {}) {
   const poster = String(show.image || show.poster || show.cover || "").trim();
   const candidates = [
@@ -3582,7 +3661,7 @@ function render() {
     renderSkeletonCards(latestGrid, 14);
     renderSkeletonCards(libraryGrid, 14);
   } else {
-    renderCards(latestGrid, filtered.slice(0, HOME_CARD_LIMIT));
+    renderCards(latestGrid, latestEpisodeReleases(HOME_CARD_LIMIT));
     renderCards(libraryGrid, filtered.slice(0, state.search ? SEARCH_CARD_LIMIT : LIBRARY_CARD_LIMIT));
   }
   renderAniPubCatalog();
@@ -7034,7 +7113,19 @@ function handleSearchInput(event) {
     if (i && c) c.hidden = !i.value;
   });
   render();
-  if (state.route === "home") setRoute(event.target === searchInputAniPub ? "anipub" : "library");
+  if (state.route === "home") {
+    const goAniPub = event.target === searchInputAniPub;
+    setRoute(goAniPub ? "anipub" : "library");
+    // Typing on the home search switches to Library/AniPub, which hides the home
+    // input and would drop focus. Re-focus the now-visible search box and put the
+    // caret at the end so the user can keep typing seamlessly.
+    const nextInput = goAniPub ? searchInputAniPub : searchInputLibrary;
+    if (nextInput && nextInput !== event.target) {
+      nextInput.focus();
+      const end = nextInput.value.length;
+      try { nextInput.setSelectionRange(end, end); } catch (_) {}
+    }
+  }
 }
 
 searchInput?.addEventListener("input", handleSearchInput);

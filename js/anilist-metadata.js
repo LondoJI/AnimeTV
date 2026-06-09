@@ -14,9 +14,9 @@
 // ── Franchise version ────────────────────────────────────────────────────────
 // Bump this whenever traversal/merge logic changes so every show gets a fresh
 // franchise rebuild on next open (in-memory cached franchises become stale).
-const _FRANCHISE_VERSION = 10;         // remake guard: don't chain different adaptations (Doraemon) as seasons
+const _FRANCHISE_VERSION = 11;         // BFS the whole SEQUEL/PREQUEL component → same season list from any entry
 const _MEDIA_CACHE_VERSION_KEY = "animetv-anilist-cache-v";
-const _MEDIA_CACHE_VERSION_VAL = "10"; // clears stale localStorage media cache
+const _MEDIA_CACHE_VERSION_VAL = "11"; // clears stale localStorage media cache
 
 // On first load, clear any localStorage AniList media cache that was built with
 // an older code version.  This prevents stale data from persisting across
@@ -231,8 +231,7 @@ async function _traverseFranchise(startMedia) {
   // relations explored yet.  We use `fetched` for that guard instead.
   const nodeMap = new Map();
   const fetched  = new Set(); // ids whose fullMedia + relations are fully processed
-  const mainline = new Set(); // ids on the PREQUEL/SEQUEL story chain (the seasons)
-  const MAX_HOPS = 12;
+  const mainline = new Set(); // ids in the connected SEQUEL/PREQUEL component (the seasons)
 
   function addMedia(media, relationType = null) {
     if (!media?.id) return;
@@ -267,101 +266,66 @@ async function _traverseFranchise(startMedia) {
     }
   }
 
-  // ── Step 1: seed with the entry the user opened ──────────────────────────
+  // ── Seed with the entry the user opened ──────────────────────────────────
   addMedia(startMedia);
   mainline.add(startMedia.id);
   collectSideEntries(startMedia);
 
-  // ── Step 2: follow PREQUEL links back to the franchise root ──────────────
-  // Follow the prequel of ANY format (TV/ONA/Special/Movie) so a "Final Chapters"
-  // special walks back to its TV parent. Guard with `fetched`, not `nodeMap`.
-  let current = startMedia;
-  for (let hop = 0; hop < MAX_HOPS; hop++) {
-    const prequelEdge = (current.relations?.edges || [])
-      .filter(e =>
-        e.relationType === "PREQUEL" &&
-        e.node.type === "ANIME" &&
-        !fetched.has(e.node.id))
-      .sort((a, b) => (a.node.seasonYear || 9999) - (b.node.seasonYear || 9999))[0];
-
-    if (!prequelEdge) break;
-
-    // Stop the chain at a separate adaptation/remake. AniList sometimes chains
-    // remakes via PREQUEL across a format change + big year gap (e.g. Doraemon
-    // 2005 TV -> 1979 TV_SHORT). Those are NOT seasons of the same anime.
-    if (!canFollowSeasonLink(current, prequelEdge.node)) break;
-
-    const prequelMedia = await _fetchAniListMedia(prequelEdge.node.id);
-    if (!prequelMedia) {
-      addNode(prequelEdge.node, "PREQUEL");
-      mainline.add(prequelEdge.node.id);
-      break;
+  // ── BFS the FULL connected SEQUEL/PREQUEL component ───────────────────────
+  // Walking a single linear chain picks ONE branch when the graph forks (Demon
+  // Slayer: S1 -> {Mugen Train movie, Mugen Train TV} -> Yuukaku -> ...), so the
+  // season list used to change depending on which entry was opened. Exploring the
+  // whole component in BOTH directions makes the list identical from ANY start.
+  // canFollowSeasonLink still severs separate adaptations/remakes (Doraemon).
+  const MAX_NODES = 40;
+  const queue = [startMedia];
+  while (queue.length && nodeMap.size < MAX_NODES) {
+    const current = queue.shift();
+    const links = (current.relations?.edges || []).filter(e =>
+      (e.relationType === "SEQUEL" || e.relationType === "PREQUEL") &&
+      e.node?.type === "ANIME"
+    );
+    for (const edge of links) {
+      if (fetched.has(edge.node.id)) continue;
+      if (!canFollowSeasonLink(current, edge.node)) continue;   // remake / separate adaptation
+      const media = await _fetchAniListMedia(edge.node.id);
+      if (!media) {
+        addNode(edge.node, edge.relationType);
+        mainline.add(edge.node.id);
+        continue;
+      }
+      if (!canFollowSeasonLink(current, media)) continue;
+      addMedia(media, edge.relationType);
+      mainline.add(media.id);
+      collectSideEntries(media);
+      queue.push(media);
     }
-
-    addMedia(prequelMedia, "PREQUEL");
-    mainline.add(prequelMedia.id);
-    collectSideEntries(prequelMedia);
-    current = prequelMedia;
   }
 
-  // ── Step 3: follow SEQUEL links forward from the root ────────────────────
-  // The root is the oldest entry we've fetched (usually the S1 TV series).
-  const mainlineFetched = [...nodeMap.values()]
-    .filter(v => mainline.has(v.node.anilistId) && v.fullMedia)
-    .sort((a, b) => _sortByAirDate(a.node, b.node));
-
-  const root = mainlineFetched[0];
-  if (!root) {
-    for (const [id, v] of nodeMap) v.node.mainline = mainline.has(id) && _isDisplaySeason(v.node);
-    return nodeMap;
-  }
-
-  current = root.fullMedia;
-
-  // Follow SEQUEL of ANY format — the main story line can end in a "Final Chapters"
-  // SPECIAL or a continuation MOVIE, which must still appear as the final season(s).
-  for (let hop = 0; hop < MAX_HOPS; hop++) {
-    const sequelEdge = (current.relations?.edges || [])
-      .filter(e =>
-        e.relationType === "SEQUEL" &&
-        e.node.type === "ANIME" &&
-        !fetched.has(e.node.id))
-      .sort((a, b) => (a.node.seasonYear || 9999) - (b.node.seasonYear || 9999))[0];
-
-    if (!sequelEdge) break;
-
-    // Stop at a separate adaptation/remake chained via SEQUEL across a format
-    // change + big year gap (e.g. Doraemon 1979 TV_SHORT -> 2005 TV).
-    if (!canFollowSeasonLink(current, sequelEdge.node)) break;
-
-    const sequelMedia = await _fetchAniListMedia(sequelEdge.node.id);
-    if (!sequelMedia) {
-      addNode(sequelEdge.node, "SEQUEL");
-      mainline.add(sequelEdge.node.id);
-      break;
-    }
-
-    addMedia(sequelMedia, "SEQUEL");
-    mainline.add(sequelMedia.id);
-    collectSideEntries(sequelMedia);
-    current = sequelMedia;
-  }
-
-  // ── Step 4: mop up any shallow mainline nodes (multi-pass until stable) ───
-  for (let pass = 0; pass < 5; pass++) {
+  // Mop up any shallow mainline nodes and expand their links too (multi-pass).
+  for (let pass = 0; pass < 6; pass++) {
     const pending = [...nodeMap.values()]
       .filter(v => mainline.has(v.node.anilistId) && !v.fullMedia);
     if (!pending.length) break;
-
     await Promise.allSettled(pending.map(async ({ node }) => {
       const media = await _fetchAniListMedia(node.anilistId);
-      if (media) { addMedia(media); mainline.add(media.id); collectSideEntries(media); }
+      if (!media) return;
+      addMedia(media);
+      mainline.add(media.id);
+      collectSideEntries(media);
+      for (const e of media.relations?.edges || []) {
+        if ((e.relationType === "SEQUEL" || e.relationType === "PREQUEL") &&
+            e.node?.type === "ANIME" && canFollowSeasonLink(media, e.node)) {
+          mainline.add(e.node.id);
+          addNode(e.node, e.relationType);
+        }
+      }
     }));
   }
 
   // Tag every node with whether it should DISPLAY as a mainline season. We keep
-  // traversing through any-format chain links above, but bonus OVAs/movies that
-  // merely sit on the SEQUEL chain are demoted to extras here.
+  // bonus OVAs/movies that bridge seasons in the component, but demote them to
+  // extras here so only real seasons (TV/ONA + designated specials) are tabs.
   for (const [id, v] of nodeMap) v.node.mainline = mainline.has(id) && _isDisplaySeason(v.node);
   return nodeMap;
 }

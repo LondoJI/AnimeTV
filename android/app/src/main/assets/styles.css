@@ -6812,6 +6812,11 @@ body.sidebar-collapsed .main-nav .nav-link:is(:hover, :focus-visible, .is-tv-foc
   border: 0.08rem solid rgba(92, 155, 255, 0.22);
   animation: ssFade 160ms ease both;
 }
+/* The detection box / progress box only exist once there's something to show —
+   the `display:flex` above would otherwise override the [hidden] attribute and
+   leave an empty box on the modal before you type. */
+.ss-modal-detect[hidden],
+.ss-modal-progress[hidden] { display: none; }
 .ss-modal-detect.ss-type-unsupported,
 .ss-modal-detect.ss-type-unknown {
   background: rgba(255, 99, 99, 0.1);
