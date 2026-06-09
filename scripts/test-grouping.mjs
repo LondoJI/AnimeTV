@@ -13,6 +13,7 @@ const {
   getShowKey,
   cleanDescription
 } = require("../js/utils.js");
+const { SmartSource } = require("../js/smart-source.js");
 
 let passed = 0;
 let failed = 0;
@@ -103,6 +104,23 @@ const sourceWords = desc.split(/\s+/);
 check("Every word kept is a complete word (no mid-word cut)", truncWords.every((w) => sourceWords.includes(w)));
 check("No leftover HTML tags", !/[<>]/.test(cleanDescription("<p>Hello <b>world</b></p>")));
 check("Short description returned whole (no ellipsis)", cleanDescription("Short text") === "Short text");
+
+console.log("\n# SmartSource link detection");
+const det = (input) => SmartSource.analyzeInput(input).type;
+check("domain only -> full_website_domain", det("animeav1.com") === "full_website_domain");
+check("series slug -> anime_series_page", det("animeav1.com/one-piece") === "anime_series_page");
+check("/anime/ path -> anime_series_page", det("https://animeflv.net/anime/one-piece") === "anime_series_page");
+check("episodio page -> anime_episode_page", det("animeav1.com/one-piece/episodio-1") === "anime_episode_page");
+check("episode page -> anime_episode_page", det("https://site.com/watch/show-episode-12") === "anime_episode_page");
+check(".mp4 -> direct_playable_url", det("https://cdn.com/video.mp4") === "direct_playable_url");
+check(".m3u8 -> direct_playable_url", det("https://cdn.com/hls/master.m3u8?token=1") === "direct_playable_url");
+check("api/catalog -> api_endpoint", det("https://site.com/api/catalog?all") === "api_endpoint");
+check(".json -> api_endpoint", det("https://site.com/data/catalog.json") === "api_endpoint");
+check("github -> addon_repo", det("https://github.com/user/addon") === "addon_repo");
+check("youtube -> unsupported", det("https://youtube.com/watch?v=abc123") === "unsupported");
+check("garbage -> unknown", det("not a url") === "unknown");
+check("normalizeUrl adds https", SmartSource.normalizeUrl("animeav1.com").startsWith("https://"));
+check("domainName strips tld", SmartSource.domainName("https://www.animeav1.com/x") === "Animeav1");
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

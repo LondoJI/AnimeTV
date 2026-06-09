@@ -6739,3 +6739,126 @@ body.sidebar-collapsed .main-nav .nav-link:is(:hover, :focus-visible, .is-tv-foc
 }
 .secondary-action:is(:hover, :focus-visible, .is-tv-focused) { transform: translateY(-0.1rem); }
 .secondary-action:active { transform: scale(0.96); }
+
+/* ── Smart Source modal ──────────────────────────────────────────────────── */
+.ss-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgba(4, 6, 14, 0.72);
+  backdrop-filter: blur(6px);
+  animation: ssFade 160ms ease both;
+}
+@keyframes ssFade { from { opacity: 0; } to { opacity: 1; } }
+
+.ss-modal {
+  position: relative;
+  width: min(34rem, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  padding: 1.6rem 1.5rem 1.4rem;
+  border-radius: 1.1rem;
+  border: 0.08rem solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(180deg, #141627, #0d0f1d);
+  box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.55);
+  color: var(--text);
+  animation: ssPop 200ms cubic-bezier(0.34, 1.3, 0.5, 1) both;
+}
+@keyframes ssPop { from { transform: translateY(0.6rem) scale(0.98); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.ss-modal h3 { margin: 0 0 0.35rem; font-size: 1.3rem; font-weight: 900; }
+.ss-modal-sub { margin: 0 0 1rem; color: var(--muted); font-size: 0.9rem; line-height: 1.45; }
+
+.ss-modal-close {
+  position: absolute;
+  top: 0.85rem;
+  right: 0.85rem;
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  place-items: center;
+  border-radius: 999rem;
+  background: rgba(255, 255, 255, 0.08);
+  color: #d7d2ec;
+  cursor: pointer;
+  transition: background 150ms ease, transform 150ms ease;
+}
+.ss-modal-close:is(:hover, :focus-visible) { outline: 0; background: rgba(92, 155, 255, 0.4); transform: scale(1.08); }
+
+.ss-modal-input {
+  width: 100%;
+  min-height: 3rem;
+  padding: 0 1rem;
+  border: 0.1rem solid rgba(255, 255, 255, 0.14);
+  border-radius: 0.8rem;
+  background: #0a0c18;
+  color: var(--text);
+  outline: 0;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.ss-modal-input:focus { border-color: rgba(92, 155, 255, 0.6); box-shadow: 0 0 0 0.16rem rgba(92, 155, 255, 0.16); }
+
+.ss-modal-detect {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 0.8rem;
+  background: rgba(92, 155, 255, 0.1);
+  border: 0.08rem solid rgba(92, 155, 255, 0.22);
+  animation: ssFade 160ms ease both;
+}
+.ss-modal-detect.ss-type-unsupported,
+.ss-modal-detect.ss-type-unknown {
+  background: rgba(255, 99, 99, 0.1);
+  border-color: rgba(255, 99, 99, 0.28);
+}
+.ss-modal-detect.ss-type-full_website_domain {
+  background: rgba(138, 92, 255, 0.12);
+  border-color: rgba(138, 92, 255, 0.3);
+}
+.ss-detect-icon { font-size: 1.5rem; line-height: 1; }
+.ss-detect-text { display: grid; gap: 0.1rem; min-width: 0; }
+.ss-detect-text strong { font-weight: 900; }
+.ss-detect-text small { color: var(--muted); font-size: 0.82rem; line-height: 1.35; }
+
+.ss-modal-progress {
+  margin-top: 0.85rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 0.8rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 0.08rem solid rgba(255, 255, 255, 0.08);
+  max-height: 13rem;
+  overflow: auto;
+  font-size: 0.86rem;
+}
+.ss-progress-line { padding: 0.18rem 0; color: rgba(246, 243, 255, 0.86); }
+.ss-progress-line + .ss-progress-line { border-top: 0.06rem solid rgba(255, 255, 255, 0.05); }
+
+.ss-merge p { margin: 0 0 0.6rem; }
+.ss-merge-actions, .ss-modal-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.ss-modal-actions { margin-top: 1.1rem; justify-content: flex-end; }
+.ss-offer { margin-top: 0.7rem; }
+
+.ss-btn {
+  min-height: 2.55rem;
+  padding: 0 1.1rem;
+  border-radius: 0.7rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 150ms ease, background 150ms ease, box-shadow 150ms ease, opacity 150ms ease;
+}
+.ss-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.ss-btn-primary { color: #07101f; background: linear-gradient(135deg, #5C9BFF, #8A5CFF); }
+.ss-btn-primary:is(:hover, :focus-visible):not(:disabled) { outline: 0; transform: translateY(-0.08rem); box-shadow: 0 0.5rem 1.2rem rgba(92, 155, 255, 0.35); }
+.ss-btn-ghost { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+.ss-btn-ghost:is(:hover, :focus-visible):not(:disabled) { outline: 0; background: rgba(255, 255, 255, 0.14); }
+.ss-btn:active:not(:disabled) { transform: scale(0.96); }
+
+body.reduce-motion .ss-modal-backdrop,
+body.reduce-motion .ss-modal,
+body.reduce-motion .ss-modal-detect { animation: none; }

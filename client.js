@@ -549,6 +549,16 @@ async function fetchExternalCatalog(source) {
 }
 
 async function fetchExternalCatalogData(source, page = null) {
+  // Crawled / direct-video sources carry their catalog inline — no endpoint to hit.
+  if (Array.isArray(source.catalog)) {
+    return {
+      items: source.catalog.map((item, index) => normalizeExternalShow(item, source, index)).filter(Boolean),
+      page: 1,
+      nextPage: null,
+      hasMore: false,
+      totalResults: source.catalog.length
+    };
+  }
   const cacheKey = `external:${source.id || source.name}:${page || getSourcePage(source) || 1}`;
   const useCache = !source.noCache && !source.playbackOnly;
   const cached = useCache ? readResponseCache(cacheKey) : null;
@@ -725,32 +735,40 @@ function saveCustomSources() {
   localStorage.setItem("animetv-custom-sources", JSON.stringify(state.customSources));
 }
 
+// "Add Source" now opens the Smart Source modal (analyzes the pasted link and
+// decides what to do). The old direct-add logic is kept as addBasicAddonSource,
+// used by the API / addon strategies and as a fallback.
 function addCustomSource() {
-  const endpoint = window.prompt("Paste a catalog/addon URL. It can be local or online HTTPS.");
-  if (!endpoint) return;
+  if (typeof openSmartSourceModal === "function") return openSmartSourceModal();
+  return addBasicAddonSource(window.prompt("Paste a catalog/addon URL.") || "");
+}
+
+function addBasicAddonSource(endpoint, opts = {}) {
   const normalizedEndpoint = normalizeSourceUrl(endpoint);
-  if (!normalizedEndpoint) {
-    window.alert("Please use a valid http:// or https:// catalog/addon URL.");
-    return;
-  }
+  if (!normalizedEndpoint) throw new Error("Use a valid http:// or https:// URL.");
   const isOnline = isOnlineSource(normalizedEndpoint);
-  const name = window.prompt("Name for this source", isOnline ? "Online Anime Addon" : "My Anime Addon") || (isOnline ? "Online Anime Addon" : "My Anime Addon");
-  const id = `custom-${Date.now()}`;
+  const name = opts.name || (isOnline ? "Online Anime Addon" : "My Anime Addon");
   const source = {
-    id,
+    id: opts.id || `custom-${Date.now()}`,
     name,
     enabled: true,
     custom: true,
-    type: isOnline ? "online-addon" : "local-addon",
+    type: opts.type || (isOnline ? "online-addon" : "local-addon"),
     endpoint: normalizedEndpoint,
-    description: isOnline
+    description: opts.description || (isOnline
       ? "Online addon added from ZenkaiTV. It should return normalized catalog JSON from a source you are allowed to use."
-      : "Local addon added from ZenkaiTV. It should return normalized catalog JSON."
+      : "Local addon added from ZenkaiTV. It should return normalized catalog JSON.")
   };
-  state.customSources = [...state.customSources, source];
+  persistSmartSource(source);
+  return source;
+}
+
+// Persist any source (basic addon, crawled, direct video) into the live list.
+function persistSmartSource(source) {
+  state.customSources = [...state.customSources.filter((s) => s.id !== source.id), source];
   saveCustomSources();
-  saveSourceOverride(id, { enabled: true });
-  state.localSources = [...state.localSources, applySourceOverride(source)];
+  saveSourceOverride(source.id, { enabled: true });
+  state.localSources = [...state.localSources.filter((s) => s.id !== source.id), applySourceOverride(source)];
   renderSources();
   loadExternalSources();
 }
@@ -776,6 +794,280 @@ function removeSource(sourceId) {
   state.addonSections = state.addonSections.filter((section) => section.id !== sourceId);
   renderAddonSections();
   renderSources();
+}
+
+// Remove a source without the confirm() prompt (used by the merge resolver).
+function removeSourceSilent(sourceId) {
+  state.customSources = state.customSources.filter((item) => item.id !== sourceId);
+  delete state.sourceOverrides[sourceId];
+  saveCustomSources();
+  localStorage.setItem("animetv-source-overrides", JSON.stringify(state.sourceOverrides));
+  state.localSources = state.localSources.filter((item) => item.id !== sourceId);
+  state.addonSections = state.addonSections.filter((section) => section.id !== sourceId);
+}
+
+// ── Smart Source integration ─────────────────────────────────────────────────
+// Analyze a pasted link and add it the right way: direct video, single episode,
+// anime series, full-site crawl, API catalog, or addon. Crawling is delegated to
+// the user's scraper via window.ZenkaiScraper.crawl(...) or a POST crawl endpoint.
+
+function smartCrawlEndpoint() {
+  try { return localStorage.getItem("zenkaitv-crawl-endpoint") || "./api/crawl"; }
+  catch { return "./api/crawl"; }
+}
+
+// kind: "site" | "anime" | "episode". Returns { name, catalog, totalEpisodes, playableCount, duration }.
+async function smartCrawlBackend(kind, url, onProgress = () => {}) {
+  onProgress({ stage: "connect", message: "Connecting to crawler…" });
+  // 1) In-page scraper hook the user can wire up.
+  if (window.ZenkaiScraper && typeof window.ZenkaiScraper.crawl === "function") {
+    return await window.ZenkaiScraper.crawl({ kind, url, onProgress });
+  }
+  // 2) HTTP crawl endpoint (POST {kind, url}).
+  let res;
+  try {
+    res = await fetchWithTimeout(smartCrawlEndpoint(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, url })
+    }, 180000);
+  } catch {
+    const e = new Error("CRAWLER_UNAVAILABLE"); e.code = "CRAWLER_UNAVAILABLE"; throw e;
+  }
+  if (res.status === 404 || res.status === 501) {
+    const e = new Error("CRAWLER_UNAVAILABLE"); e.code = "CRAWLER_UNAVAILABLE"; throw e;
+  }
+  if (!res.ok) throw new Error(`Crawler returned HTTP ${res.status}`);
+  const data = await res.json();
+  if (!data || data.ok === false) throw new Error(data?.error || "Crawl failed.");
+  return data;
+}
+
+function buildCrawledSource(kind, url, data) {
+  const catalog = Array.isArray(data.catalog) ? data.catalog : [];
+  const totalEpisodes = Number(
+    data.totalEpisodes ?? catalog.reduce((n, a) => n + ((a.episodes && a.episodes.length) || 0), 0)
+  ) || 0;
+  const playableCount = Number(data.playableCount ?? totalEpisodes) || 0;
+  const domain = SmartSource.domainOf(url);
+  const name = data.name
+    || (kind === "site" ? SmartSource.domainName(url)
+        : (catalog[0]?.title || SmartSource.domainName(url)));
+  return {
+    id: `crawl-${Date.now()}`,
+    name: kind === "site" ? `${name} (${catalog.length} anime, ${playableCount} playable)` : name,
+    enabled: true,
+    custom: true,
+    type: kind === "site" ? "full-site-crawl" : kind === "anime" ? "single-anime" : "single-episode",
+    url,
+    endpoint: url,
+    catalog,
+    metadata: {
+      totalAnime: catalog.length,
+      totalEpisodes,
+      playableCount,
+      lastCrawled: new Date().toISOString(),
+      crawlDuration: data.duration || null,
+      crawlKind: kind
+    },
+    status: `${catalog.length} anime · ${playableCount} playable`,
+    description: `Crawled from ${domain || "a site"} · ${catalog.length} anime · ${playableCount} playable`
+  };
+}
+
+function addDirectVideoSource(analysis) {
+  const url = analysis.url;
+  let name = "Direct Video";
+  try { name = decodeURIComponent(url.split("/").pop().split("?")[0]) || name; } catch { /* keep default */ }
+  const id = `video-${Date.now()}`;
+  const source = {
+    id, name, enabled: true, custom: true,
+    type: "single-video", url, endpoint: url,
+    catalog: [{
+      id, title: name, romajiTitle: name, episode: 1, totalEpisodes: 1,
+      genre: "anime", status: "", image: "",
+      description: "Direct video added via Smart Source.",
+      videoUrl: url,
+      episodes: [{ episode: 1, season: 1, title: name, videoUrl: url }]
+    }],
+    metadata: { totalAnime: 1, totalEpisodes: 1, playableCount: 1, lastCrawled: new Date().toISOString() },
+    status: "1 playable",
+    description: `Single video from ${SmartSource.domainOf(url) || "a direct link"}`
+  };
+  persistSmartSource(source);
+  return source;
+}
+
+function findDuplicateSource(url) {
+  const domain = SmartSource.domainOf(url);
+  if (!domain) return null;
+  return state.localSources.find((s) =>
+    s.custom && (SmartSource.domainOf(s.url || s.endpoint || "") === domain)
+  ) || null;
+}
+
+async function runCrawlStrategy(kind, analysis, opts = {}) {
+  const onProgress = opts.onProgress || (() => {});
+  const dup = findDuplicateSource(analysis.url);
+  if (dup && opts.resolveMerge) {
+    const choice = await opts.resolveMerge(dup);   // "replace" | "separate" | "cancel"
+    if (choice === "cancel") { const e = new Error("CANCELLED"); e.code = "CANCELLED"; throw e; }
+    if (choice === "replace") removeSourceSilent(dup.id);
+  }
+  onProgress({ stage: "crawl", message: `Crawling ${SmartSource.domainOf(analysis.url) || analysis.url}…` });
+  const data = await smartCrawlBackend(kind, analysis.url, onProgress);
+  const source = buildCrawledSource(kind, analysis.url, data);
+  onProgress({ stage: "done", message: `${source.metadata.totalAnime} anime · ${source.metadata.playableCount} playable` });
+  persistSmartSource(source);
+  return source;
+}
+
+const smartIntegrator = (typeof SmartSourceIntegrator === "function")
+  ? new SmartSourceIntegrator({
+      addDirectVideo: (a) => addDirectVideoSource(a),
+      addApi: (a) => addBasicAddonSource(a.url, { type: "online-addon", name: `${SmartSource.domainName(a.url)} API`, description: "JSON catalog endpoint added via Smart Source." }),
+      addAddon: (a) => addBasicAddonSource(a.url, { type: "online-addon", name: `${SmartSource.domainName(a.url)} Addon`, description: "Addon manifest added via Smart Source." }),
+      crawl: (kind, a, opts) => runCrawlStrategy(kind, a, opts)
+    })
+  : null;
+
+// Periodically refresh full-site crawls older than 7 days (best-effort, silent).
+async function checkSourceRefreshes() {
+  const now = Date.now();
+  for (const source of state.localSources) {
+    if (source.type !== "full-site-crawl" || !source.metadata?.lastCrawled) continue;
+    const ageDays = (now - new Date(source.metadata.lastCrawled).getTime()) / 86400000;
+    if (ageDays < 7) continue;
+    try {
+      const data = await smartCrawlBackend(source.metadata.crawlKind || "site", source.url, () => {});
+      const fresh = buildCrawledSource("site", source.url, data);
+      fresh.id = source.id;                         // keep the same id
+      const before = source.metadata.totalEpisodes || 0;
+      persistSmartSource(fresh);
+      const added = (fresh.metadata.totalEpisodes || 0) - before;
+      if (added > 0) showToast(`${SmartSource.domainOf(source.url)} updated (${added} new episodes)`);
+    } catch { /* crawler offline — try again next time */ }
+  }
+}
+
+// The Smart Source modal: paste a link, see what ZenkaiTV will do, then confirm.
+function openSmartSourceModal() {
+  if (!smartIntegrator) { addBasicAddonSource(window.prompt("Paste a catalog/addon URL.") || ""); return; }
+  document.querySelector(".ss-modal-backdrop")?.remove();
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "ss-modal-backdrop";
+  backdrop.innerHTML = `
+    <div class="ss-modal" role="dialog" aria-modal="true" aria-label="Add a source">
+      <button class="ss-modal-close focusable" type="button" aria-label="Close">✕</button>
+      <h3>Add a Source</h3>
+      <p class="ss-modal-sub">Paste any link — a website, an episode page, a direct video, or an API. ZenkaiTV figures out what to do.</p>
+      <input class="ss-modal-input focusable" type="url" inputmode="url" autocomplete="off" spellcheck="false"
+             placeholder="anime site, episode URL, .mp4 / .m3u8, or API endpoint…">
+      <div class="ss-modal-detect" hidden></div>
+      <div class="ss-modal-progress" hidden></div>
+      <div class="ss-modal-actions">
+        <button class="ss-btn ss-btn-ghost focusable" type="button" data-ss-cancel>Cancel</button>
+        <button class="ss-btn ss-btn-primary focusable" type="button" data-ss-confirm disabled>Add</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+
+  const input = backdrop.querySelector(".ss-modal-input");
+  const detect = backdrop.querySelector(".ss-modal-detect");
+  const progress = backdrop.querySelector(".ss-modal-progress");
+  const confirmBtn = backdrop.querySelector("[data-ss-confirm]");
+  const cancelBtn = backdrop.querySelector("[data-ss-cancel]");
+  const closeBtn = backdrop.querySelector(".ss-modal-close");
+  let current = null;
+  let busy = false;
+
+  const close = () => { if (!busy) backdrop.remove(); };
+  closeBtn.addEventListener("click", close);
+  cancelBtn.addEventListener("click", close);
+  backdrop.addEventListener("click", (event) => { if (event.target === backdrop) close(); });
+  const onEsc = (event) => {
+    if (event.key === "Escape") { close(); if (!document.body.contains(backdrop)) document.removeEventListener("keydown", onEsc); }
+  };
+  document.addEventListener("keydown", onEsc);
+
+  const updateDetect = () => {
+    const value = input.value.trim();
+    if (!value) { detect.hidden = true; confirmBtn.disabled = true; current = null; return; }
+    const analysis = smartIntegrator.analyzeInput(value);
+    const plan = smartIntegrator.describePlan(analysis);
+    current = analysis;
+    detect.hidden = false;
+    detect.className = `ss-modal-detect ss-type-${analysis.type}`;
+    detect.innerHTML = `<span class="ss-detect-icon">${plan.icon}</span><span class="ss-detect-text"><strong>${escapeHtml(plan.title)}</strong><small>${escapeHtml(plan.detail)}</small></span>`;
+    const blocked = analysis.type === "unsupported" || analysis.type === "unknown";
+    confirmBtn.disabled = blocked;
+    confirmBtn.textContent = analysis.type === "full_website_domain" ? "Crawl & Add"
+      : (analysis.type === "anime_series_page" || analysis.type === "anime_episode_page") ? "Fetch & Add" : "Add";
+  };
+  input.addEventListener("input", updateDetect);
+
+  const setProgress = (entry) => {
+    progress.hidden = false;
+    const line = typeof entry === "string" ? entry : (entry && entry.message) || "";
+    if (!line) return;
+    const div = document.createElement("div");
+    div.className = "ss-progress-line";
+    div.textContent = line;
+    progress.appendChild(div);
+    progress.scrollTop = progress.scrollHeight;
+  };
+
+  const resolveMerge = (dup) => new Promise((resolve) => {
+    detect.hidden = true;
+    progress.hidden = false;
+    progress.innerHTML = `<div class="ss-merge">
+      <p>“${escapeHtml(dup.name || SmartSource.domainOf(dup.url || ""))}” already exists for this site.</p>
+      <div class="ss-merge-actions">
+        <button class="ss-btn ss-btn-primary focusable" data-ss-merge="replace">Replace</button>
+        <button class="ss-btn ss-btn-ghost focusable" data-ss-merge="separate">Add separate</button>
+        <button class="ss-btn ss-btn-ghost focusable" data-ss-merge="cancel">Cancel</button>
+      </div></div>`;
+    progress.querySelectorAll("[data-ss-merge]").forEach((button) => button.addEventListener("click", () => {
+      progress.innerHTML = "";
+      resolve(button.dataset.ssMerge);
+    }));
+  });
+
+  confirmBtn.addEventListener("click", async () => {
+    if (!current || busy) return;
+    busy = true;
+    confirmBtn.disabled = true; cancelBtn.disabled = true; closeBtn.disabled = true;
+    input.disabled = true; detect.hidden = true;
+    progress.hidden = false; progress.innerHTML = "";
+    setProgress("Working…");
+    try {
+      const source = await smartIntegrator.addSmartSource(input.value.trim(), { onProgress: setProgress, resolveMerge });
+      setProgress(`✅ Added “${source?.name || "source"}”.`);
+      showToast(`Added ${source?.name || "source"}`);
+      window.setTimeout(() => backdrop.remove(), 800);
+    } catch (err) {
+      busy = false;
+      input.disabled = false; closeBtn.disabled = false; cancelBtn.disabled = false; confirmBtn.disabled = false;
+      if (err.code === "CANCELLED") { progress.hidden = true; updateDetect(); return; }
+      if (err.code === "CRAWLER_UNAVAILABLE") {
+        setProgress("⚠️ Crawler backend isn't connected yet.");
+        setProgress("Set localStorage 'zenkaitv-crawl-endpoint' to your scraper URL, or define window.ZenkaiScraper.crawl().");
+        const offer = document.createElement("button");
+        offer.className = "ss-btn ss-btn-primary focusable ss-offer";
+        offer.textContent = "Add as basic catalog source instead";
+        offer.addEventListener("click", () => {
+          try { addBasicAddonSource(current.url); showToast("Source added"); backdrop.remove(); }
+          catch (e2) { setProgress(`❌ ${e2.message}`); }
+        });
+        progress.appendChild(offer);
+        return;
+      }
+      setProgress(`❌ ${err.message || "Could not add this source."}`);
+    }
+  });
+
+  window.setTimeout(() => input.focus(), 50);
 }
 
 async function fetchAniListTrending() {
@@ -2662,7 +2954,8 @@ function isSourceWorking(source) {
 
 function buildSourceCardsHtml() {
   const metadataOnline = /online|standby|ready/i.test(String(state.apiStatus.metadata || ""));
-  const workingSources = state.localSources.filter(isSourceWorking);
+  const workingSources = state.localSources.filter((s) =>
+    isSourceWorking(s) && !s.hidden && s.id !== LOCAL_FINDER_SOURCE_ID);
   return `
     <article class="source-card source-card-add">
       <div>
@@ -2716,7 +3009,8 @@ function buildSourceCardsHtml() {
 
 function renderSources() {
   if (!sourcesGrid || !sourceSummary) return;
-  const working = state.localSources.filter(isSourceWorking).length;
+  const working = state.localSources.filter((s) =>
+    isSourceWorking(s) && !s.hidden && s.id !== LOCAL_FINDER_SOURCE_ID).length;
   sourceSummary.textContent = `${working} active source${working === 1 ? "" : "s"} · Catalog: ${state.apiStatus.direct}`;
   sourcesGrid.innerHTML = buildSourceCardsHtml();
   wireSourceButtons(sourcesGrid);
@@ -6795,3 +7089,5 @@ if (window.UpdateManager) {
   window.animeTVUpdater.start();
 }
 window.setTimeout(hideAppLoader, 850);
+// Best-effort background refresh of stale full-site crawls (if a crawler is wired).
+window.setTimeout(() => { try { checkSourceRefreshes(); } catch { /* ignore */ } }, 9000);
