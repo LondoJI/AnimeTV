@@ -602,6 +602,11 @@ function handleRequest(request, response) {
     return;
   }
 
+  if (url.pathname === "/api/crawl") {
+    handleCrawl(request, response);
+    return;
+  }
+
   if (url.pathname === "/api/scraped-catalog") {
     handleScrapedCatalog(url, response);
     return;
@@ -5308,6 +5313,219 @@ async function handleAnimeAv1Slugs(url, response) {
       items: [],
       byTitle: {}
     }, 502);
+  }
+}
+
+// ── Smart Source crawler: jkanime.net ─────────────────────────────────────────
+// Powers the client's "Crawl & Add" (POST /api/crawl {kind,url}). jkanime episode
+// pages embed a `servers = [...]` array whose `remote` field is a base64-encoded
+// playable embed URL (Streamwish/Mega/Voe/…), so we resolve those into episodes
+// the app can play like any external source.
+const JK_BASE = "https://jkanime.net";
+const JK_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+  Referer: `${JK_BASE}/`
+};
+// Streamable embed hosts ranked first; pure download lockers are dropped.
+const JK_GOOD_HOSTS = ["streamwish", "sfastwish", "filemoon", "voe", "vidhide", "mp4upload", "streamtape", "doodstream", "dood", "okru", "ok.ru", "yourupload", "mega"];
+
+async function mapLimit(items, limit, fn) {
+  const out = [];
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) {
+      const idx = i++;
+      out[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+function prettifyJkSlug(slug) {
+  return String(slug || "").replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).trim();
+}
+
+function parseJkanimeServers(html) {
+  const m = String(html || "").match(/servers\s*=\s*(\[[\s\S]*?\])\s*;/);
+  if (!m) return [];
+  let arr;
+  try { arr = JSON.parse(m[1]); } catch { return []; }
+  const out = [];
+  for (const s of Array.isArray(arr) ? arr : []) {
+    let url = "";
+    try { url = Buffer.from(String(s.remote || ""), "base64").toString("utf8").trim(); } catch { /* ignore */ }
+    url = url.replace(/\s+/g, "");
+    if (!/^https?:\/\//i.test(url)) continue;
+    out.push({ server: String(s.server || "").trim(), url });
+  }
+  return out;
+}
+
+function jkRankEmbeds(sources) {
+  const seen = new Set();
+  const ranked = [];
+  for (const s of sources) {
+    if (seen.has(s.url)) continue;
+    seen.add(s.url);
+    const host = ((s.url.match(/^https?:\/\/([^/]+)/) || [])[1] || "").toLowerCase();
+    if (/mediafire/i.test(host)) continue;             // download page, not inline-playable
+    const score = JK_GOOD_HOSTS.findIndex((h) => host.includes(h));
+    ranked.push({ provider: s.server || host, url: s.url, host, score: score < 0 ? 99 : score });
+  }
+  ranked.sort((a, b) => a.score - b.score);
+  return ranked;
+}
+
+async function fetchJkanimeEpisode(slug, episode) {
+  const epUrl = `${JK_BASE}/${encodeURIComponent(slug)}/${encodeURIComponent(episode)}`;
+  const r = await fetchWithTimeout(epUrl, { headers: JK_HEADERS }, HOSTED_RUNTIME ? 8000 : 12000);
+  if (!r.ok) return null;
+  const html = await r.text();
+  const embeds = jkRankEmbeds(parseJkanimeServers(html));
+  if (!embeds.length) return null;
+  const ogTitle = (html.match(/property="og:title"\s+content="([^"]+)"/i) || [])[1] || "";
+  const ogImage = (html.match(/property="og:image"\s+content="([^"]+)"/i) || [])[1] || "";
+  const title = decodeHtmlEntities(ogTitle)
+    .replace(/\s+(?:Episodio\s+)?\d+\s+(?:Sub|Latino|Español|Castellano)[\s\S]*$/i, "")
+    .replace(/\s+Sub Español.*$/i, "")
+    .trim() || prettifyJkSlug(slug);
+  return { slug, episode: Number(episode) || 0, title, image: ogImage, embeds, episodeUrl: epUrl };
+}
+
+function buildJkCatalog(records) {
+  const bySlug = new Map();
+  for (const e of records) {
+    if (!e || !e.embeds?.length) continue;
+    let entry = bySlug.get(e.slug);
+    if (!entry) {
+      entry = {
+        id: `jk-${e.slug}`,
+        title: e.title || prettifyJkSlug(e.slug),
+        romajiTitle: e.title || prettifyJkSlug(e.slug),
+        image: e.image || "",
+        genre: "anime",
+        status: "",
+        source: "jkanime",
+        description: "Imported from jkanime.net via Smart Source.",
+        episodes: []
+      };
+      bySlug.set(e.slug, entry);
+    }
+    if (!entry.image && e.image) entry.image = e.image;
+    entry.episodes.push({
+      episode: e.episode,
+      season: 1,
+      title: `Episodio ${e.episode}`,
+      videoUrl: e.embeds[0].url,
+      externalUrl: e.embeds[0].url,
+      type: "iframe",
+      siteUrl: e.episodeUrl,
+      sources: e.embeds.map((x) => ({ provider: x.provider, url: x.url, externalUrl: x.url, type: "iframe", siteUrl: e.episodeUrl }))
+    });
+  }
+  for (const entry of bySlug.values()) {
+    const seenEp = new Set();
+    entry.episodes = entry.episodes
+      .filter((ep) => (seenEp.has(ep.episode) ? false : (seenEp.add(ep.episode), true)))
+      .sort((a, b) => a.episode - b.episode);
+    entry.totalEpisodes = entry.episodes.length;
+    entry.episode = entry.episodes[entry.episodes.length - 1]?.episode || 1;
+  }
+  return [...bySlug.values()];
+}
+
+async function crawlJkanimeSite(limit = 18) {
+  const r = await fetchWithTimeout(`${JK_BASE}/`, { headers: JK_HEADERS }, HOSTED_RUNTIME ? 9000 : 14000);
+  if (!r.ok) throw new Error(`jkanime homepage HTTP ${r.status}`);
+  const html = await r.text();
+  const pairs = [];
+  const seen = new Set();
+  for (const m of html.matchAll(/href="https:\/\/jkanime\.net\/([a-z0-9-]+)\/(\d+)"/g)) {
+    const key = `${m[1]}/${m[2]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pairs.push({ slug: m[1], episode: Number(m[2]) });
+    if (pairs.length >= limit) break;
+  }
+  const records = await mapLimit(pairs, 5, (p) => fetchJkanimeEpisode(p.slug, p.episode).catch(() => null));
+  return records.filter(Boolean);
+}
+
+async function crawlJkanimeAnime(slug, limit = 12) {
+  // Best-effort: episode links present in the static anime page (jkanime paginates
+  // the rest via AJAX). Resolve embeds for the most recent ones, newest first.
+  const r = await fetchWithTimeout(`${JK_BASE}/${encodeURIComponent(slug)}/`, { headers: JK_HEADERS }, HOSTED_RUNTIME ? 8000 : 12000);
+  if (!r.ok) throw new Error(`jkanime anime page HTTP ${r.status}`);
+  const html = await r.text();
+  const nums = new Set();
+  // Slugs are [a-z0-9-] only, so they need no regex escaping.
+  for (const m of html.matchAll(new RegExp(`href="https://jkanime\\.net/${slug}/(\\d+)/?"`, "g"))) {
+    nums.add(Number(m[1]));
+  }
+  const episodes = [...nums].sort((a, b) => b - a).slice(0, limit);
+  if (!episodes.length) throw new Error("No episodes found on the anime page.");
+  const records = await mapLimit(episodes, 5, (ep) => fetchJkanimeEpisode(slug, ep).catch(() => null));
+  return records.filter(Boolean);
+}
+
+function parseJkUrl(rawUrl) {
+  const m = String(rawUrl || "").match(/jkanime\.net\/([a-z0-9-]+)(?:\/(\d+))?/i);
+  if (!m) return { slug: null, episode: null };
+  if (["directorio", "buscar", "horario", "perfil", "registro", "jkplayer", "ajax"].includes(m[1])) {
+    return { slug: null, episode: null };
+  }
+  return { slug: m[1], episode: m[2] ? Number(m[2]) : null };
+}
+
+async function handleCrawl(request, response) {
+  const started = Date.now();
+  let payload = {};
+  try { payload = await readJsonBody(request); } catch { payload = {}; }
+  const rawUrl = String(payload?.url || "").trim();
+
+  if (!/(^|\/\/|\.)jkanime\.net(\/|$)/i.test(rawUrl) && !/jkanime\.net/i.test(rawUrl)) {
+    sendJson(response, { ok: false, error: "The crawler currently supports jkanime.net only." });
+    return;
+  }
+
+  try {
+    const { slug, episode } = parseJkUrl(rawUrl);
+    let kind = String(payload?.kind || "").trim();
+    if (!kind) kind = episode ? "episode" : slug ? "anime" : "site";
+
+    let records;
+    if (episode && slug) {
+      const e = await fetchJkanimeEpisode(slug, episode);
+      records = e ? [e] : [];
+      kind = "episode";
+    } else if (slug) {
+      records = await crawlJkanimeAnime(slug);
+      kind = "anime";
+    } else {
+      records = await crawlJkanimeSite();
+      kind = "site";
+    }
+
+    const catalog = buildJkCatalog(records);
+    const totalEpisodes = catalog.reduce((n, a) => n + a.episodes.length, 0);
+    if (!catalog.length) {
+      sendJson(response, { ok: false, error: "Couldn't find playable episodes on jkanime for that link." });
+      return;
+    }
+    sendJson(response, {
+      ok: true,
+      name: kind === "site" ? "jkanime.net" : (catalog[0]?.title || "jkanime.net"),
+      kind,
+      catalog,
+      totalEpisodes,
+      playableCount: totalEpisodes,
+      duration: `${((Date.now() - started) / 1000).toFixed(1)}s`
+    });
+  } catch (error) {
+    sendJson(response, { ok: false, error: `Crawl failed: ${error.message}` });
   }
 }
 
