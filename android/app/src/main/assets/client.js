@@ -2146,7 +2146,19 @@ function anipubCatalogItems() {
 
 function animeTitleCandidates(showOrTitle) {
   if (typeof showOrTitle === "string") return [showOrTitle];
-  return [showOrTitle?.title, ...(showOrTitle?.aliases || [])].filter(Boolean);
+  // Cross-match on EVERY title variant — a show opened under its English title
+  // ("Behind the Supermarket, Smoking") must still match a source listed under its
+  // romaji ("Super no Ura de Yani Suu Futari"), so playback servers from added
+  // sources (jkanime crawl, AniPub, etc.) attach regardless of which title shows.
+  return [
+    showOrTitle?.title,
+    showOrTitle?.romajiTitle,
+    showOrTitle?.nativeTitle,
+    showOrTitle?.englishTitle,
+    showOrTitle?.romaji,
+    showOrTitle?.name,
+    ...(showOrTitle?.aliases || [])
+  ].filter(Boolean);
 }
 
 function normalizeMatchTitle(value) {
