@@ -4645,15 +4645,25 @@ function updateTrailerButton(show) {
   if (cached && cached.id) {
     trailerButton.hidden = false;
     trailerButton.dataset.trailerUrl = trailerWatchUrl(cached);
-  } else {
-    trailerButton.hidden = true;
-    trailerButton.dataset.trailerUrl = "";
-    // Not fetched yet → fetch in the background and re-check when it resolves.
-    if (show.anilistId && cached === undefined && typeof fetchAniListTrailers === "function") {
-      fetchAniListTrailers([show.anilistId]).then(() => {
-        if (state.activeShow?.id === show.id) updateTrailerButton(state.activeShow);
-      }).catch(() => {});
-    }
+    return;
+  }
+  trailerButton.hidden = true;
+  trailerButton.dataset.trailerUrl = "";
+  // Look the trailer up at most ONCE per show. We must not recurse into
+  // updateTrailerButton from the .then(): fetchAniListTrailers() returns early
+  // (without writing the cache) whenever another fetch is already in flight, so
+  // re-checking an undefined cache would spin an unbounded microtask loop that
+  // starves the main thread and crashes the (TV) WebView.
+  if (show.anilistId && cached === undefined && !show._trailerTried && typeof fetchAniListTrailers === "function") {
+    show._trailerTried = true;
+    Promise.resolve(fetchAniListTrailers([show.anilistId])).then(() => {
+      if (state.activeShow?.id !== show.id) return;
+      const tr = _readTrailerCache(show.anilistId);
+      if (tr && tr.id) {
+        trailerButton.hidden = false;
+        trailerButton.dataset.trailerUrl = trailerWatchUrl(tr);
+      }
+    }).catch(() => {});
   }
 }
 
@@ -7833,6 +7843,10 @@ fullscreenToggle?.addEventListener("click", toggleNativeFullscreen);
 // mode (see keydown); leaving the field re-locks it. Desktop is untouched.
 function setupTvTextInputs() {
   if (!window.ZenkaiNative) return;
+  // The TV WebView runs on a weak GPU (often at 4K). Flag it so the stylesheet can
+  // drop expensive backdrop-filter blurs and the continuous backdrop zoom, which
+  // can OOM/crash the renderer.
+  document.body.classList.add("is-tv");
   document.querySelectorAll(".search-box input").forEach((input) => {
     if (input.dataset.tvLocked) return;
     input.dataset.tvLocked = "1";
