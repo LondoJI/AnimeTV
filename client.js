@@ -1511,6 +1511,11 @@ function buildLatestEpisodesList(limit = HOME_CARD_LIMIT) {
   const idx = buildCatalogKeyIndex();
   const list = [];
   const usedIds = new Set();
+  const usedTitles = new Set();
+  // Same anime can arrive twice (two episode drops, or a catalog match plus an
+  // AnimeAV1-only card for the same show) — dedupe by id AND by a season-aware
+  // title key so the rail never shows the same anime twice.
+  const titleKeyOf = (card) => normalizeTitle(getShowTitle(card) || card.title || "");
 
   for (const item of av1) {
     const match = idx.get(av1Key(item.title)) || idx.get(av1Key(item.slug));
@@ -1530,10 +1535,12 @@ function buildLatestEpisodesList(limit = HOME_CARD_LIMIT) {
       card = makeAv1OnlyShow(item);
       registerAv1Show(card);
     }
-    if (usedIds.has(card.id)) continue;
+    const titleKey = titleKeyOf(card);
+    if (usedIds.has(card.id) || (titleKey && usedTitles.has(titleKey))) continue;
     if (!matchesShowSearch(card)) continue;
     if (state.filter !== "all" && card.genre !== state.filter) continue;
     usedIds.add(card.id);
+    if (titleKey) usedTitles.add(titleKey);
     list.push(card);
     if (list.length >= limit) break;
   }
@@ -1541,8 +1548,10 @@ function buildLatestEpisodesList(limit = HOME_CARD_LIMIT) {
   // Top up with the airing-based list if the feed is short (and not searching).
   if (list.length < limit && !state.search) {
     for (const show of latestEpisodeReleases(limit)) {
-      if (usedIds.has(show.id)) continue;
+      const titleKey = titleKeyOf(show);
+      if (usedIds.has(show.id) || (titleKey && usedTitles.has(titleKey))) continue;
       usedIds.add(show.id);
+      if (titleKey) usedTitles.add(titleKey);
       list.push(show);
       if (list.length >= limit) break;
     }
@@ -5209,16 +5218,22 @@ function buildSeasonNav(show, seasons) {
     }
     // Use the title from the normalization system if available (it has the "Part X" info)
     const label = entry.title || (entry.formatBadge ? entry.formatBadge : `Season ${entry.season || i + 1}`);
+    // The currently-open entry: a franchise entry flagged isCurrentShow, or (for
+    // local-only season lists) the one matching the active season index.
+    const isCurrent = entry.isCurrentShow != null
+      ? Boolean(entry.isCurrentShow)
+      : (!related && localIndex === state.activeSeasonIndex);
     return {
       label,
       epCount: entry.episodes?.length || 0,
       badge: entry.formatBadge || "",
       relatedShowId: related,
-      localIndex
+      localIndex,
+      isCurrent
     };
   });
   return list.length ? list : seasons.map((s, i) => ({
-    label: s.title || `Season ${s.season || i + 1}`, epCount: s.episodes.length, badge: "", relatedShowId: "", localIndex: i
+    label: s.title || `Season ${s.season || i + 1}`, epCount: s.episodes.length, badge: "", relatedShowId: "", localIndex: i, isCurrent: i === state.activeSeasonIndex
   }));
 }
 
@@ -5239,7 +5254,11 @@ function renderEpisodeList(show) {
   syncWatchHeading(show, activeSeason);
 
   const seasonNav = buildSeasonNav(show, seasons);
-  let activeNavIndex = seasonNav.findIndex((s) => s.localIndex === state.activeSeasonIndex);
+  // Highlight the season that's actually open. For franchise lists every entry
+  // can have localIndex === -1 (each season is a separate show), so match on the
+  // isCurrent flag first and only fall back to the index/0.
+  let activeNavIndex = seasonNav.findIndex((s) => s.isCurrent);
+  if (activeNavIndex < 0) activeNavIndex = seasonNav.findIndex((s) => !s.relatedShowId && s.localIndex === state.activeSeasonIndex);
   if (activeNavIndex < 0) activeNavIndex = 0;
   const activeNav = seasonNav[activeNavIndex] || { label: activeSeason?.title || "Season 1" };
   const multiSeason = seasonNav.length > 1;
@@ -5363,7 +5382,7 @@ function renderEpisodeList(show) {
           const badge = season.formatBadge ? `<span class="season-format-badge">${escapeHtml(season.formatBadge)}</span>` : "";
           const yr = season.year ? `<span class="season-year">${season.year}</span>` : "";
           const epLabel = epc ? `${epc} episode${epc === 1 ? "" : "s"}` : "";
-          const selected = nav.localIndex === state.activeSeasonIndex && !nav.relatedShowId;
+          const selected = nav.isCurrent != null ? nav.isCurrent : (nav.localIndex === state.activeSeasonIndex && !nav.relatedShowId);
           return `
           <button class="season-card focusable ${selected ? "is-selected" : ""}" data-season-card="${i}">
             ${season.image ? `<img src="${escapeHtml(season.image)}" alt="" loading="lazy">` : ""}

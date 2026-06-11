@@ -58,11 +58,17 @@ const realS2 = { id: 108632, idMal: 39587, format: "TV", seasonYear: 2020,
 const aotFinalS2  = { id: 1, format: "TV",      seasonYear: 2022 };
 const aotChapters = { id: 2, format: "SPECIAL", seasonYear: 2023 };
 
+// Rent-a-Girlfriend: a continuing franchise that switched TV -> ONA between
+// seasons just two years apart (must still chain, unlike a decade-apart remake).
+const rentGfS3 = { id: 154745, format: "TV",  seasonYear: 2023 };
+const rentGfS4 = { id: 179344, format: "ONA", seasonYear: 2025 };
+
 console.log("\n# canFollowSeasonLink (chain guard)");
 check("Doraemon 2005(TV) does NOT chain to 1979(TV_SHORT)", canFollowSeasonLink(doraemon2005, doraemon1979) === false);
 check("Doraemon 1973(TV) does NOT chain to 1979(TV_SHORT)", canFollowSeasonLink(doraemon1973, doraemon1979) === false);
 check("Real S1(TV) chains to S2(TV)", canFollowSeasonLink(realS1, realS2) === true);
 check("AoT TV finale chains to Final Chapters SPECIAL (1y gap)", canFollowSeasonLink(aotFinalS2, aotChapters) === true);
+check("Rent-a-Girlfriend TV S3 chains to ONA S4 (2y gap, same franchise)", canFollowSeasonLink(rentGfS3, rentGfS4) === true);
 
 console.log("\n# canGroupAsSeason");
 check("Doraemon 1979 and 2005 are NOT the same season (remake)", canGroupAsSeason(doraemon1979, doraemon2005) === false);

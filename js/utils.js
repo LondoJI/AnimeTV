@@ -353,12 +353,21 @@ function canFollowSeasonLink(fromMedia, candidate) {
   const f2 = mediaFormat(candidate);
   if (f1 && f2 && f1 !== f2) {
     // A format change between two FULL broadcast series (TV / TV_SHORT / ONA) is
-    // a separate adaptation/remake — e.g. Doraemon TV(1973) <-> TV_SHORT(1979).
-    // Don't chain those. But a change to/from a short bonus (OVA / SPECIAL /
-    // MOVIE) is just a bridge between real seasons — e.g. Tensei Slime's "Coleus"
-    // OVA, AoT's "Final Chapters", Demon Slayer's Mugen Train movie — so allow it.
+    // ambiguous: it can be a separate remake decades later (Doraemon TV(1973) <->
+    // TV_SHORT(1979)), OR a continuing franchise that simply switched production
+    // format between seasons (Rent-a-Girlfriend TV S1–S3 -> ONA S4–S5, ~2y apart).
+    // AniList's SEQUEL/PREQUEL link is authoritative for continuity, so trust it
+    // when the entries aired close together and only sever on a large year gap
+    // (the tell-tale sign of a reboot/remake). A change to/from a short bonus
+    // (OVA / SPECIAL / MOVIE) is always just a bridge between real seasons —
+    // e.g. AoT's "Final Chapters", Demon Slayer's Mugen Train movie — so allow it.
     const FULL = new Set(["TV", "TV_SHORT", "ONA"]);
-    if (FULL.has(f1) && FULL.has(f2)) return false;
+    if (FULL.has(f1) && FULL.has(f2)) {
+      const y1 = mediaStartYear(fromMedia);
+      const y2 = mediaStartYear(candidate);
+      if (y1 && y2 && Math.abs(y1 - y2) > 4) return false; // remake/reboot, not a season
+      // Unknown years or a small gap → trust the SEQUEL/PREQUEL relation.
+    }
   }
   return true;
 }
