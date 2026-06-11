@@ -1602,6 +1602,28 @@ function getCarouselArtwork(show = {}) {
     .find((value) => value && value !== poster) || "");
 }
 
+function getWatchPosterArtwork(show = {}, season = null) {
+  show = show || {};
+  season = season || {};
+  return hqImage([
+    season?.image,
+    show.image,
+    show.poster,
+    show.cover,
+    show.coverImage,
+    show.thumbnail,
+    show.banner,
+    show.backdrop
+  ].map((value) => String(value || "").trim()).find(Boolean) || "");
+}
+
+function getWatchBackdropArtwork(show = {}, season = null) {
+  show = show || {};
+  const poster = getWatchPosterArtwork(show, season);
+  const wide = getCarouselArtwork(show);
+  return hqImage(poster || wide || show.banner || show.backdrop || "");
+}
+
 // Stable hero line-up. Once a healthy set of featured shows is chosen we keep it
 // fixed across background re-renders (trailers resolving, airing-data enrichment)
 // so the hero never visibly reshuffles — that reshuffle was what made the title
@@ -4068,6 +4090,7 @@ async function openShow(id, target = {}) {
   document.querySelector("#watchDescription").textContent = show.description;
   setFavoriteButtonState(state.favorites.includes(show.id));
   overlay.hidden = false;
+  document.body.classList.add("watch-detail-open");
   // Land focus on the Play action (remote-friendly) so OK plays and D-pad reaches
   // the episode list — instead of the easily-missed close button.
   const playBtn = document.querySelector("#fakePlay");
@@ -4090,13 +4113,24 @@ async function hydrateOpenShowDetails(show, target = {}, openToken = "") {
     // native episode endpoint, run ALL source hydrators in parallel so the
     // episode list fills in from whichever provider matches the title fastest.
     const isNativeSource = isAniPubShow(show) || isJimovShow(show);
+    // Refresh the season dropdown / episode list the moment new season data lands,
+    // instead of waiting for the slowest hydrator below to settle (which made the
+    // Seasons control look broken for several seconds after opening a show).
+    const refreshSeasonsIfActive = () => {
+      if (state.activeOpenToken !== openToken || state.activeShow?.id !== show.id) return;
+      try {
+        ensureFranchiseShowsInCatalog(show);
+        renderEpisodeList(show);
+        refreshFocusables();
+      } catch (error) { /* non-fatal */ }
+    };
     await Promise.allSettled([
       isAniPubShow(show)  ? hydrateAniPubEpisodes(show)  : Promise.resolve(show),
       isJimovShow(show)   ? hydrateJimovEpisodes(show)   : Promise.resolve(show),
       // For scrapled/metadata-only shows, fan out title search to all sources
-      !isNativeSource     ? enrichShowFromAllSources(show) : Promise.resolve(show),
-      // AniList franchise/relations — non-blocking, enriches the Seasons tab
-      hydrateShowAniListFranchise(show),
+      (!isNativeSource ? Promise.resolve(enrichShowFromAllSources(show)) : Promise.resolve(show)).then(refreshSeasonsIfActive),
+      // AniList franchise/relations — refresh the Seasons control as soon as it lands
+      Promise.resolve(hydrateShowAniListFranchise(show)).then(refreshSeasonsIfActive),
       // TioAnime slug resolution — stores show.tioAnimeSlug for episode playback
       hydrateTioAnimeSlug(show)
     ]);
@@ -4127,7 +4161,7 @@ async function hydrateOpenShowDetails(show, target = {}, openToken = "") {
       if (target.playIntent) {
         const frame = document.querySelector("#videoFrame");
         if (frame && !document.body.classList.contains("player-cinema-open")) {
-          const background = show.banner || show.image || "";
+          const background = getWatchBackdropArtwork(show, ep.season);
           frame.style.setProperty("--watch-bg", background ? `url("${background}")` : "none");
           renderSourcePickerIn(frame);
         }
@@ -4506,6 +4540,7 @@ function applyOpenTarget(show, target = {}) {
 function closeShow() {
   stopActivePlayback();
   overlay.hidden = true;
+  document.body.classList.remove("watch-detail-open");
   state.activeShow = null;
   state.activeEpisodeUrl = "";
   state.activeEpisode = null;
@@ -4555,13 +4590,14 @@ function toggleFavorite() {
 function resetVideoFrame() {
   stopActivePlayback();
   const show = state.activeShow;
-  const background = show?.banner || show?.image || "";
-  const poster = show?.image || show?.banner || "";
+  const seasons = show ? getDetailSeasons(show) : [];
+  const activeSeason = seasons[state.activeSeasonIndex] || seasons[0] || null;
+  const background = getWatchBackdropArtwork(show, activeSeason);
+  const poster = getWatchPosterArtwork(show, activeSeason);
   const frame = document.querySelector("#videoFrame");
   frame.style.setProperty("--watch-bg", background ? `url("${background}")` : "none");
 
   // Count available episodes across all seasons for the hint text
-  const seasons = show ? getDetailSeasons(show) : [];
   const totalEps = seasons.reduce((sum, s) => sum + (s.episodes?.length || 0), 0);
   const sourceCount = show ? getEpisodePlaybackSources(show.episodes?.[0] || {}).length : 0;
 
@@ -4746,10 +4782,11 @@ function syncWatchHeading(show = state.activeShow, season = null) {
     metaNode.textContent = compactMetadataLine(show);
   }
   renderDetailMeta(show);
-  // Cinematic backdrop: prefer a wide banner, fall back to the poster.
+  // Cinematic backdrop: use the best cover/poster first so the detail screen
+  // never stretches low-resolution episode thumbnails into the full viewport.
   const backdrop = document.querySelector("#watchBackdrop");
   if (backdrop) {
-    const art = getCarouselArtwork(show) || hqImage(show.banner || show.backdrop || show.image || "");
+    const art = getWatchBackdropArtwork(show, activeSeason);
     backdrop.style.backgroundImage = art ? `url("${art}")` : "";
     backdrop.classList.toggle("has-art", Boolean(art));
     // Always cinematic; .has-art only switches image-backdrop vs gradient fallback.
@@ -4972,10 +5009,17 @@ function renderEpisodeList(show) {
     seasonMenu.hidden = true;
     seasonBtn?.setAttribute("aria-expanded", "false");
     document.removeEventListener("pointerdown", _onSeasonDocClick, true);
+    document.removeEventListener("keydown", _onSeasonKeydown, true);
   };
   function _onSeasonDocClick(event) {
     // Close when clicking anywhere outside the season selector.
     if (!event.target.closest(".ep-season-select")) closeSeasonMenu();
+  }
+  function _onSeasonKeydown(event) {
+    if (event.key === "Escape") {
+      closeSeasonMenu();
+      seasonBtn?.focus?.();
+    }
   }
   if (seasonBtn && seasonMenu) {
     seasonBtn.addEventListener("click", (event) => {
@@ -4985,11 +5029,20 @@ function renderEpisodeList(show) {
       seasonBtn.setAttribute("aria-expanded", willOpen ? "true" : "false");
       if (willOpen) {
         document.addEventListener("pointerdown", _onSeasonDocClick, true);
+        document.addEventListener("keydown", _onSeasonKeydown, true);
         episodeList.querySelector(".ep-season-option")?.focus?.();
       } else {
         document.removeEventListener("pointerdown", _onSeasonDocClick, true);
+        document.removeEventListener("keydown", _onSeasonKeydown, true);
       }
       refreshFocusables();
+    });
+    seasonMenu.addEventListener("focusout", () => {
+      window.setTimeout(() => {
+        if (!episodeList.querySelector(".ep-season-select")?.contains(document.activeElement)) {
+          closeSeasonMenu();
+        }
+      }, 0);
     });
   }
 
@@ -5299,7 +5352,7 @@ function renderSourcePickerIn(frame) {
   const serverChecks = episode.serverChecks || {};
   const isPending = Boolean(episode.sourceOptionsPending);
   const show = state.activeShow;
-  const poster = show?.image || show?.banner || "";
+  const poster = getWatchPosterArtwork(show, state.activeEpisode?.season);
   const epLabel = state.activeEpisode
     ? `S${state.activeEpisode.season?.season || state.activeEpisode.seasonIndex + 1} E${(episode.episode || episode.number || 1)} · ${escapeHtml(episode.title || `Episode ${episode.episode || 1}`)}`
     : "";
@@ -5882,7 +5935,7 @@ function selectEpisodeByPosition(seasonIndex, episodeIndex, shouldPlay = true) {
     if (frame && show) {
       stopActivePlayback();
       document.body.classList.remove("player-cinema-open");
-      const background = show.banner || show.image || "";
+      const background = getWatchBackdropArtwork(show, season);
       frame.style.setProperty("--watch-bg", background ? `url("${background}")` : "none");
       schedulePlaybackSourceOptions(show, episode, season?.season || seasonIndex + 1 || 1);
       renderSourcePickerIn(frame);
@@ -6183,7 +6236,7 @@ async function selectEpisode(season, episode, seasonIndex, episodeIndex) {
   if (frame && show) {
     stopActivePlayback();
     document.body.classList.remove("player-cinema-open");
-    const background = show.banner || show.image || "";
+    const background = getWatchBackdropArtwork(show, season);
     frame.style.setProperty("--watch-bg", background ? `url("${background}")` : "none");
     schedulePlaybackSourceOptions(show, episode, season?.season || seasonIndex + 1 || 1);
     renderSourcePickerIn(frame);
@@ -8022,7 +8075,7 @@ fakePlay.addEventListener("click", () => {
       return;
     }
     stopActivePlayback();
-    const background = show.banner || show.image || "";
+    const background = getWatchBackdropArtwork(show, ep.season);
     frame.style.setProperty("--watch-bg", background ? `url("${background}")` : "none");
     schedulePlaybackSourceOptions(show, ep.episode, ep.season?.season || ep.seasonIndex + 1 || 1);
     renderSourcePickerIn(frame);

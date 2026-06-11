@@ -6880,7 +6880,7 @@ body.reduce-motion .ss-modal-detect { animation: none; }
   inset: 0;
   z-index: 0;
   background-size: cover;
-  background-position: center 14%;
+  background-position: center top;
   background-repeat: no-repeat;
   /* Gradient fallback when no artwork is available. */
   background-color: #0a0b16;
@@ -6922,6 +6922,12 @@ body.reduce-motion .watch-backdrop.has-art { animation: none !important; transfo
   backdrop-filter: none;
   padding: 0;
   align-items: stretch;
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+body.watch-detail-open {
+  overflow: hidden;
 }
 
 /* Full-screen two-column stage. */
@@ -6931,6 +6937,7 @@ body.reduce-motion .watch-backdrop.has-art { animation: none !important; transfo
   width: 100%;
   max-width: none;
   height: 100dvh;
+  max-height: 100dvh;
   grid-template-columns: minmax(0, 1fr) clamp(21rem, 27vw, 30rem);
   gap: 0;
   padding: 0;
@@ -6962,8 +6969,10 @@ body.reduce-motion .watch-backdrop.has-art { animation: none !important; transfo
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
+  align-self: stretch;
   min-width: 0;
   min-height: 0;
+  height: 100dvh;
   padding: clamp(2rem, 5vh, 4.5rem) clamp(1.6rem, 4vw, 4.5rem) clamp(1.6rem, 5vh, 3.4rem);
   overflow: hidden;
 }
@@ -6992,7 +7001,7 @@ body.reduce-motion .watch-stage-body { animation: none; }
   margin: 0;
   font-size: clamp(2rem, 4.6vw, 4.2rem);
   line-height: 1.0;
-  letter-spacing: -0.015em;
+  letter-spacing: 0;
   font-weight: 900;
   color: #fff;
   text-shadow: 0 0.5rem 2rem rgba(0,0,0,0.6);
@@ -7154,6 +7163,8 @@ body.reduce-motion .watch-stage-body { animation: none; }
   /* Inset from the top so the floating fullscreen button sits clearly ABOVE
      the panel (over the backdrop), not inside the episode list. */
   margin: clamp(3.6rem, 7vh, 4.8rem) 0 0;
+  height: calc(100dvh - clamp(3.6rem, 7vh, 4.8rem));
+  max-height: calc(100dvh - clamp(3.6rem, 7vh, 4.8rem));
   padding: 0.9rem 0.7rem 0.9rem 0.9rem;
   background: linear-gradient(180deg, rgba(12, 13, 22, 0.97), rgba(8, 9, 17, 0.99));
   border: 0.08rem solid rgba(255,255,255,0.08);
@@ -7164,6 +7175,7 @@ body.reduce-motion .watch-stage-body { animation: none; }
   box-shadow: -1.4rem 0 3rem rgba(0,0,0,0.4);
   overflow-y: auto;
   overflow-x: hidden;
+  overscroll-behavior: contain;
   scrollbar-width: none;
 }
 .watch-side::-webkit-scrollbar { display: none; }
@@ -7178,20 +7190,47 @@ body.reduce-motion .watch-stage-body { animation: none; }
   position: sticky;
   top: 0;
   z-index: 7;
-  /* Solid (opaque) so scrolling episodes never bleed through the sticky header. */
-  margin: 0;
-  padding: 0.1rem 0 0.6rem;
-  background: #0c0d16;
+  gap: 0.25rem;
+  margin: 0 0 0.55rem;
+  padding: 0.28rem;
+  border: 0;
+  border-radius: 0.85rem;
+  /* Opaque base (blocks scroll bleed) with a faint inset track tint. */
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.045)),
+    #0c0d16;
+}
+.watch-side .detail-tab {
+  min-height: 2.42rem;
+  padding: 0 0.7rem;
+  border: 0;
+  border-radius: 0.72rem;
+  background: transparent;
+  color: rgba(246, 243, 255, 0.68);
+  box-shadow: none;
+  font-size: 0.88rem;
+  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+.watch-side .detail-tab:is(:hover, :focus-visible, .is-tv-focused) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.075);
+  box-shadow: none;
+}
+.watch-side .detail-tab.is-selected,
+.watch-side .detail-tab.is-selected:is(:hover, :focus-visible, .is-tv-focused) {
+  color: #ffffff;
+  background: var(--accent, #8a5cff);
+  box-shadow: 0 0.4rem 0.9rem rgba(138, 92, 255, 0.32);
 }
 .watch-side .detail-pane { display: none; }
 .watch-side .detail-pane.is-active { display: flex; flex-direction: column; min-height: 0; }
-/* Season-nav header sticks just under the tabs, tucked up slightly so there is
-   never a transparent seam between the two sticky bands. */
+/* Season-nav header sticks just under the tabs. Solid (opaque) so scrolling
+   episodes never bleed through, and visually flush with the tab strip. */
 .watch-side .detail-pane .ep-panel-head {
-  top: 2.55rem;
+  top: 3.3rem;
   z-index: 6;
-  margin-top: -0.35rem;
-  padding-top: 0.45rem;
+  margin: 0 0 0.4rem;
+  padding: 0.1rem 0.15rem 0.55rem;
   background: #0c0d16;
 }
 /* Season cards fit the narrow panel. */
@@ -7287,7 +7326,7 @@ body.has-embedded-player .watch-side {
   align-items: center;
   justify-content: space-between;
   gap: 0.4rem;
-  padding: 0.4rem 0.2rem 0.7rem;
+  padding: 0.36rem 0.2rem 0.62rem;
   margin: 0 -0.1rem;
   background: #0c0d16;
 }
@@ -7295,37 +7334,46 @@ body.has-embedded-player .watch-side {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  padding: 0.4rem 0.55rem;
+  min-height: 2.25rem;
+  padding: 0.32rem 0.55rem;
   border: 0;
-  border-radius: 0.55rem;
-  background: transparent;
-  color: rgba(226, 228, 242, 0.78);
-  font-size: 0.92rem;
+  border-radius: 999rem;
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(226, 228, 242, 0.74);
+  font-size: 0.82rem;
   font-weight: 700;
   cursor: pointer;
   transition: background 150ms ease, color 150ms ease, transform 150ms ease;
 }
-.ep-nav-btn span[aria-hidden] { font-size: 1.25rem; line-height: 1; }
-.ep-nav-btn:is(:hover, :focus-visible) { background: rgba(255,255,255,0.08); color: #fff; outline: 0; }
+.ep-nav-btn span[aria-hidden] { font-size: 1.08rem; line-height: 1; }
+.ep-nav-btn:is(:hover, :focus-visible) { background: rgba(255,255,255,0.09); color: #fff; outline: 0; }
 .ep-nav-btn[disabled] { opacity: 0.32; pointer-events: none; }
-.ep-nav-label { font-size: 0.9rem; }
+.ep-nav-label { font-size: 0.82rem; }
 
 .ep-season-select { position: relative; }
 .ep-season-btn {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.4rem 0.8rem;
-  border: 0;
-  border-radius: 0.6rem;
-  background: transparent;
+  min-height: 2.38rem;
+  padding: 0.38rem 0.82rem;
+  border: 0.08rem solid rgba(255, 255, 255, 0.12);
+  border-radius: 999rem;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
   color: #fff;
-  font-size: 1rem;
+  font-size: 0.9rem;
   font-weight: 800;
   cursor: pointer;
-  transition: background 150ms ease;
+  box-shadow: inset 0 0 0 0.08rem rgba(255, 255, 255, 0.025);
+  transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
 }
-.ep-season-btn:is(:hover, :focus-visible) { background: rgba(255,255,255,0.08); outline: 0; }
+.ep-season-btn:is(:hover, :focus-visible) {
+  border-color: rgba(0, 210, 255, 0.34);
+  background: linear-gradient(135deg, rgba(138, 92, 255, 0.22), rgba(0, 210, 255, 0.12));
+  box-shadow: 0 0 0 0.16rem rgba(0, 210, 255, 0.08);
+  outline: 0;
+}
 .ep-season-caret { font-size: 0.8rem; color: rgba(255,255,255,0.6); }
 .ep-season-menu {
   position: absolute;
@@ -7345,6 +7393,9 @@ body.has-embedded-player .watch-side {
   background: rgba(18, 19, 32, 0.98);
   box-shadow: 0 1.2rem 3rem rgba(0,0,0,0.55);
   scrollbar-width: none;
+}
+.ep-season-menu[hidden] {
+  display: none;
 }
 .ep-season-menu::-webkit-scrollbar { display: none; }
 .ep-season-option {
