@@ -4206,9 +4206,7 @@ function wireSettingsButtons() {
     const wasOn = AdultMode.isEnabled();
     await AdultMode.setEnabled(!wasOn, { confirmFn: confirmAdultMode });
     const nowOn = AdultMode.isEnabled();
-    if (wasOn && !nowOn) {
-      showToast("Returning to regular mode. Adult content is hidden.");
-    } else if (!wasOn && !nowOn) {
+    if (!wasOn && !nowOn) {
       renderSettings();   // user declined the 18+ gate — keep the switch off
       refreshFocusables();
     }

@@ -70,15 +70,14 @@ const AdultMode = (function () {
   }
 
   /**
-   * Turn adult mode on/off. The FIRST time it's switched on we require an
-   * explicit 18+ confirmation: `confirmFn` is an async function returning a
-   * boolean (the host app shows the modal). If it resolves false, nothing
-   * changes. Once confirmed, the gate isn't shown again.
+   * Turn adult mode on/off. EVERY time it's switched on we require an explicit
+   * 18+ confirmation: `confirmFn` is an async function returning a boolean (the
+   * host app shows the modal). If it resolves false, nothing changes.
    */
   async function setEnabled(on, { confirmFn } = {}) {
     const next = Boolean(on);
     if (next === _enabled) return _enabled;
-    if (next && !_confirmed) {
+    if (next) {
       const ok = typeof confirmFn === "function" ? await confirmFn() : true;
       if (!ok) return _enabled;        // user declined — stay off
       _confirmed = true;
