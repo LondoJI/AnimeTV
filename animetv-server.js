@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const { spawn } = require("child_process");
+const { Readable } = require("stream");
 
 const root = path.resolve(__dirname);
 const serverStartedAt = Date.now();
@@ -48,6 +49,8 @@ const TMDB_API_KEY = process.env.TMDB_API_KEY || process.env.TMDB_V3_API_KEY || 
 const TMDB_READ_TOKEN = process.env.TMDB_READ_ACCESS_TOKEN || process.env.TMDB_API_READ_ACCESS_TOKEN || process.env.TMDB_V4_TOKEN || "";
 const TMDB_CONFIGURED = Boolean(TMDB_API_KEY || TMDB_READ_TOKEN);
 const TMDB_API_BASE = "https://api.themoviedb.org/3";
+const TMDB_PROXY_BASE = String(process.env.TMDB_PROXY_BASE || (!HOSTED_RUNTIME ? "https://zenkaitv.com/api/tmdb" : "")).replace(/\/+$/, "");
+const TMDB_AVAILABLE = TMDB_CONFIGURED || Boolean(TMDB_PROXY_BASE);
 const TMDB_TIMEOUT_MS = Math.max(4000, Number(process.env.TMDB_TIMEOUT_MS || 12000));
 const TMDB_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days — episode stills are stable
 const tmdbSearchCache = new Map();  // `${normalizedTitle}|${year}` -> { data, ts }
@@ -76,6 +79,33 @@ const TIOANIME_HEADERS = {
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   Referer: TIOANIME_BASE
 };
+const UNDERHENTAI_BASE = "https://www.underhentai.net";
+const UNDERHENTAI_CATALOG_FILE = path.join(root, "scraper", "underhentai_catalog.json");
+const UNDERHENTAI_DETAILS_FILE = path.join(root, "scraper", "underhentai_details.json");
+const UNDERHENTAI_CACHE_TTL_MS = 1000 * 60 * 30;
+const UNDERHENTAI_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  Referer: UNDERHENTAI_BASE
+};
+const UNDERHENTAI_ALLOWED_EMBED_HOSTS = new Set([
+  "krakenfiles.com",
+  "www.krakenfiles.com",
+  "luluvdo.com",
+  "www.luluvdo.com",
+  "lulustream.com",
+  "www.lulustream.com"
+]);
+const UNDERHENTAI_MINOR_MARKERS = [
+  "child", "children", "elementary", "junior high", "loli", "lolicon",
+  "middle school", "minor", "schoolboy", "schoolgirl", "shota", "shotacon",
+  "teen", "teenage", "underage", "young boy", "young girl",
+  "high school", "joshi kousei", "joshi kōsei"
+];
+const UNDERHENTAI_MINOR_PATTERNS = [/\bjk\b/i];
+const underHentaiDetailCache = new Map();
+let underHentaiDetailsSnapshot = null;
 const ANIMEAV1_BASE = "https://animeav1.com";
 const ANIMEAV1_SLUG_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 const ANIMEAV1_CACHE_TTL_MS = 1000 * 60 * 30;
@@ -356,12 +386,27 @@ function handleRequest(request, response) {
   }
 
   if (url.pathname === "/api/source") {
-    handleSourceProxy(url, response);
+    handleSourceProxy(request, url, response);
     return;
   }
 
   if (url.pathname === "/api/translate") {
     handleTranslate(request, response);
+    return;
+  }
+
+  if (url.pathname === "/api/adult/underhentai/catalog") {
+    handleUnderHentaiCatalog(url, response);
+    return;
+  }
+
+  if (url.pathname === "/api/adult/underhentai/details") {
+    handleUnderHentaiDetails(url, response);
+    return;
+  }
+
+  if (url.pathname === "/api/adult/underhentai/stream") {
+    handleUnderHentaiStream(url, response);
     return;
   }
 
@@ -983,7 +1028,7 @@ async function handleCatalog(response) {
   }
 }
 
-async function handleSourceProxy(url, response) {
+async function handleSourceProxy(request, url, response) {
   const target = url.searchParams.get("url");
   if (!target || !/^https?:\/\//i.test(target)) {
     sendJson(response, { ok: false, error: "Missing http(s) url" }, 400);
@@ -992,25 +1037,47 @@ async function handleSourceProxy(url, response) {
 
   try {
     const refererHost = String(url.searchParams.get("refererHost") || "").trim();
-    const headers = {};
-    if (refererHost) {
+    const targetHost = new URL(target).hostname.toLowerCase();
+    const headers = {
+      "User-Agent": String(request.headers["user-agent"] || UNDERHENTAI_HEADERS["User-Agent"])
+    };
+    if (/(?:^|\.)krakencloud\.net$/i.test(targetHost)) {
+      headers["User-Agent"] = UNDERHENTAI_HEADERS["User-Agent"];
+      headers.Referer = "https://krakenfiles.com/";
+      headers.Origin = "https://krakenfiles.com";
+    } else if (refererHost) {
       headers.Referer = `https://${refererHost}/`;
       headers.Origin = `https://${refererHost}`;
     }
+    if (request.headers.range) headers.Range = request.headers.range;
     const upstream = await fetchWithTimeout(target, { headers }, 12000);
     const contentType = upstream.headers.get("content-type") || "application/json; charset=utf-8";
     const isPlaylist = /mpegurl|m3u8/i.test(contentType) || /\.m3u8(\?|#|$)/i.test(target);
-    const body = isPlaylist
-      ? rewriteM3u8Playlist(await upstream.text(), target, refererHost)
-      : Buffer.from(await upstream.arrayBuffer());
-    response.writeHead(upstream.status, {
+    const responseHeaders = {
       ...SECURITY_HEADERS,
       ...corsHeaders(),
       "Content-Type": contentType,
       "Cache-Control": "no-store, max-age=0"
+    };
+    ["accept-ranges", "content-length", "content-range", "etag", "last-modified"].forEach((name) => {
+      const value = upstream.headers.get(name);
+      if (value) responseHeaders[name] = value;
     });
-    response.end(body);
+    response.writeHead(upstream.status, responseHeaders);
+    if (isPlaylist) {
+      response.end(rewriteM3u8Playlist(await upstream.text(), target, refererHost));
+      return;
+    }
+    if (!upstream.body) {
+      response.end();
+      return;
+    }
+    Readable.fromWeb(upstream.body).pipe(response);
   } catch (error) {
+    if (response.headersSent) {
+      response.destroy(error);
+      return;
+    }
     sendJson(response, { ok: false, error: "Local source unavailable" }, 502);
   }
 }
@@ -6863,6 +6930,442 @@ function readJsonBody(request) {
   });
 }
 
+function decodeUnderHentaiImage(value = "") {
+  if (!value) return "";
+  try {
+    const parsed = new URL(decodeHtmlEntities(value), UNDERHENTAI_BASE);
+    const wasPageSpeed = /\.pagespeed\./i.test(parsed.pathname);
+    let pathname = parsed.pathname.replace(/\.pagespeed\.[^/]+$/i, "");
+    let filename = pathname.split("/").pop() || "";
+    filename = filename.replace(/^\d+x\d+x/i, "");
+    if (wasPageSpeed && filename.startsWith("x")) filename = filename.slice(1);
+    const slash = pathname.lastIndexOf("/");
+    parsed.pathname = `${slash >= 0 ? pathname.slice(0, slash + 1) : "/"}${filename}`;
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
+function underHentaiAttribute(tag = "", name = "") {
+  const match = String(tag).match(new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+  return decodeHtmlEntities(match?.[1] ?? match?.[2] ?? match?.[3] ?? "");
+}
+
+function isSafeAdultMetadata(item = {}) {
+  if (item.safetyExcluded === true) return false;
+  const metadata = [
+    item.title,
+    item.officialTitle,
+    item.description,
+    item.brand,
+    ...(Array.isArray(item.genres) ? item.genres : [])
+  ].filter(Boolean).join(" ").toLowerCase();
+  if (UNDERHENTAI_MINOR_MARKERS.some((marker) => metadata.includes(marker))) return false;
+  return !UNDERHENTAI_MINOR_PATTERNS.some((pattern) => pattern.test(metadata));
+}
+
+function readUnderHentaiCatalog() {
+  try {
+    const payload = JSON.parse(fs.readFileSync(UNDERHENTAI_CATALOG_FILE, "utf8"));
+    const items = Array.isArray(payload.items) ? payload.items.filter(isSafeAdultMetadata) : [];
+    return { ...payload, items };
+  } catch {
+    return { source: "UnderHentai", generatedAt: null, totalFound: 0, excludedForSafety: 0, items: [] };
+  }
+}
+
+function readUnderHentaiDetails() {
+  if (underHentaiDetailsSnapshot) return underHentaiDetailsSnapshot;
+  try {
+    const payload = JSON.parse(fs.readFileSync(UNDERHENTAI_DETAILS_FILE, "utf8"));
+    const items = Array.isArray(payload.items) ? payload.items.filter(isSafeAdultMetadata) : [];
+    underHentaiDetailsSnapshot = {
+      ...payload,
+      items,
+      bySlug: new Map(items.map((item) => [String(item.slug || "").toLowerCase(), item]))
+    };
+  } catch {
+    underHentaiDetailsSnapshot = { source: "UnderHentai", generatedAt: null, items: [], bySlug: new Map() };
+  }
+  return underHentaiDetailsSnapshot;
+}
+
+function hasUnderHentaiDirectEmbed(sourceOption = {}) {
+  return Array.isArray(sourceOption.embeds)
+    && sourceOption.embeds.some((embed) => /krakenfiles\.com\//i.test(String(embed)));
+}
+
+function prepareUnderHentaiSnapshotItem(item = {}) {
+  const slug = String(item.slug || "").toLowerCase();
+  return {
+    ...item,
+    episodes: (Array.isArray(item.episodes) ? item.episodes : []).map((episode) => ({
+      ...episode,
+      sourceOptions: (Array.isArray(episode.sourceOptions) ? episode.sourceOptions : [])
+        .filter(hasUnderHentaiDirectEmbed)
+        .map((sourceOption, releaseIndex) => ({
+          id: `underhentai-e${episode.number || episode.episode}-v${releaseIndex + 1}`,
+          label: sourceOption.label || `Stream ${releaseIndex + 1}`,
+          type: "resolver",
+          streamResolver: {
+            type: "underhentai",
+            endpoint: `/api/adult/underhentai/stream?slug=${encodeURIComponent(slug)}&episode=${encodeURIComponent(episode.number || episode.episode)}&release=${encodeURIComponent(sourceOption.releaseIndex ?? releaseIndex)}`
+          },
+          variant: sourceOption.variant || "",
+          format: sourceOption.format || "",
+          size: sourceOption.size || "",
+          subtitles: sourceOption.subtitles || "",
+          audio: sourceOption.audio || ""
+        })),
+      locked: !(Array.isArray(episode.sourceOptions) && episode.sourceOptions.some(hasUnderHentaiDirectEmbed))
+    }))
+  };
+}
+
+function parseUnderHentaiListing(html = "", page = 1) {
+  const items = [];
+  const articlePattern = /<article\b[^>]*class\s*=\s*(?:"[^"]*\bdata-block\b[^"]*"|'[^']*\bdata-block\b[^']*'|data-block)[^>]*>([\s\S]*?)<\/article>/gi;
+  for (const match of String(html).matchAll(articlePattern)) {
+    const block = match[1];
+    const linkTag = block.match(/<h2\b[^>]*>[\s\S]*?<a\b[^>]*>/i)?.[0] || "";
+    const href = underHentaiAttribute(linkTag, "href");
+    const title = stripHtml(block.match(/<h2\b[^>]*>([\s\S]*?)<\/h2>/i)?.[1] || "");
+    const imageTag = block.match(/<img\b[^>]*>/i)?.[0] || "";
+    const image = decodeUnderHentaiImage(underHentaiAttribute(imageTag, "src"));
+    if (!title || !href) continue;
+    try {
+      const itemUrl = new URL(href, UNDERHENTAI_BASE);
+      const slug = itemUrl.pathname.split("/").filter(Boolean).pop() || "";
+      if (slug) items.push({ slug, title, url: itemUrl.toString(), image, banner: image, page, genres: [], episodeCount: 0 });
+    } catch { /* malformed listing link */ }
+  }
+  return items.filter(isSafeAdultMetadata);
+}
+
+async function handleUnderHentaiCatalog(url, response) {
+  const snapshot = readUnderHentaiCatalog();
+  let items = snapshot.items;
+  if (!items.length) {
+    try {
+      const upstream = await fetchWithRetry(`${UNDERHENTAI_BASE}/`, { headers: UNDERHENTAI_HEADERS }, 2);
+      if (upstream.ok) items = parseUnderHentaiListing(await upstream.text(), 1);
+    } catch { /* return an empty but valid catalog below */ }
+  }
+  const query = String(url.searchParams.get("q") || "").trim().toLowerCase();
+  const filtered = query
+    ? items.filter((item) => `${item.title} ${item.officialTitle || ""} ${(item.genres || []).join(" ")}`.toLowerCase().includes(query))
+    : items;
+  sendJson(response, {
+    ok: true,
+    source: "UnderHentai",
+    adultOnly: true,
+    generatedAt: snapshot.generatedAt,
+    count: filtered.length,
+    totalFound: snapshot.totalFound || filtered.length,
+    excludedForSafety: snapshot.excludedForSafety || 0,
+    items: filtered
+  }, 200, { "Cache-Control": "public, max-age=900, stale-while-revalidate=21600" });
+}
+
+function parseUnderHentaiInfoBlock(html = "", label = "") {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return html.match(new RegExp(`<p>\\s*${escaped}\\s*<\\/p>([\\s\\S]*?)<\\/div>`, "i"))?.[1] || "";
+}
+
+function parseUnderHentaiTitlePage(html = "", sourceUrl = "") {
+  const title = stripHtml(html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1] || "");
+  const officialTitle = stripHtml(parseUnderHentaiInfoBlock(html, "Official Title"));
+  const brand = stripHtml(parseUnderHentaiInfoBlock(html, "Brand"));
+  const aired = stripHtml(parseUnderHentaiInfoBlock(html, "Aired"));
+  const genreBlock = parseUnderHentaiInfoBlock(html, "Genres");
+  const genres = [...genreBlock.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/gi)]
+    .map((match) => stripHtml(match[1]))
+    .filter(Boolean);
+  const coverTags = [...html.matchAll(/<img\b[^>]*(?:fetchpriority\s*=\s*(?:"high"|'high'|high)|\/uploads\/)[^>]*>/gi)];
+  const image = decodeUnderHentaiImage(coverTags.map((match) => underHentaiAttribute(match[0], "src")).find((value) => /\/uploads\//i.test(value)) || "");
+  const sectionMatches = [...html.matchAll(/class\s*=\s*(?:"ep2-header"|'ep2-header'|ep2-header)[^>]*>([\s\S]*?)<\/div>/gi)];
+  const episodes = new Map();
+
+  sectionMatches.forEach((header, sectionIndex) => {
+    const number = Number(stripHtml(header[1]).match(/(\d+)/)?.[1] || sectionIndex + 1);
+    const sectionStart = header.index + header[0].length;
+    const sectionEnd = sectionMatches[sectionIndex + 1]?.index ?? html.length;
+    const section = html.slice(sectionStart, sectionEnd);
+    const screenshots = [...section.matchAll(/\bdata-src\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/gi)]
+      .map((match) => decodeUnderHentaiImage(match[1] || match[2] || match[3] || ""))
+      .filter(Boolean);
+    const streams = [...section.matchAll(/<a\b[^>]*class\s*=\s*(?:"[^"]*\bep2-stream\b[^"]*"|'[^']*\bep2-stream\b[^']*'|ep2-stream)[^>]*>/gi)];
+    const sourceOptions = streams.map((stream, streamIndex) => {
+      const before = section.slice(0, stream.index);
+      const cardStart = Math.max(before.lastIndexOf('class="ep2-card'), before.lastIndexOf("class=ep2-card"), before.lastIndexOf("class='ep2-card"));
+      const card = before.slice(Math.max(0, cardStart));
+      const variant = stripHtml(
+        card.match(/class\s*=\s*(?:"ep2-vtype"|'ep2-vtype'|ep2-vtype)[^>]*>(?:\s*<span\b[^>]*>[\s\S]*?<\/span>)?\s*([^<]+)/i)?.[1]
+        || "Stream"
+      );
+      const metadata = {};
+      for (const pair of card.matchAll(/class\s*=\s*(?:"ep2-meta-label"|'ep2-meta-label'|ep2-meta-label)[^>]*>([\s\S]*?)<\/span>\s*<span\b[^>]*class\s*=\s*(?:"ep2-meta-value"|'ep2-meta-value'|ep2-meta-value)[^>]*>([\s\S]*?)<\/span>/gi)) {
+        metadata[stripHtml(pair[1]).toLowerCase()] = stripHtml(pair[2]).replace(/^[^A-Za-z0-9]+/, "");
+      }
+      const watchUrl = new URL(underHentaiAttribute(stream[0], "href"), sourceUrl || UNDERHENTAI_BASE).toString();
+      const details = [variant, metadata.subs, metadata.audio].filter(Boolean).join(" · ");
+      return {
+        id: `underhentai-e${number}-v${streamIndex + 1}`,
+        label: details || `Stream ${streamIndex + 1}`,
+        type: "resolver",
+        streamResolver: {
+          type: "underhentai",
+          endpoint: `/api/adult/underhentai/stream?watch=${encodeURIComponent(watchUrl)}`
+        },
+        variant,
+        format: metadata.format || "",
+        size: metadata.size || "",
+        subtitles: metadata.subs || "",
+        audio: metadata.audio || ""
+      };
+    });
+    episodes.set(number, {
+      episode: number,
+      number,
+      title: `Episode ${number}`,
+      image: screenshots[0] || image,
+      screenshots,
+      sourceOptions,
+      locked: !sourceOptions.length
+    });
+  });
+
+  const item = {
+    slug: (() => {
+      try { return new URL(sourceUrl).pathname.split("/").filter(Boolean).pop() || ""; } catch { return ""; }
+    })(),
+    title,
+    officialTitle,
+    brand,
+    aired,
+    genres,
+    image,
+    banner: [...episodes.values()].find((episode) => episode.image)?.image || image,
+    url: sourceUrl,
+    episodeCount: episodes.size,
+    description: [brand ? `Studio: ${brand}` : "", aired ? `Released: ${aired}` : ""].filter(Boolean).join(". "),
+    episodes: [...episodes.values()].sort((a, b) => a.episode - b.episode)
+  };
+  return isSafeAdultMetadata(item) ? item : null;
+}
+
+async function handleUnderHentaiDetails(url, response) {
+  const slug = String(url.searchParams.get("slug") || "").trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) {
+    sendJson(response, { ok: false, error: "Missing or invalid adult title id." }, 400);
+    return;
+  }
+  const cached = underHentaiDetailCache.get(slug);
+  if (cached && Date.now() - cached.ts < UNDERHENTAI_CACHE_TTL_MS) {
+    sendJson(response, { ok: true, source: "UnderHentai", adultOnly: true, cached: true, item: cached.data });
+    return;
+  }
+  const snapshotItem = readUnderHentaiDetails().bySlug.get(slug);
+  if (snapshotItem) {
+    const item = prepareUnderHentaiSnapshotItem(snapshotItem);
+    underHentaiDetailCache.set(slug, { data: item, ts: Date.now() });
+    sendJson(response, { ok: true, source: "UnderHentai", adultOnly: true, bundled: true, item });
+    return;
+  }
+  try {
+    const sourceUrl = `${UNDERHENTAI_BASE}/${encodeURIComponent(slug)}/`;
+    const upstream = await fetchWithRetry(sourceUrl, { headers: UNDERHENTAI_HEADERS }, 2);
+    if (!upstream.ok) throw new Error(`Title page returned HTTP ${upstream.status}`);
+    const item = parseUnderHentaiTitlePage(await upstream.text(), sourceUrl);
+    if (!item) {
+      sendJson(response, { ok: false, error: "This title is excluded by the adult-content safety filter." }, 404);
+      return;
+    }
+    underHentaiDetailCache.set(slug, { data: item, ts: Date.now() });
+    sendJson(response, { ok: true, source: "UnderHentai", adultOnly: true, item });
+  } catch (error) {
+    sendJson(response, { ok: false, error: error.message || "Adult title metadata is unavailable." }, 502);
+  }
+}
+
+function parseUnderHentaiEmbeds(html = "") {
+  const urls = [];
+  const pattern = /https:\/\/(?:www\.)?(?:krakenfiles\.com\/embed-video|luluvdo\.com\/embed|lulustream\.com\/embed)\/[A-Za-z0-9_-]+/gi;
+  for (const match of String(html).matchAll(pattern)) {
+    try {
+      const parsed = new URL(match[0]);
+      if (UNDERHENTAI_ALLOWED_EMBED_HOSTS.has(parsed.hostname.toLowerCase()) && !urls.includes(parsed.toString())) {
+        urls.push(parsed.toString());
+      }
+    } catch { /* malformed provider URL */ }
+  }
+  return urls;
+}
+
+async function resolveKrakenFiles(embedUrl) {
+  try {
+    log("info", "Attempting KrakenFiles resolution", { url: embedUrl });
+    const res = await fetchWithRetry(embedUrl, {
+      headers: {
+        "User-Agent": UNDERHENTAI_HEADERS["User-Agent"],
+        Accept: UNDERHENTAI_HEADERS.Accept,
+        Referer: UNDERHENTAI_BASE
+      }
+    }, 2);
+    if (!res.ok) {
+      log("warn", "KrakenFiles embed page fetch failed", { status: res.status, url: embedUrl });
+      return null;
+    }
+    const html = await res.text();
+
+    // Kraken's current embed page exposes the temporary signed MP4 directly.
+    // Prefer this clean media URL so the app never needs the provider iframe,
+    // advertising click handlers, fingerprinting, or telemetry scripts.
+    const sourceMatch = html.match(/<source\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i);
+    const sourceUrl = decodeHtmlEntities(sourceMatch?.[1] || sourceMatch?.[2] || sourceMatch?.[3] || "");
+    if (sourceUrl) {
+      try {
+        const parsed = new URL(sourceUrl);
+        if (parsed.protocol === "https:" && /(?:^|\.)krakencloud\.net$/i.test(parsed.hostname)) {
+          log("info", "KrakenFiles direct source found in embed page", { host: parsed.hostname });
+          return parsed.toString();
+        }
+      } catch { /* continue with the legacy resolver */ }
+    }
+
+    const idMatch = embedUrl.match(/\/embed-video\/([a-zA-Z0-9]+)/);
+    if (!idMatch) {
+      log("warn", "KrakenFiles ID not found in URL", { url: embedUrl });
+      return null;
+    }
+    const id = idMatch[1];
+
+    // Try multiple patterns for the data-token
+    const tokenMatch = html.match(/data-token="([^"]+)"/) ||
+                       html.match(/data-token='([^']+)'/) ||
+                       html.match(/token:\s*['"]([^'"]+)['"]/);
+
+    if (!tokenMatch) {
+      log("warn", "KrakenFiles token not found in HTML", { url: embedUrl });
+      return null;
+    }
+    const token = tokenMatch[1];
+
+    const ajaxUrl = `https://krakenfiles.com/ajax/video-url/${id}`;
+    log("info", "Fetching KrakenFiles direct URL via AJAX", { id, ajaxUrl });
+
+    const ajaxRes = await fetchWithRetry(ajaxUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Referer": embedUrl,
+        "X-Requested-With": "XMLHttpRequest",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
+      },
+      body: `token=${token}`
+    }, 1);
+
+    if (!ajaxRes.ok) {
+      log("warn", "KrakenFiles AJAX request failed", { status: ajaxRes.status, url: ajaxUrl });
+      return null;
+    }
+    const data = await ajaxRes.json();
+    if (data.url) {
+      log("info", "KrakenFiles resolution successful", { id });
+      return data.url;
+    } else {
+      log("warn", "KrakenFiles AJAX returned no URL", { data });
+      return null;
+    }
+  } catch (error) {
+    log("error", "KrakenFiles resolution error", { url: embedUrl, error: error.message });
+    return null;
+  }
+}
+
+async function handleUnderHentaiStream(url, response) {
+  const watch = String(url.searchParams.get("watch") || "").trim();
+  const slug = String(url.searchParams.get("slug") || "").trim().toLowerCase();
+  const episodeNumber = Number(url.searchParams.get("episode"));
+  const releaseIndex = Number(url.searchParams.get("release"));
+  let embeds = [];
+
+  try {
+    if (/^[a-z0-9][a-z0-9-]*$/.test(slug) && episodeNumber > 0 && releaseIndex >= 0) {
+      const snapshotItem = readUnderHentaiDetails().bySlug.get(slug);
+      const episode = snapshotItem?.episodes?.find((entry) => Number(entry.number || entry.episode) === episodeNumber);
+      const sourceOption = episode?.sourceOptions?.find((entry, index) => Number(entry.releaseIndex ?? index) === releaseIndex);
+      embeds = Array.isArray(sourceOption?.embeds) ? sourceOption.embeds.filter((embed) => {
+        try {
+          return UNDERHENTAI_ALLOWED_EMBED_HOSTS.has(new URL(embed).hostname.toLowerCase());
+        } catch {
+          return false;
+        }
+      }) : [];
+    } else {
+      let watchUrl;
+      try {
+        watchUrl = new URL(watch);
+      } catch {
+        sendJson(response, { ok: false, error: "Missing adult episode source reference." }, 400);
+        return;
+      }
+      if (!["underhentai.net", "www.underhentai.net"].includes(watchUrl.hostname.toLowerCase()) || watchUrl.pathname !== "/watch/") {
+        sendJson(response, { ok: false, error: "Adult episode URL is not allowed." }, 400);
+        return;
+      }
+      const upstream = await fetchWithRetry(watchUrl.toString(), { headers: UNDERHENTAI_HEADERS }, 2);
+      if (!upstream.ok) throw new Error(`Episode page returned HTTP ${upstream.status}`);
+      embeds = parseUnderHentaiEmbeds(await upstream.text());
+    }
+    if (!embeds.length) {
+      sendJson(response, { ok: false, error: "No supported playback provider was found for this release." }, 404);
+      return;
+    }
+
+    const sourceOptions = await Promise.all(embeds.map(async (embed, index) => {
+      const isKraken = /krakenfiles/i.test(embed);
+      let directUrl = null;
+      if (isKraken) {
+        directUrl = await resolveKrakenFiles(embed);
+      }
+      return {
+        id: `underhentai-provider-${index + 1}`,
+        label: isKraken ? "KrakenFiles" : "LuluStream",
+        type: directUrl ? "direct" : "iframe",
+        videoUrl: directUrl || "",
+        externalUrl: embed,
+        externalType: "iframe"
+      };
+    }));
+
+    const directSources = sourceOptions.filter((sourceOption) => sourceOption.type === "direct" && sourceOption.videoUrl);
+    if (!directSources.length) {
+      sendJson(response, {
+        ok: false,
+        error: "No ad-free direct playback source is currently available for this release."
+      }, 404);
+      return;
+    }
+    const bestSource = directSources[0];
+    const payload = {
+      ok: true,
+      source: "UnderHentai",
+      adultOnly: true,
+      videoUrl: bestSource.videoUrl || "",
+      externalUrl: "",
+      externalType: "",
+      sourceOptions: directSources
+    };
+    sendJson(response, payload);
+  } catch (error) {
+    sendJson(response, { ok: false, error: error.message || "Adult episode playback is unavailable." }, 502);
+  }
+}
+
 function sendJson(response, payload, status = 200, extraHeaders = {}) {
   response.writeHead(status, {
     ...SECURITY_HEADERS,
@@ -6997,6 +7500,32 @@ function normalizeJikanEpisode(ep) {
 // ImageResolver does the title matching / confidence scoring / caching; here we
 // only forward search, show, and season requests (with shared server caching).
 function tmdbFetch(pathname, params = {}) {
+  if (!TMDB_CONFIGURED && TMDB_PROXY_BASE) {
+    const proxyParams = new URLSearchParams();
+    let route = "";
+    const tvMatch = pathname.match(/^\/tv\/(\d+)$/);
+    const seasonMatch = pathname.match(/^\/tv\/(\d+)\/season\/(\d+)$/);
+    if (pathname === "/search/tv") {
+      route = "search";
+      proxyParams.set("q", String(params.query || ""));
+      if (params.first_air_date_year) proxyParams.set("year", String(params.first_air_date_year));
+    } else if (seasonMatch) {
+      route = "season";
+      proxyParams.set("id", seasonMatch[1]);
+      proxyParams.set("season", seasonMatch[2]);
+    } else if (tvMatch) {
+      route = "tv";
+      proxyParams.set("id", tvMatch[1]);
+    } else {
+      return Promise.reject(new Error("Unsupported TMDB proxy route"));
+    }
+    const requestUrl = `${TMDB_PROXY_BASE}/${route}?${proxyParams.toString()}`;
+    return fetchWithTimeout(requestUrl, { headers: { Accept: "application/json" } }, TMDB_TIMEOUT_MS).then(async (upstream) => {
+      if (!upstream.ok) throw new Error(`TMDB proxy HTTP ${upstream.status}`);
+      return upstream.json();
+    });
+  }
+
   const search = new URLSearchParams(params);
   // v3 key goes in the query string; a v4 token goes in the Authorization header.
   const headers = { Accept: "application/json" };
@@ -7016,7 +7545,7 @@ function tmdbNotConfigured(response) {
 }
 
 async function handleTmdbSearch(url, response) {
-  if (!TMDB_CONFIGURED) return tmdbNotConfigured(response);
+  if (!TMDB_AVAILABLE) return tmdbNotConfigured(response);
   const query = String(url.searchParams.get("q") || "").trim();
   if (!query) return sendJson(response, { ok: false, configured: true, error: "Missing query" }, 400);
   const year = String(url.searchParams.get("year") || "").trim();
@@ -7039,7 +7568,7 @@ async function handleTmdbSearch(url, response) {
 }
 
 async function handleTmdbTv(url, response) {
-  if (!TMDB_CONFIGURED) return tmdbNotConfigured(response);
+  if (!TMDB_AVAILABLE) return tmdbNotConfigured(response);
   const id = String(url.searchParams.get("id") || "").trim();
   if (!id) return sendJson(response, { ok: false, configured: true, error: "Missing id" }, 400);
   try {
@@ -7075,7 +7604,7 @@ async function handleTmdbTv(url, response) {
 }
 
 async function handleTmdbSeason(url, response) {
-  if (!TMDB_CONFIGURED) return tmdbNotConfigured(response);
+  if (!TMDB_AVAILABLE) return tmdbNotConfigured(response);
   const id = String(url.searchParams.get("id") || "").trim();
   const season = String(url.searchParams.get("season") || "").trim();
   if (!id || season === "") return sendJson(response, { ok: false, configured: true, error: "Missing id or season" }, 400);
@@ -7091,7 +7620,7 @@ async function handleTmdbSeason(url, response) {
       name: payload.name,
       poster_path: payload.poster_path,
       air_date: payload.air_date,
-      episodes: Array.isArray(payload.episodes)
+          episodes: Array.isArray(payload.episodes)
         ? payload.episodes.map((ep) => ({
             episode_number: ep.episode_number,
             name: ep.name,

@@ -1,19 +1,20 @@
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
+$env:Path = "$env:SystemRoot\System32;$env:Path"
 
-$aliasDomain = "animetv-umber.vercel.app"
+$aliasDomain = "zenkaitv.com"
 
-Write-Host "Building AnimeTV static bundle..." -ForegroundColor Cyan
+Write-Host "Building ZenkaiTV static bundle..." -ForegroundColor Cyan
 npm run vercel-build
-
-Write-Host "Preparing Vercel build output..." -ForegroundColor Cyan
-vercel build --prod --yes
 if ($LASTEXITCODE -ne 0) {
-  throw "Vercel build failed."
+  throw "ZenkaiTV static build failed."
 }
 
-Write-Host "Deploying AnimeTV web app and API routes to Vercel..." -ForegroundColor Cyan
-$deployOutput = vercel deploy --prebuilt --prod --yes 2>&1
+Write-Host "Deploying ZenkaiTV web app and API routes to Vercel..." -ForegroundColor Cyan
+$deployOutput = npx --yes vercel@latest deploy --prod --yes 2>&1
 $deployOutput | ForEach-Object { Write-Host $_ }
+if ($LASTEXITCODE -ne 0) {
+  throw "Vercel deployment failed."
+}
 
 $deploymentUrl = ($deployOutput | Select-String -Pattern "https://animetv-[^\s]+" | Select-Object -First 1).Matches.Value
 if (-not $deploymentUrl) {
@@ -25,6 +26,9 @@ if (-not $deploymentUrl) {
 }
 
 Write-Host "Pointing $aliasDomain to $deploymentUrl..." -ForegroundColor Cyan
-vercel alias set $deploymentUrl $aliasDomain
+npx --yes vercel@latest alias set $deploymentUrl $aliasDomain
+if ($LASTEXITCODE -ne 0) {
+  throw "Vercel alias update failed."
+}
 
-Write-Host "AnimeTV is live at https://$aliasDomain" -ForegroundColor Green
+Write-Host "ZenkaiTV is live at https://$aliasDomain" -ForegroundColor Green

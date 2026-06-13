@@ -1,11 +1,10 @@
 /**
- * ZenkaiTV AdultSourceAdapter (SCAFFOLD ONLY)
+ * ZenkaiTV AdultSourceAdapter
  *
  * A pluggable interface for an 18+ content source, shaped to match the existing
  * AnimeAV1 scraper (login / search / getDetails). This file intentionally
- * contains NO real fetching for any specific site — every method is a clearly
- * marked placeholder. Drop in your own vetted source by extending this class
- * and implementing the `// TODO: Implement with your adult source` sections.
+ * Adult providers stay behind the explicit 18+ mode gate and are never merged
+ * into the regular catalog surface.
  *
  * Contract (mirror of the AnimeAV1 scraper):
  *
@@ -100,6 +99,112 @@ class NullAdultSourceAdapter extends AdultSourceAdapter {
   async resolveStream() { return null; }
 }
 
+class UnderHentaiAdultSourceAdapter extends AdultSourceAdapter {
+  constructor(config = {}) {
+    super({ name: "UnderHentai", baseUrl: "/api/adult/underhentai", ...config });
+  }
+
+  async _request(path, params = {}) {
+    const endpoint = new URL(`${this.baseUrl}${path}`, window.location.href);
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== "") endpoint.searchParams.set(key, value);
+    });
+    const response = await fetch(endpoint, { cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.error || `${this.name} request failed`);
+    }
+    return payload;
+  }
+
+  _catalogItem(item = {}, sourceIndex = 0) {
+    const episodeCount = Math.max(0, Number(item.episodeCount || 0));
+    const sourceOrder = Number.isFinite(Number(item.sourceOrder))
+      ? Number(item.sourceOrder)
+      : sourceIndex;
+    return {
+      id: `adult-underhentai-${item.slug}`,
+      adultId: item.slug,
+      slug: item.slug,
+      title: item.title || item.slug,
+      nativeTitle: item.officialTitle || "",
+      thumbnail: item.image || "",
+      image: item.image || "",
+      banner: item.banner || item.image || "",
+      highQualityBackground: item.banner || item.image || "",
+      url: item.url || "",
+      siteUrl: item.url || "",
+      description: item.brand ? `Studio: ${item.brand}` : "Adult title.",
+      genres: Array.isArray(item.genres) ? item.genres : [],
+      genre: item.genres?.[0] || "Hentai",
+      episode: episodeCount,
+      totalEpisodes: episodeCount,
+      status: item.aired || "",
+      source: this.name,
+      isAdult: true,
+      adult: true,
+      adultSource: this.name,
+      sourceOrder,
+      adultDetailsLoaded: false,
+      seasons: [],
+      episodes: []
+    };
+  }
+
+  async search(query, page = 1) {
+    const payload = await this._request("/catalog", { q: query, page });
+    return (payload.items || []).map((item, index) => this._catalogItem(item, index));
+  }
+
+  async listLatest(page = 1) {
+    const payload = await this._request("/catalog", { page });
+    return (payload.items || []).map((item, index) => this._catalogItem(item, index));
+  }
+
+  async getDetails(id) {
+    const slug = String(id || "").replace(/^adult-underhentai-/, "");
+    const payload = await this._request("/details", { slug });
+    const item = payload.item || null;
+    if (!item) return null;
+    const episodes = (item.episodes || []).map((episode) => ({
+      ...episode,
+      id: `${slug}-s1-e${episode.episode}`,
+      season: 1,
+      number: episode.episode,
+      server: this.name,
+      locked: !(episode.sourceOptions || []).length,
+      sourceOptions: (episode.sourceOptions || []).map((source, index) => ({
+        ...source,
+        id: source.id || `${slug}-e${episode.episode}-source-${index}`,
+        type: source.type || "resolver"
+      }))
+    }));
+    return {
+      ...this._catalogItem(item),
+      description: item.description || (item.brand ? `Studio: ${item.brand}` : "Adult title."),
+      officialTitle: item.officialTitle || "",
+      brand: item.brand || "",
+      episode: episodes.length,
+      totalEpisodes: episodes.length,
+      episodes,
+      seasons: [{
+        season: 1,
+        title: "Season 1",
+        sourceTitle: item.title,
+        image: item.image || "",
+        playable: true,
+        episodes
+      }],
+      adultDetailsLoaded: true
+    };
+  }
+
+  async resolveStream(id, episode) {
+    const payload = await this._request("/stream", { slug: id, episode });
+    return payload;
+  }
+}
+
 /**
  * Tiny registry so the app can hold a single active adult source and swap it
  * later. Defaults to the null adapter — the app shows the empty 18+ catalog
@@ -122,6 +227,13 @@ const AdultSourceRegistry = (function () {
   };
 })();
 
+AdultSourceRegistry.register(new UnderHentaiAdultSourceAdapter());
+
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { AdultSourceAdapter, NullAdultSourceAdapter, AdultSourceRegistry };
+  module.exports = {
+    AdultSourceAdapter,
+    NullAdultSourceAdapter,
+    UnderHentaiAdultSourceAdapter,
+    AdultSourceRegistry
+  };
 }

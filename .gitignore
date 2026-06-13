@@ -11,6 +11,7 @@ logs/
 downloads/
 dist/
 public/
+artifacts/
 *.apk
 *.aab
 screen.png

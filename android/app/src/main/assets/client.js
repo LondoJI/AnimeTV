@@ -5,8 +5,7 @@ installAdBlockGuards();
 
 function installAdBlockGuards() {
   const blockedOpen = (url = "") => {
-    console.warn("ZenkaiTV blocked a popup/ad window.", url);
-    if (typeof showToast === "function") showToast("Popup blocked");
+    console.info("ZenkaiTV blocked a popup/ad window.", url);
     return null;
   };
 
@@ -30,6 +29,7 @@ function installAdBlockGuards() {
 
 let anipubCatalogCache = readResponseCache("anipub-full-catalog");
 let anipubCatalogLoadingPromise = null;
+let adultCatalogLoadingPromise = null;
 const anipubEpisodesCache = new Map();
 if (!localStorage.getItem(LANGUAGE_PREFERENCES_KEY)) setDefaultLanguage("japanese", "spanish");
 
@@ -83,6 +83,15 @@ const fallbackShows = [
 // AnimeAV1 is listed FIRST (most reliable; its HLS is the top pick). The picker
 // also re-orders by source preference, so the card holding AnimeAV1-HLS leads.
 const KNOWN_SOURCE_SERVERS = [
+  {
+    key: "underhentai",
+    label: "Adult Source",
+    desc: "Selected adult release and provider",
+    match: (s) =>
+      (s.id || "").includes("underhentai") ||
+      (s.label || "").toLowerCase().includes("krakenfiles") ||
+      (s.label || "").toLowerCase().includes("lulustream")
+  },
   {
     key: "animeav1",
     label: "AnimeAV1",
@@ -322,6 +331,20 @@ function setPlaceholder(input, key) {
   if (input) input.placeholder = t(key);
 }
 
+function replaceRegularCatalog(items = []) {
+  const adultItems = state.shows.filter((item) =>
+    typeof AdultMode !== "undefined" && AdultMode.isAdultContent(item)
+  );
+  state.shows = [...items, ...adultItems];
+  return state.shows;
+}
+
+function regularCatalogSnapshot() {
+  return state.shows.filter((item) =>
+    typeof AdultMode === "undefined" || !AdultMode.isAdultContent(item)
+  );
+}
+
 async function loadAnimeSources() {
   setSourceStatus("Loading ZenkaiTV metadata API...");
   render();
@@ -329,27 +352,29 @@ async function loadAnimeSources() {
 
   const cachedCatalog = readResponseCache("main-catalog");
   if (cachedCatalog?.length) {
-    state.shows = cachedCatalog;
+    replaceRegularCatalog(cachedCatalog);
     state.isLoadingCatalog = false;
     state.carouselIndex = 0;
     setSourceStatus(catalogStatusLabel("Cached ZenkaiTV catalog", cachedCatalog));
     render();
     warmTioAnimeSlugCatalog(state.shows);
     warmAnimeAv1SlugCatalog(state.shows);
+    warmVisibleShowMetadata(state.shows);
   }
 
   const serverCatalog = await timedRequest("ZenkaiTV metadata API", () => fetchLocalMetadataCatalog()).catch(() => []);
   if (serverCatalog.length) {
-    state.shows = mergeShows(serverCatalog);
+    replaceRegularCatalog(mergeShows(serverCatalog));
     state.isLoadingCatalog = false;
     state.carouselIndex = 0;
     state.apiStatus.metadata = "Online";
     state.apiStatus.direct = "Standby";
-    writeResponseCache("main-catalog", state.shows);
+    writeResponseCache("main-catalog", regularCatalogSnapshot());
     setSourceStatus(catalogStatusLabel("ZenkaiTV API", state.shows));
     render();
     warmTioAnimeSlugCatalog(state.shows);
     warmAnimeAv1SlugCatalog(state.shows);
+    warmVisibleShowMetadata(state.shows);
     scheduleExternalSourcesLoad();
     return;
   }
@@ -360,7 +385,7 @@ async function loadAnimeSources() {
 
   const cachedDirect = readResponseCache("direct-catalog");
   if (!state.shows.length && cachedDirect?.length) {
-    state.shows = cachedDirect;
+    replaceRegularCatalog(cachedDirect);
     state.isLoadingCatalog = false;
     state.carouselIndex = 0;
     setSourceStatus(catalogStatusLabel("Cached AniList + Jikan", cachedDirect));
@@ -383,7 +408,7 @@ async function loadAnimeSources() {
 
   const merged = mergeShows(loaded);
   if (merged.length) {
-    state.shows = merged;
+    replaceRegularCatalog(merged);
     state.isLoadingCatalog = false;
     state.carouselIndex = 0;
     state.apiStatus.direct = "Online";
@@ -392,9 +417,10 @@ async function loadAnimeSources() {
     setSourceStatus(catalogStatusLabel("AniList + Jikan", merged));
     warmTioAnimeSlugCatalog(state.shows);
     warmAnimeAv1SlugCatalog(state.shows);
+    warmVisibleShowMetadata(state.shows);
   } else {
     state.apiStatus.direct = "Offline";
-    if (!state.shows.length) state.shows = fallbackShows;
+    if (!state.shows.length) replaceRegularCatalog(fallbackShows);
     state.isLoadingCatalog = false;
     setSourceStatus("Offline catalog");
   }
@@ -443,7 +469,7 @@ async function enrichCatalogAiringData(attempt = 0) {
       changed = true;
     });
     if (changed) {
-      writeResponseCache("direct-catalog", state.shows);
+      writeResponseCache("direct-catalog", regularCatalogSnapshot());
       render();
     }
   } catch {
@@ -541,6 +567,7 @@ async function loadExternalSources() {
       state.shows = mergeShows([...baseShows, ...allLoaded]);
       warmTioAnimeSlugCatalog(state.shows);
       warmAnimeAv1SlugCatalog(state.shows);
+      warmVisibleShowMetadata(state.shows);
       const addonCount = addonSections.reduce((t, s) => t + (s.items?.length || 0), 0);
       state.apiStatus.local = allLoaded.length
         ? `${allLoaded.length} local titles`
@@ -1211,7 +1238,84 @@ function visibleShows() {
 // from this so the two catalogs stay mutually exclusive.
 function catalogShows() {
   if (typeof AdultMode === "undefined") return state.shows;
-  return AdultMode.filterCatalog(state.shows);
+  const filtered = AdultMode.filterCatalog(state.shows);
+  if (!AdultMode.isEnabled()) return filtered;
+  const sourced = filtered.filter((show) => Boolean(show?.adultSource));
+  return (sourced.length ? sourced : filtered)
+    .slice()
+    .sort((a, b) => Number(a.sourceOrder ?? Number.MAX_SAFE_INTEGER) - Number(b.sourceOrder ?? Number.MAX_SAFE_INTEGER));
+}
+
+function isolateAdultSourceMetadata(show) {
+  if (!show || !show.adultSource) return show;
+  [
+    "anilistId", "malId", "tmdbId", "tmdbPoster", "tmdbBackdrop",
+    "tmdbSeasonPoster", "tmdbEpisodeStills", "tmdbEpisodesByNum",
+    "streamingEpisodes", "streamingEpisodesByNum", "jikanImage",
+    "jikanBackground", "franchise", "relations", "relatedShows",
+    "studios", "producers", "cast", "actors", "characters", "trailer"
+  ].forEach((key) => delete show[key]);
+  show.score = 0;
+  show.year = "";
+  show.duration = 0;
+  show.format = "";
+  show.genre = show.genres?.[0] || "Hentai";
+  show.genres = show.genres?.length ? show.genres : ["Hentai"];
+  show._canonicalMetadataLoaded = true;
+  show._extrasTried = true;
+  show._tmdbResolved = true;
+  return show;
+}
+
+async function loadAdultCatalog(force = false) {
+  if (typeof AdultSourceRegistry === "undefined" || !AdultSourceRegistry.isConfigured()) return [];
+  if (adultCatalogLoadingPromise && !force) return adultCatalogLoadingPromise;
+  const adapter = AdultSourceRegistry.get();
+  adultCatalogLoadingPromise = Promise.resolve(adapter.listLatest(1))
+    .then((items) => {
+      const adultItems = Array.isArray(items)
+        ? items.filter((item) => item?.isAdult === true).map(isolateAdultSourceMetadata)
+        : [];
+      const regularItems = state.shows.filter((item) => item?.adultSource !== adapter.name);
+      state.shows = [...regularItems, ...adultItems];
+      if (typeof AdultMode !== "undefined" && AdultMode.isEnabled()) {
+        state.isLoadingCatalog = false;
+        state.carouselIndex = 0;
+        setSourceStatus(catalogStatusLabel(`${adapter.name} adult catalog`, adultItems));
+        render();
+      }
+      return adultItems;
+    })
+    .catch((error) => {
+      console.warn("Adult catalog could not load:", error);
+      if (typeof AdultMode !== "undefined" && AdultMode.isEnabled()) {
+        setSourceStatus("Adult catalog is temporarily unavailable");
+        render();
+      }
+      return [];
+    })
+    .finally(() => {
+      adultCatalogLoadingPromise = null;
+    });
+  return adultCatalogLoadingPromise;
+}
+
+async function hydrateAdultShowDetails(show) {
+  if (!show || show.adultDetailsLoaded || typeof AdultSourceRegistry === "undefined") return show;
+  isolateAdultSourceMetadata(show);
+  const adapter = AdultSourceRegistry.get();
+  const details = await adapter.getDetails(show.adultId || show.slug || show.id);
+  if (!details) return show;
+  const stableId = show.id;
+  const sourceOrder = show.sourceOrder;
+  Object.assign(show, details, { id: stableId, sourceOrder, adultDetailsLoaded: true });
+  isolateAdultSourceMetadata(show);
+  await Promise.all((show.episodes || []).map((episode) =>
+    attachPlaybackSourceOptions(show, episode, Number(episode.season || 1) || 1)
+  ));
+  state.shows = state.shows.map((entry) => entry === show || entry.id === stableId ? show : entry);
+  if (state.activeShow?.id === stableId) state.activeShow = show;
+  return show;
 }
 
 // Reflect the saved 18+ state in the page chrome (theme class + header badge).
@@ -1529,6 +1633,13 @@ function latestEpisodeReleases(limit = HOME_CARD_LIMIT) {
   return result;
 }
 
+function adultSourceOrderedShows(limit = HOME_CARD_LIMIT) {
+  return visibleShows()
+    .slice()
+    .sort((a, b) => Number(a.sourceOrder ?? Number.MAX_SAFE_INTEGER) - Number(b.sourceOrder ?? Number.MAX_SAFE_INTEGER))
+    .slice(0, limit);
+}
+
 // ── AnimeAV1 "Últimos Episodios" feed ─────────────────────────────────────────
 // The Home "Latest Episodes" rail mirrors AnimeAV1's homepage list (same order,
 // same items). Catalog shows supply rich art/metadata where the title matches;
@@ -1578,6 +1689,9 @@ function registerAv1Show(show) {
 }
 
 function buildLatestEpisodesList(limit = HOME_CARD_LIMIT) {
+  if (typeof AdultMode !== "undefined" && AdultMode.isEnabled()) {
+    return adultSourceOrderedShows(limit);
+  }
   const av1 = state.av1Latest || [];
   if (!av1.length) return latestEpisodeReleases(limit);   // AnimeAV1 feed not loaded yet
 
@@ -1999,7 +2113,9 @@ function ensureCarouselTrailers(pool) {
 
 // ── AniList per-show extras: HQ banner backdrop + per-episode titles/thumbnails
 const _showExtrasCache = new Map();     // anilistId -> { banner, episodes:[{title,thumbnail}] }
-const _showExtrasInFlight = new Set();
+const _showExtrasInFlight = new Map();
+const SHOW_EXTRAS_CACHE_PREFIX = "zenkaitv:show-extras:v1:";
+const SHOW_EXTRAS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const ANIME_METADATA_CACHE_PREFIX = "zenkaitv:anime-metadata:v1:";
 const ANIME_METADATA_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -2020,6 +2136,25 @@ function writeAnimeMetadataCache(key, data) {
   try {
     localStorage.setItem(ANIME_METADATA_CACHE_PREFIX + key, JSON.stringify({ savedAt: Date.now(), data }));
   } catch { /* TV WebViews may have a small storage quota. */ }
+}
+
+function readShowExtrasCache(key) {
+  try {
+    const cached = JSON.parse(localStorage.getItem(SHOW_EXTRAS_CACHE_PREFIX + key) || "null");
+    if (!cached || Date.now() - Number(cached.savedAt || 0) > SHOW_EXTRAS_CACHE_TTL_MS) {
+      if (cached) localStorage.removeItem(SHOW_EXTRAS_CACHE_PREFIX + key);
+      return null;
+    }
+    return cached.data || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeShowExtrasCache(key, data) {
+  try {
+    localStorage.setItem(SHOW_EXTRAS_CACHE_PREFIX + key, JSON.stringify({ savedAt: Date.now(), data }));
+  } catch { /* Keep the in-memory cache when TV storage is full. */ }
 }
 
 function applyCanonicalAnimeMetadata(show, payload = {}) {
@@ -2152,15 +2287,38 @@ async function hydrateCanonicalAnimeMetadata(show) {
 // configured or no confident match exists (the priority chains keep using
 // AniList artwork in that case).
 function enrichTmdbImages(show) {
-  if (typeof ImageResolver === "undefined" || !show) return;
-  Promise.resolve(ImageResolver.hydrateTmdbImages(show)).then((enriched) => {
+  if (typeof ImageResolver === "undefined" || !show) return Promise.resolve(show);
+  return Promise.resolve(ImageResolver.hydrateTmdbImages(show)).then((enriched) => {
     if (!enriched || !enriched.tmdbId) return;
+    applyTmdbEpisodeMetadata(show);
     state.shows = state.shows.map((entry) => entry.id === show.id ? show : entry);
     if (state.activeShow?.id === show.id && !overlay?.hidden) {
       syncWatchHeading(show);
       renderEpisodeList(show);
     }
-  }).catch(() => { /* AniList artwork already in place */ });
+    return show;
+  }).catch(() => show);
+}
+
+function applyTmdbEpisodeMetadata(show) {
+  const tmdb = show?.tmdbEpisodesByNum;
+  if (!tmdb || typeof tmdb !== "object") return;
+  const merged = { ...(show.streamingEpisodesByNum || {}) };
+  Object.entries(tmdb).forEach(([number, episode]) => {
+    const existing = merged[number] || {};
+    const tmdbTitle = String(episode?.title || "").trim();
+    merged[number] = {
+      ...episode,
+      ...existing,
+      episode: Number(number),
+      title: existing.title && !/^(?:episode|ep)\s*\d+$/i.test(existing.title)
+        ? existing.title
+        : (tmdbTitle || existing.title || `Episode ${number}`),
+      thumbnail: episode?.thumbnail || existing.thumbnail || "",
+      aired: existing.aired || episode?.aired || ""
+    };
+  });
+  show.streamingEpisodesByNum = merged;
 }
 
 function applyAniListExtras(show, data) {
@@ -2195,11 +2353,20 @@ async function fetchAniListShowExtras(show) {
   if (!id && !malId) return;
   const key = String(id || `mal-${malId}`);
   if (_showExtrasCache.has(key)) { applyAniListExtras(show, _showExtrasCache.get(key)); return; }
-  if (_showExtrasInFlight.has(key)) return;
-  _showExtrasInFlight.add(key);
+  const stored = readShowExtrasCache(key);
+  if (stored) {
+    _showExtrasCache.set(key, stored);
+    applyAniListExtras(show, stored);
+    return stored;
+  }
+  if (_showExtrasInFlight.has(key)) {
+    const data = await _showExtrasInFlight.get(key);
+    if (data) applyAniListExtras(show, data);
+    return data;
+  }
 
   const query = `query($id:Int){ Media(id:$id, type:ANIME){ bannerImage streamingEpisodes{ title thumbnail } } }`;
-  try {
+  const request = (async () => {
     const [aniResp, jikanResp] = await Promise.allSettled([
       id ? fetch("https://graphql.anilist.co", {
         method: "POST",
@@ -2241,8 +2408,18 @@ async function fetchAniListShowExtras(show) {
     };
 
     _showExtrasCache.set(key, data);
-    applyAniListExtras(show, data);
-  } catch { /* offline / rate-limited — keep existing art */ } finally {
+    writeShowExtrasCache(key, data);
+    return data;
+  })();
+  _showExtrasInFlight.set(key, request);
+
+  try {
+    const data = await request;
+    if (data) applyAniListExtras(show, data);
+    return data;
+  } catch {
+    return undefined;
+  } finally {
     _showExtrasInFlight.delete(key);
   }
 }
@@ -2514,7 +2691,11 @@ function renderSchedule() {
 function renderAniPubCatalog() {
   if (!anipubGrid) return;
   const section = getAniPubSection();
-  const filtered = (section.items || []).filter((show) => {
+  const allItems = section.items || [];
+  const filteredByMode = typeof AdultMode !== "undefined"
+    ? AdultMode.filterCatalog(allItems)
+    : allItems;
+  const filtered = filteredByMode.filter((show) => {
     const matchesSearch = matchesShowSearch(show);
     const matchesFilter = state.filter === "all" || show.genre === state.filter;
     return matchesSearch && matchesFilter;
@@ -3509,6 +3690,17 @@ async function attachPlaybackSourceOptions(show, episode, seasonNumber = 1) {
   if (!show || !episode) return episode;
   const episodeNumber = Number(episode.episode || episode.number || 1);
   const lookupKey = `${normalizeTitle(show.title)}:s${seasonNumber}:e${episodeNumber}`;
+  if (typeof AdultMode !== "undefined" && AdultMode.isAdultContent(show)) {
+    episode.sourceOptions = normalizeEpisodeSourceOptions(episode);
+    episode.sourceOptionsChecked = lookupKey;
+    episode.tioAnimeSourcesChecked = true;
+    episode.animeAv1SourcesChecked = true;
+    episode.serverChecks = {
+      underhentai: episode.sourceOptions.length ? "found" : "notfound"
+    };
+    episode.locked = !episode.sourceOptions.length;
+    return episode;
+  }
   if (episode.sourceOptionsChecked === lookupKey && episode.tioAnimeSourcesChecked && episode.animeAv1SourcesChecked) return episode;
 
   // Initialize per-server status tracking (undefined = still pending; "found" / "notfound")
@@ -3539,7 +3731,7 @@ async function attachPlaybackSourceOptions(show, episode, seasonNumber = 1) {
   // Respect the user's per-scraper enable toggles (Sources tab).
   const lookups = [
     playbackLookupWithTimeout("AniPub", attachAniPubFallback(show, episode), 2600)
-      .then(() => updateServerCheck("anipub", KNOWN_SOURCE_SERVERS[0].match)),
+      .then(() => updateServerCheck("anipub", getKnownSourceServer("anipub").match)),
     playbackLookupWithTimeout("Loaded addons", attachLoadedAddonFallbacks(show, episode, seasonNumber), 1800)
       .then(() => refreshPicker())
   ];
@@ -4374,7 +4566,10 @@ function render() {
     renderSkeletonCards(libraryGrid, 14);
   } else {
     renderCards(latestGrid, buildLatestEpisodesList(HOME_CARD_LIMIT));
-    renderCards(libraryGrid, filtered.slice(0, state.search ? SEARCH_CARD_LIMIT : LIBRARY_CARD_LIMIT));
+    const libraryLimit = typeof AdultMode !== "undefined" && AdultMode.isEnabled()
+      ? filtered.length
+      : (state.search ? SEARCH_CARD_LIMIT : LIBRARY_CARD_LIMIT);
+    renderCards(libraryGrid, filtered.slice(0, libraryLimit));
   }
   renderContinueWatching();
   renderAniPubCatalog();
@@ -4515,6 +4710,23 @@ async function openShow(id, target = {}) {
 
 async function hydrateOpenShowDetails(show, target = {}, openToken = "") {
   try {
+    if (typeof AdultMode !== "undefined" && AdultMode.isAdultContent(show)) {
+      await hydrateAdultShowDetails(show);
+      if (state.activeOpenToken !== openToken || state.activeShow?.id !== show.id) return;
+      if (!state.activeEpisode) applyOpenTarget(show, target);
+      renderEpisodeList(show);
+      syncWatchHeading(show);
+      const descriptionNode = document.querySelector("#watchDescription");
+      if (descriptionNode) descriptionNode.textContent = show.description || "";
+      if (state.activeEpisode && target.playIntent) {
+        const frame = document.querySelector("#videoFrame");
+        const background = getWatchBackdropArtwork(show, state.activeEpisode.season);
+        frame?.style.setProperty("--watch-bg", background ? `url("${background}")` : "none");
+        if (frame) renderSourcePickerIn(frame);
+      }
+      refreshFocusables();
+      return;
+    }
     // For metadata-only shows (scrapled, AniList/Jikan, etc.) that have no
     // native episode endpoint, run ALL source hydrators in parallel so the
     // episode list fills in from whichever provider matches the title fastest.
@@ -5027,7 +5239,7 @@ function resetVideoFrame() {
       <div class="watch-ready-poster-wrap">
         ${
           poster
-            ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="${escapeHtml(getShowTitle(show))}" loading="lazy" onerror="this.onerror=null;try{ImageResolver.markImageFailed(this.src)}catch(e){};resetVideoFrame()">`
+            ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="${escapeHtml(getShowTitle(show))}" loading="lazy" onerror="handleWatchPosterError(this)">`
             : `<div class="watch-poster-placeholder"><div class="play-symbol" aria-hidden="true"></div></div>`
         }
       </div>
@@ -5291,8 +5503,61 @@ function episodeAirDateLabel(episode = {}) {
 // Episode thumbnail: TMDB still → existing per-episode still → TMDB season/show
 // poster → AniList banner → AniList cover. Returns "" so callers render the
 // branded placeholder instead of a broken image.
-function episodeThumb(episode = {}, season = {}, show = {}) {
-  const ownImage = hqImage(episode.image || episode.thumbnail || episode.still || episode.snapshot || "");
+function comparableImageUrl(value = "") {
+  const url = hqImage(String(value || "").trim());
+  if (!url) return "";
+  try {
+    const parsed = new URL(url, location.href);
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function episodeMetadataForNumber(show = {}, number = 0) {
+  const tmdb = show.tmdbEpisodesByNum?.[number] || null;
+  const streamed = show.streamingEpisodesByNum?.[number] || null;
+  if (!tmdb) return streamed;
+  if (!streamed) return tmdb;
+  return {
+    ...tmdb,
+    ...streamed,
+    title: streamed.title && !/^(?:episode|ep)\s*\d+$/i.test(streamed.title)
+      ? streamed.title
+      : (tmdb.title || streamed.title),
+    thumbnail: tmdb.thumbnail || streamed.thumbnail || "",
+    aired: streamed.aired || tmdb.aired || ""
+  };
+}
+
+function episodeCandidateImage(episode = {}, number = 0, show = {}) {
+  const metadata = episodeMetadataForNumber(show, number);
+  return hqImage(
+    metadata?.thumbnail ||
+    episode.image || episode.thumbnail || episode.still || episode.snapshot || ""
+  );
+}
+
+function repeatedEpisodeArtwork(episodes = [], show = {}) {
+  const counts = new Map();
+  episodes.forEach((episode, index) => {
+    const number = Number(episode.episode || index + 1);
+    const key = comparableImageUrl(episodeCandidateImage(episode, number, show));
+    if (key) counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([url]) => url));
+}
+
+function episodeThumb(episode = {}, season = {}, show = {}, repeatedImages = new Set()) {
+  let ownImage = hqImage(episode.image || episode.thumbnail || episode.still || episode.snapshot || "");
+  const comparable = comparableImageUrl(ownImage);
+  const showLevelArt = new Set([
+    show.image, show.poster, show.cover, show.thumbnail, show.banner, show.bannerImage,
+    show.tmdbPoster, show.tmdbSeasonPoster, show.tmdbBackdrop, season?.image, season?.banner
+  ].map(comparableImageUrl).filter(Boolean));
+  if (comparable && (repeatedImages.has(comparable) || showLevelArt.has(comparable))) ownImage = "";
   if (typeof ImageResolver !== "undefined") {
     return ImageResolver.resolveEpisodeThumbnail(
       { ...episode, image: ownImage || episode.image, thumbnail: ownImage || episode.thumbnail },
@@ -5341,7 +5606,8 @@ function renderEpisodeList(show) {
   if (!episodeList || !show) return;
   // Lazily pull AniList per-episode titles/thumbnails + HQ banner once the show's
   // anilistId is known (for scraped shows it arrives after source enrichment).
-  if ((show.anilistId || show.malId) && !show._extrasTried && !show.streamingEpisodes) {
+  const isAdultSourceShow = typeof AdultMode !== "undefined" && AdultMode.isAdultContent(show);
+  if (!isAdultSourceShow && (show.anilistId || show.malId) && !show._extrasTried && !show.streamingEpisodes) {
     show._extrasTried = true;
     fetchAniListShowExtras(show).then(() => {
       if (state.activeShow?.id === show.id && (show.streamingEpisodes || show.banner)) renderEpisodeList(show);
@@ -5364,6 +5630,7 @@ function renderEpisodeList(show) {
   const multiSeason = seasonNav.length > 1;
 
   const episodes = activeSeason?.episodes || [];
+  const repeatedImages = repeatedEpisodeArtwork(episodes, show);
   const tab = state.activeDetailTab === "seasons" ? "seasons" : "episodes";
   const franchiseList = getFranchiseSeasonList(show) || [];
   const cardSeasons = franchiseList.length ? franchiseList : seasons;
@@ -5417,7 +5684,7 @@ function renderEpisodeList(show) {
           const num = episode.episode || episodeIndex + 1;
           // Prefer AniList per-episode metadata (real title + still), matched by
           // episode number.
-          const epMeta = (show.streamingEpisodesByNum && show.streamingEpisodesByNum[num]) || null;
+          const epMeta = episodeMetadataForNumber(show, num);
           const title = (epMeta && epMeta.title)
             ? cleanEpisodeTitle(epMeta.title, num)
             : episodeEntryTitle(episode, episodeIndex, show);
@@ -5428,11 +5695,12 @@ function renderEpisodeList(show) {
             {
               ...episode,
               episode: num,
-              image: episode.image || episode.thumbnail || episode.still || episode.snapshot ||
-                     (epMeta && epMeta.thumbnail) || ""
+              image: (epMeta && epMeta.thumbnail) ||
+                     episode.image || episode.thumbnail || episode.still || episode.snapshot || ""
             },
             activeSeason,
-            show
+            show,
+            repeatedImages
           );
           const date = episodeAirDateLabel({ ...episode, aired: episode.aired || epMeta?.aired });
           const fallbackHue = (stableVisualHue(show.id || show.title) + (Number(num) * 19)) % 360;
@@ -5830,6 +6098,14 @@ function renderPlayerPopupMessage(frame, title = "Loading episode", message = "P
   refreshFocusables();
 }
 
+function handleWatchPosterError(image) {
+  if (!image) return;
+  image.onerror = null;
+  try { ImageResolver.markImageFailed(image.src); } catch { /* resolver optional */ }
+  const frame = document.querySelector("#videoFrame");
+  if (image.isConnected && frame?.contains(image)) resetVideoFrame();
+}
+
 function renderVidstreamControls() {
   const nav = getEpisodeNavigationTargets();
   const fit = state.uiPreferences.playerFit || "contain";
@@ -5904,7 +6180,12 @@ function renderSourcePickerIn(frame) {
   // before AniPub). This makes whichever of TioAnime/AnimeAV1 resolves first
   // appear at the very top.
   const readyAt = episode.serverReadyAt || {};
-  const orderedServers = KNOWN_SOURCE_SERVERS
+  const pickerServerDefinitions = (
+    typeof AdultMode !== "undefined" && AdultMode.isAdultContent(show)
+  )
+    ? KNOWN_SOURCE_SERVERS.filter((def) => def.key === "underhentai")
+    : KNOWN_SOURCE_SERVERS.filter((def) => def.key !== "underhentai");
+  const orderedServers = pickerServerDefinitions
     .map((def, knownIndex) => {
       const matching = allSources.filter(def.match);
       const hasSources = matching.length > 0;
@@ -6060,6 +6341,7 @@ function streamTypeFromUrl(url = "") {
   const value = String(url || "").split("?")[0].split("#")[0].toLowerCase();
   if (value.endsWith(".m3u8")) return "hls";
   if (value.endsWith(".mpd")) return "dash";
+  if (/krakencloud\.net\/play\/video\//i.test(value)) return "file";
   if (value.endsWith(".mp4") || value.endsWith(".m4v") || value.endsWith(".webm") || value.endsWith(".mov")) return "file";
   return "";
 }
@@ -6073,6 +6355,7 @@ function streamProxyHost(url = "") {
     if (/anime-dunya/i.test(host)) return "anime-dunya.com";
     if (/watching\.onl|vidwish\.live|anivideo\.sbs|cloudbuzz\.lol|trycloud\.pro/i.test(host)) return "vidwish.live";
     if (/mp4upload\.com/i.test(host)) return "mp4upload.com";
+    if (/krakencloud\.net/i.test(host)) return "krakenfiles.com";
     return host;
   } catch (error) {
     return "";
@@ -6101,6 +6384,7 @@ function playerFitScaleValue(fit = state.uiPreferences.playerFit || "contain") {
 
 function buildApkPlayerUrl(url = "") {
   const playerUrl = new URL("./player/player.html", location.href);
+  playerUrl.searchParams.set("v", "2");
   playerUrl.searchParams.set("src", resolveSourceEndpoint(url));
   playerUrl.searchParams.set("audio", getLanguagePreferences().audio || "");
   playerUrl.searchParams.set("quality", String(Number(state.uiPreferences.playerQuality || 0)));
@@ -7027,6 +7311,40 @@ async function resolveTioAnimeSlugFromCatalog(show) {
   return applyTioAnimeSlugFromMap(show, slugMap);
 }
 
+let visibleMetadataWarmGeneration = 0;
+
+function warmVisibleShowMetadata(shows = state.shows, limit = 16) {
+  if (typeof AdultMode !== "undefined" && AdultMode.isEnabled()) return;
+  const generation = ++visibleMetadataWarmGeneration;
+  const queue = [...new Map(
+    (Array.isArray(shows) ? shows : [])
+      .filter((show) => show && (typeof AdultMode === "undefined" || !AdultMode.isAdultContent(show)))
+      .map((show) => [String(show.id || getShowKey(show)), show])
+  ).values()].slice(0, limit);
+  let cursor = 0;
+
+  const worker = async () => {
+    while (cursor < queue.length && generation === visibleMetadataWarmGeneration) {
+      const show = queue[cursor++];
+      if (!show || show._metadataPreloadComplete) continue;
+      show._metadataPreloadStarted = true;
+      try {
+        await hydrateCanonicalAnimeMetadata(show);
+        await Promise.allSettled([
+          fetchAniListShowExtras(show),
+          enrichTmdbImages(show)
+        ]);
+        applyTmdbEpisodeMetadata(show);
+        show._metadataPreloadComplete = true;
+      } catch {
+        show._metadataPreloadStarted = false;
+      }
+    }
+  };
+
+  Promise.allSettled([worker(), worker()]).catch(() => {});
+}
+
 function warmTioAnimeSlugCatalog(shows = state.shows) {
   if (_tioAnimeSlugTitleMap) {
     (shows || []).forEach((show) => applyTioAnimeSlugFromMap(show, _tioAnimeSlugTitleMap));
@@ -7861,7 +8179,7 @@ function renderDirectVideoPlayer(frame, url, episode) {
     <div class="video-player-shell vidstream-player fit-${escapeHtml(fit)}" data-stream-type="${escapeHtml(streamType || "direct")}">
       <div class="vid-player-stage">
         ${useApkPlayer
-          ? `<iframe id="animePlayerFrame" class="apk-video-frame" src="${escapeHtml(buildApkPlayerUrl(url))}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="no-referrer" sandbox="allow-same-origin allow-scripts allow-forms allow-presentation" title="ZenkaiTV video player"></iframe>`
+          ? `<iframe id="animePlayerFrame" class="apk-video-frame" src="${escapeHtml(buildApkPlayerUrl(url))}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="no-referrer" title="ZenkaiTV video player"></iframe>`
           : `<video id="animePlayer" autoplay playsinline x-webkit-airplay="allow" crossorigin="anonymous">
               ${spanishTrack ? `<track kind="subtitles" srclang="es" label="Español" src="${escapeHtml(spanishTrack.url)}" default>` : ""}
             </video>`}
@@ -8176,7 +8494,7 @@ async function resolveEpisodeStream(episode) {
 }
 
 function isEmbedUrl(url) {
-  return /youtube\.com\/embed|player\.vimeo\.com|\/embed\//i.test(url);
+  return /youtube\.com\/embed|player\.vimeo\.com|\/embed(?:-video)?\//i.test(url);
 }
 
 function renderExternalPlaybackOption(show, externalUrl) {
@@ -8199,8 +8517,8 @@ function renderEmbeddedAniPubPlayer(show, externalUrl) {
           frameborder="0"
           allowfullscreen
           allow="autoplay; fullscreen; picture-in-picture; encrypted-media; web-share"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
           referrerpolicy="no-referrer"
-          sandbox="allow-same-origin allow-scripts allow-forms allow-presentation"
         ></iframe>
         ${renderVidstreamTopbar(label)}
       </div>
@@ -8433,20 +8751,26 @@ function wireOpenButtons() {
     const preload = () => {
       const show = state.shows.find((entry) => String(entry.id) === String(button.dataset.openShow));
       if (!show) return;
-      const knownBackdrop = getWatchBackdropArtwork(show);
-      if (knownBackdrop) {
+      const preloadArtwork = () => {
+        const knownBackdrop = getWatchBackdropArtwork(show);
+        if (!knownBackdrop) return;
         const image = new Image();
         image.decoding = "async";
         image.src = knownBackdrop;
-      } else if (!show._metadataPreloadStarted) {
+      };
+      preloadArtwork();
+      if (!show._metadataPreloadStarted && (show.anilistId || show.malId || show.title)) {
         show._metadataPreloadStarted = true;
-        hydrateCanonicalAnimeMetadata(show).then(() => {
-          const resolvedBackdrop = getWatchBackdropArtwork(show);
-          if (!resolvedBackdrop) return;
-          const image = new Image();
-          image.decoding = "async";
-          image.src = resolvedBackdrop;
-        }).catch(() => {});
+        Promise.resolve(hydrateCanonicalAnimeMetadata(show))
+          .then(() => Promise.allSettled([
+            fetchAniListShowExtras(show),
+            enrichTmdbImages(show)
+          ]))
+          .then(() => {
+            applyTmdbEpisodeMetadata(show);
+            preloadArtwork();
+          })
+          .catch(() => {});
       }
     };
     button.addEventListener("pointerenter", preload, { once: true, passive: true });
@@ -8868,7 +9192,12 @@ if ("serviceWorker" in navigator) {
 if (typeof AdultMode !== "undefined") {
   AdultMode.load();
   syncAdultModeChrome();
-  AdultMode.onChange((on) => { playThemeFlash(on); syncAdultModeChrome(); render(); });
+  AdultMode.onChange(async (on) => {
+    playThemeFlash(on);
+    syncAdultModeChrome();
+    if (on) await loadAdultCatalog();
+    render();
+  });
 }
 
 render();
@@ -8885,6 +9214,9 @@ applyUiPreferences();
 setupTvTextInputs();
 renderSources();
 loadAnimeSources();
+if (typeof AdultMode !== "undefined" && AdultMode.isEnabled()) {
+  loadAdultCatalog();
+}
 restartCarouselTimer();
 if (window.UpdateManager) {
   window.animeTVUpdater = new window.UpdateManager({ currentVersion: "1.3.0" });

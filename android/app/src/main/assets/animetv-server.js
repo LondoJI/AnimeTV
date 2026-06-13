@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const { spawn } = require("child_process");
+const { Readable } = require("stream");
 
 const root = path.resolve(__dirname);
 const serverStartedAt = Date.now();
@@ -40,6 +41,22 @@ const RAPIDAPI_ANIME_HOST = process.env.RAPIDAPI_ANIME_HOST || process.env.X_RAP
 const RAPIDAPI_ANIME_BASE = process.env.RAPIDAPI_ANIME_BASE || (RAPIDAPI_ANIME_HOST ? `https://${RAPIDAPI_ANIME_HOST}` : "");
 const RAPIDAPI_ANIME_TIMEOUT_MS = Math.max(5000, Number(process.env.RAPIDAPI_ANIME_TIMEOUT_MS || 18000));
 const RAPIDAPI_ANIME_CATALOG_LIMIT = Math.max(25, Number(process.env.RAPIDAPI_ANIME_CATALOG_LIMIT || 300));
+// ── TMDB (episode stills, season posters, backdrops) ─────────────────────────
+// Supports either a v3 API key (TMDB_API_KEY) or a v4 read access token
+// (TMDB_READ_ACCESS_TOKEN). When neither is set the /api/tmdb/* routes return
+// { ok:true, configured:false } and the client falls back to AniList artwork.
+const TMDB_API_KEY = process.env.TMDB_API_KEY || process.env.TMDB_V3_API_KEY || "";
+const TMDB_READ_TOKEN = process.env.TMDB_READ_ACCESS_TOKEN || process.env.TMDB_API_READ_ACCESS_TOKEN || process.env.TMDB_V4_TOKEN || "";
+const TMDB_CONFIGURED = Boolean(TMDB_API_KEY || TMDB_READ_TOKEN);
+const TMDB_API_BASE = "https://api.themoviedb.org/3";
+const TMDB_PROXY_BASE = String(process.env.TMDB_PROXY_BASE || (!HOSTED_RUNTIME ? "https://zenkaitv.com/api/tmdb" : "")).replace(/\/+$/, "");
+const TMDB_AVAILABLE = TMDB_CONFIGURED || Boolean(TMDB_PROXY_BASE);
+const TMDB_TIMEOUT_MS = Math.max(4000, Number(process.env.TMDB_TIMEOUT_MS || 12000));
+const TMDB_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days — episode stills are stable
+const tmdbSearchCache = new Map();  // `${normalizedTitle}|${year}` -> { data, ts }
+const tmdbTvCache = new Map();      // tmdbId -> { data, ts }
+const tmdbSeasonCache = new Map();  // `${tmdbId}:${season}` -> { data, ts }
+
 const CONSUMET_API = String(process.env.CONSUMET_API || "http://localhost:3000").replace(/\/+$/, "");
 const CONSUMET_PROVIDER = "kickassanime";
 const CONSUMET_TIMEOUT_MS = Math.max(3000, Number(process.env.CONSUMET_TIMEOUT_MS || 7000));
@@ -62,6 +79,33 @@ const TIOANIME_HEADERS = {
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   Referer: TIOANIME_BASE
 };
+const UNDERHENTAI_BASE = "https://www.underhentai.net";
+const UNDERHENTAI_CATALOG_FILE = path.join(root, "scraper", "underhentai_catalog.json");
+const UNDERHENTAI_DETAILS_FILE = path.join(root, "scraper", "underhentai_details.json");
+const UNDERHENTAI_CACHE_TTL_MS = 1000 * 60 * 30;
+const UNDERHENTAI_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  Referer: UNDERHENTAI_BASE
+};
+const UNDERHENTAI_ALLOWED_EMBED_HOSTS = new Set([
+  "krakenfiles.com",
+  "www.krakenfiles.com",
+  "luluvdo.com",
+  "www.luluvdo.com",
+  "lulustream.com",
+  "www.lulustream.com"
+]);
+const UNDERHENTAI_MINOR_MARKERS = [
+  "child", "children", "elementary", "junior high", "loli", "lolicon",
+  "middle school", "minor", "schoolboy", "schoolgirl", "shota", "shotacon",
+  "teen", "teenage", "underage", "young boy", "young girl",
+  "high school", "joshi kousei", "joshi kōsei"
+];
+const UNDERHENTAI_MINOR_PATTERNS = [/\bjk\b/i];
+const underHentaiDetailCache = new Map();
+let underHentaiDetailsSnapshot = null;
 const ANIMEAV1_BASE = "https://animeav1.com";
 const ANIMEAV1_SLUG_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 const ANIMEAV1_CACHE_TTL_MS = 1000 * 60 * 30;
@@ -87,6 +131,9 @@ let tioAnimeSlugCatalogMemoryAt = 0;
 let tioAnimeSlugCatalogPromise = null;
 const animeAv1SourceCache = new Map(); // "slug:ep:variant" -> { data, ts }
 const animeAv1SlugSearchCache = new Map(); // normalized query -> { data, ts }
+let animeAv1LatestCache = null;          // [{ slug, episode, title, image }]
+let animeAv1LatestCacheAt = 0;
+const ANIMEAV1_LATEST_TTL_MS = 1000 * 60 * 5; // homepage "Últimos Episodios" — 5 min
 let animeAv1SlugCatalogMemory = null;
 let animeAv1SlugCatalogMemoryAt = 0;
 let animeAv1SlugCatalogPromise = null;
@@ -95,6 +142,12 @@ const ANILIST_MEDIA_CACHE_TTL_MS  = 1000 * 60 * 60 * 24;  // 24 h — stable met
 const ANILIST_SEARCH_CACHE_TTL_MS = 1000 * 60 * 60 * 6;   // 6 h
 const anilistMediaCache  = new Map(); // anilistId → { data, ts }
 const anilistSearchCache = new Map(); // normalizedTitle → { data, ts }
+const jikanEpisodeCache = new Map(); // malId -> { data, ts }
+const jikanFullCache = new Map(); // malId -> { data, ts }
+const jikanSearchCache = new Map(); // normalized title -> { data, ts }
+const JIKAN_EPISODE_CACHE_TTL_MS = 1000 * 60 * 60 * 24;
+let jikanRequestQueue = Promise.resolve();
+let jikanLastRequestAt = 0;
 const ANIPUB_CATALOG_TTL_MS = 1000 * 60 * 20;
 const ANIPUB_RAW_CATALOG_TTL_MS = ANIPUB_CATALOG_TTL_MS;
 const ANIPUB_EPISODE_CACHE_TTL_MS = 1000 * 60 * 60;
@@ -333,12 +386,27 @@ function handleRequest(request, response) {
   }
 
   if (url.pathname === "/api/source") {
-    handleSourceProxy(url, response);
+    handleSourceProxy(request, url, response);
     return;
   }
 
   if (url.pathname === "/api/translate") {
     handleTranslate(request, response);
+    return;
+  }
+
+  if (url.pathname === "/api/adult/underhentai/catalog") {
+    handleUnderHentaiCatalog(url, response);
+    return;
+  }
+
+  if (url.pathname === "/api/adult/underhentai/details") {
+    handleUnderHentaiDetails(url, response);
+    return;
+  }
+
+  if (url.pathname === "/api/adult/underhentai/stream") {
+    handleUnderHentaiStream(url, response);
     return;
   }
 
@@ -548,6 +616,36 @@ function handleRequest(request, response) {
     return;
   }
 
+  if (url.pathname === "/api/jikan/episodes") {
+    handleJikanEpisodes(url, response);
+    return;
+  }
+
+  if (url.pathname === "/api/jikan/full") {
+    handleJikanFull(url, response);
+    return;
+  }
+
+  if (url.pathname === "/api/jikan/search") {
+    handleJikanSearch(url, response);
+    return;
+  }
+
+  if (url.pathname === "/api/tmdb/search") {
+    handleTmdbSearch(url, response);
+    return;
+  }
+
+  if (url.pathname === "/api/tmdb/tv") {
+    handleTmdbTv(url, response);
+    return;
+  }
+
+  if (url.pathname === "/api/tmdb/season") {
+    handleTmdbSeason(url, response);
+    return;
+  }
+
   if (url.pathname === "/api/anilist/media") {
     handleAniListMedia(url, response);
     return;
@@ -591,6 +689,21 @@ function handleRequest(request, response) {
 
   if (url.pathname === "/api/animeav1/health") {
     handleAnimeAv1Health(response);
+    return;
+  }
+
+  if (url.pathname === "/api/animeav1/latest") {
+    handleAnimeAv1Latest(response);
+    return;
+  }
+
+  if (url.pathname === "/api/crawl") {
+    handleCrawl(request, response);
+    return;
+  }
+
+  if (url.pathname === "/api/resolve") {
+    handleResolveEmbed(url, response);
     return;
   }
 
@@ -915,7 +1028,7 @@ async function handleCatalog(response) {
   }
 }
 
-async function handleSourceProxy(url, response) {
+async function handleSourceProxy(request, url, response) {
   const target = url.searchParams.get("url");
   if (!target || !/^https?:\/\//i.test(target)) {
     sendJson(response, { ok: false, error: "Missing http(s) url" }, 400);
@@ -924,25 +1037,47 @@ async function handleSourceProxy(url, response) {
 
   try {
     const refererHost = String(url.searchParams.get("refererHost") || "").trim();
-    const headers = {};
-    if (refererHost) {
+    const targetHost = new URL(target).hostname.toLowerCase();
+    const headers = {
+      "User-Agent": String(request.headers["user-agent"] || UNDERHENTAI_HEADERS["User-Agent"])
+    };
+    if (/(?:^|\.)krakencloud\.net$/i.test(targetHost)) {
+      headers["User-Agent"] = UNDERHENTAI_HEADERS["User-Agent"];
+      headers.Referer = "https://krakenfiles.com/";
+      headers.Origin = "https://krakenfiles.com";
+    } else if (refererHost) {
       headers.Referer = `https://${refererHost}/`;
       headers.Origin = `https://${refererHost}`;
     }
+    if (request.headers.range) headers.Range = request.headers.range;
     const upstream = await fetchWithTimeout(target, { headers }, 12000);
     const contentType = upstream.headers.get("content-type") || "application/json; charset=utf-8";
     const isPlaylist = /mpegurl|m3u8/i.test(contentType) || /\.m3u8(\?|#|$)/i.test(target);
-    const body = isPlaylist
-      ? rewriteM3u8Playlist(await upstream.text(), target, refererHost)
-      : Buffer.from(await upstream.arrayBuffer());
-    response.writeHead(upstream.status, {
+    const responseHeaders = {
       ...SECURITY_HEADERS,
       ...corsHeaders(),
       "Content-Type": contentType,
       "Cache-Control": "no-store, max-age=0"
+    };
+    ["accept-ranges", "content-length", "content-range", "etag", "last-modified"].forEach((name) => {
+      const value = upstream.headers.get(name);
+      if (value) responseHeaders[name] = value;
     });
-    response.end(body);
+    response.writeHead(upstream.status, responseHeaders);
+    if (isPlaylist) {
+      response.end(rewriteM3u8Playlist(await upstream.text(), target, refererHost));
+      return;
+    }
+    if (!upstream.body) {
+      response.end();
+      return;
+    }
+    Readable.fromWeb(upstream.body).pipe(response);
   } catch (error) {
+    if (response.headersSent) {
+      response.destroy(error);
+      return;
+    }
     sendJson(response, { ok: false, error: "Local source unavailable" }, 502);
   }
 }
@@ -5303,6 +5438,589 @@ async function handleAnimeAv1Slugs(url, response) {
   }
 }
 
+// ── Smart Source crawler: jkanime.net ─────────────────────────────────────────
+// Powers the client's "Crawl & Add" (POST /api/crawl {kind,url}). jkanime episode
+// pages embed a `servers = [...]` array whose `remote` field is a base64-encoded
+// playable embed URL (Streamwish/Mega/Voe/…), so we resolve those into episodes
+// the app can play like any external source.
+const JK_BASE = "https://jkanime.net";
+const JK_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+  Referer: `${JK_BASE}/`
+};
+// Streamable embed hosts ranked first; pure download lockers are dropped.
+const JK_GOOD_HOSTS = ["streamwish", "sfastwish", "filemoon", "voe", "vidhide", "mp4upload", "streamtape", "doodstream", "dood", "okru", "ok.ru", "yourupload", "mega"];
+
+async function mapLimit(items, limit, fn) {
+  const out = [];
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) {
+      const idx = i++;
+      out[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+function prettifyJkSlug(slug) {
+  return String(slug || "").replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).trim();
+}
+
+function parseJkanimeServers(html) {
+  const m = String(html || "").match(/servers\s*=\s*(\[[\s\S]*?\])\s*;/);
+  if (!m) return [];
+  let arr;
+  try { arr = JSON.parse(m[1]); } catch { return []; }
+  const out = [];
+  for (const s of Array.isArray(arr) ? arr : []) {
+    let url = "";
+    try { url = Buffer.from(String(s.remote || ""), "base64").toString("utf8").trim(); } catch { /* ignore */ }
+    url = url.replace(/\s+/g, "");
+    if (!/^https?:\/\//i.test(url)) continue;
+    out.push({ server: String(s.server || "").trim(), url });
+  }
+  return out;
+}
+
+function jkRankEmbeds(sources) {
+  const seen = new Set();
+  const ranked = [];
+  for (const s of sources) {
+    if (seen.has(s.url)) continue;
+    seen.add(s.url);
+    const host = ((s.url.match(/^https?:\/\/([^/]+)/) || [])[1] || "").toLowerCase();
+    if (/mediafire/i.test(host)) continue;             // download page, not inline-playable
+    const score = JK_GOOD_HOSTS.findIndex((h) => host.includes(h));
+    ranked.push({ provider: s.server || host, url: s.url, host, score: score < 0 ? 99 : score });
+  }
+  ranked.sort((a, b) => a.score - b.score);
+  return ranked;
+}
+
+async function fetchJkanimeEpisode(slug, episode) {
+  const epUrl = `${JK_BASE}/${encodeURIComponent(slug)}/${encodeURIComponent(episode)}`;
+  const r = await fetchWithTimeout(epUrl, { headers: JK_HEADERS }, HOSTED_RUNTIME ? 8000 : 12000);
+  if (!r.ok) return null;
+  const html = await r.text();
+  const embeds = jkRankEmbeds(parseJkanimeServers(html));
+  if (!embeds.length) return null;
+  const ogTitle = (html.match(/property="og:title"\s+content="([^"]+)"/i) || [])[1] || "";
+  const ogImage = (html.match(/property="og:image"\s+content="([^"]+)"/i) || [])[1] || "";
+  const title = decodeHtmlEntities(ogTitle)
+    .replace(/\s+(?:Episodio\s+)?\d+\s+(?:Sub|Latino|Español|Castellano)[\s\S]*$/i, "")
+    .replace(/\s+Sub Español.*$/i, "")
+    .trim() || prettifyJkSlug(slug);
+  return { slug, episode: Number(episode) || 0, title, image: ogImage, embeds, episodeUrl: epUrl };
+}
+
+function buildCrawlCatalog(records, opts = {}) {
+  const source = opts.source || "crawl";
+  const idPrefix = opts.idPrefix || "crawl";
+  const byKey = new Map();
+  for (const e of records) {
+    if (!e || !e.embeds?.length) continue;
+    const key = e.key || e.slug;
+    let entry = byKey.get(key);
+    if (!entry) {
+      entry = {
+        id: `${idPrefix}-${key}`,
+        title: e.title || prettifyJkSlug(key),
+        romajiTitle: e.title || prettifyJkSlug(key),
+        image: e.image || "",
+        genre: "anime",
+        status: "",
+        source,
+        description: `Imported from ${source} via Smart Source.`,
+        episodes: []
+      };
+      byKey.set(key, entry);
+    }
+    if (!entry.image && e.image) entry.image = e.image;
+    if ((!entry.title || /^[a-z0-9 ]+$/i.test(entry.title)) && e.title) entry.title = entry.romajiTitle = e.title;
+    const isDirect = (u) => /\.(m3u8|mp4|webm|m4v)(\?|#|$)/i.test(String(u));
+    const sources = e.embeds.map((x) => {
+      const direct = isDirect(x.url);
+      return { provider: x.provider, url: x.url, externalUrl: direct ? "" : x.url, videoUrl: direct ? x.url : "", type: direct ? "direct" : "iframe", siteUrl: e.episodeUrl };
+    });
+    const primary = sources[0];
+    entry.episodes.push({
+      episode: e.episode,
+      season: 1,
+      title: `Episodio ${e.episode}`,
+      videoUrl: primary.videoUrl,
+      externalUrl: primary.externalUrl,
+      type: primary.type,
+      siteUrl: e.episodeUrl,
+      sources
+    });
+  }
+  for (const entry of byKey.values()) {
+    const seenEp = new Set();
+    entry.episodes = entry.episodes
+      .filter((ep) => (seenEp.has(ep.episode) ? false : (seenEp.add(ep.episode), true)))
+      .sort((a, b) => a.episode - b.episode);
+    entry.totalEpisodes = entry.episodes.length;
+    entry.episode = entry.episodes[entry.episodes.length - 1]?.episode || 1;
+  }
+  return [...byKey.values()];
+}
+
+async function crawlJkanimeSite(limit = 18) {
+  const r = await fetchWithTimeout(`${JK_BASE}/`, { headers: JK_HEADERS }, HOSTED_RUNTIME ? 9000 : 14000);
+  if (!r.ok) throw new Error(`jkanime homepage HTTP ${r.status}`);
+  const html = await r.text();
+  const pairs = [];
+  const seen = new Set();
+  for (const m of html.matchAll(/href="https:\/\/jkanime\.net\/([a-z0-9-]+)\/(\d+)"/g)) {
+    const key = `${m[1]}/${m[2]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pairs.push({ slug: m[1], episode: Number(m[2]) });
+    if (pairs.length >= limit) break;
+  }
+  const records = await mapLimit(pairs, 5, (p) => fetchJkanimeEpisode(p.slug, p.episode).catch(() => null));
+  return records.filter(Boolean);
+}
+
+async function crawlJkanimeAnime(slug, cap = HOSTED_RUNTIME ? 26 : 60) {
+  const r = await fetchWithTimeout(`${JK_BASE}/${encodeURIComponent(slug)}/`, { headers: JK_HEADERS }, HOSTED_RUNTIME ? 8000 : 12000);
+  if (!r.ok) throw new Error(`jkanime anime page HTTP ${r.status}`);
+  const html = await r.text();
+  const nums = new Set();
+  // Slugs are [a-z0-9-] only, so they need no regex escaping.
+  for (const m of html.matchAll(new RegExp(`href="https://jkanime\\.net/${slug}/(\\d+)/?"`, "g"))) {
+    nums.add(Number(m[1]));
+  }
+  if (!nums.size) throw new Error("No episodes found on the anime page.");
+
+  let episodes;
+  if (nums.size <= 2) {
+    // jkanime statically links only the latest episode; for a sequential anime
+    // that number IS the episode count, so rebuild the full 1..latest range
+    // (newest first, capped) instead of importing a single episode.
+    const latest = Math.max(...nums);
+    const start = Math.max(1, latest - cap + 1);
+    episodes = [];
+    for (let e = latest; e >= start; e--) episodes.push(e);
+  } else {
+    episodes = [...nums].sort((a, b) => b - a).slice(0, cap);
+  }
+
+  const records = await mapLimit(episodes, 6, (ep) => fetchJkanimeEpisode(slug, ep).catch(() => null));
+  return records.filter(Boolean);
+}
+
+function parseJkUrl(rawUrl) {
+  const m = String(rawUrl || "").match(/jkanime\.net\/([a-z0-9-]+)(?:\/(\d+))?/i);
+  if (!m) return { slug: null, episode: null };
+  if (["directorio", "buscar", "horario", "perfil", "registro", "jkplayer", "ajax"].includes(m[1])) {
+    return { slug: null, episode: null };
+  }
+  return { slug: m[1], episode: m[2] ? Number(m[2]) : null };
+}
+
+// ── Generic crawler ───────────────────────────────────────────────────────────
+// Most anime sites embed the same handful of streaming hosts (Streamwish, Mega,
+// Voe, Filemoon, Streamtape, …) inside iframes, JSON "code"/"file" fields, or
+// base64 "remote" fields. We sniff those out of any episode page, so the crawler
+// can "figure out" sites it has no dedicated adapter for.
+const GENERIC_CRAWL_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "es-ES,es;q=0.9,en;q=0.8"
+};
+const VIDEO_HOSTS = ["streamwish", "sfastwish", "swiftplayers", "playerwish", "embedwish", "wishfast", "filemoon", "vidhide", "vidhidevip", "filelions", "lulustream", "voe", "mp4upload", "streamtape", "stape", "mega.nz", "mega", "doodstream", "dood", "dsvplay", "mixdrop", "okru", "ok.ru", "yourupload", "uqload", "streamlare", "sendvid", "burstcloud"];
+function crawlHostScore(u) {
+  const h = ((String(u).match(/^https?:\/\/([^/]+)/) || [])[1] || "").toLowerCase();
+  const i = VIDEO_HOSTS.findIndex((v) => h.includes(v));
+  return i < 0 ? 999 : i;
+}
+function rankCrawlEmbeds(urls) {
+  const seen = new Set();
+  const out = [];
+  for (let u of urls) {
+    if (!u) continue;
+    u = String(u).trim().replace(/\\\//g, "/").replace(/&amp;/g, "&");
+    if (u.startsWith("//")) u = "https:" + u;
+    if (!/^https?:\/\//i.test(u)) continue;
+    if (/mediafire|\.(zip|rar|torrent)(\?|$)/i.test(u)) continue;
+    if (seen.has(u)) continue;
+    seen.add(u);
+    const score = crawlHostScore(u);
+    if (score === 999) continue;                       // not a known streamable host
+    const host = ((u.match(/^https?:\/\/([^/]+)/) || [])[1] || "").toLowerCase();
+    out.push({ provider: host.replace(/^www\./, "").split(".")[0] || host, url: u, score });
+  }
+  out.sort((a, b) => a.score - b.score);
+  return out;
+}
+function extractEmbedUrls(html) {
+  const urls = [];
+  for (const m of html.matchAll(/<iframe[^>]+src=["']([^"']+)["']/gi)) urls.push(m[1]);
+  for (const m of html.matchAll(/["'](?:code|url|file|embed|link|src)["']\s*:\s*["']((?:https?:|\/\/)[^"']+)["']/gi)) urls.push(m[1]);
+  for (const m of html.matchAll(/["']remote["']\s*:\s*["']([A-Za-z0-9+/=]{16,})["']/g)) {
+    try { urls.push(Buffer.from(m[1], "base64").toString("utf8")); } catch { /* ignore */ }
+  }
+  const av = html.match(/var\s+videos\s*=\s*(\{[\s\S]*?\});/);            // animeflv style
+  if (av) { try { for (const arr of Object.values(JSON.parse(av[1]))) for (const s of (arr || [])) if (s && s.code) urls.push(s.code); } catch { /* ignore */ } }
+  for (const m of html.matchAll(/[,{]\s*url:\s*"((?:https?:)?\/\/[^"]+)"/gi)) urls.push(m[1]);   // AnimeAV1 style: server:"X",url:"Y"
+  for (const m of html.matchAll(/https?:\/\/[A-Za-z0-9.\-]+\/(?:e|embed|d|v|f|play|video)\/[A-Za-z0-9._\-]+/gi)) urls.push(m[0]);
+  return rankCrawlEmbeds(urls);
+}
+function extractCrawlMeta(html, fallbackTitle) {
+  const ogt = (html.match(/property=["']og:title["']\s+content=["']([^"']+)["']/i) || [])[1]
+    || (html.match(/<title>([^<]+)<\/title>/i) || [])[1] || "";
+  const ogi = (html.match(/property=["']og:image["']\s+content=["']([^"']+)["']/i) || [])[1] || "";
+  const title = decodeHtmlEntities(ogt)
+    .replace(/^\s*(?:ver\s+(?:anime|online)?|anime|pelicula|online)\s+/i, "")   // "Ver Anime X" → "X"
+    .replace(/\s*[|\-–·»:].*$/, " ")
+    .replace(/\s+(?:Episodio|Capitulo|Cap[íi]tulo|Episode|Ep\.?)\s*\d+.*$/i, "")
+    .replace(/\s+\d+\s+(?:Sub|Latino|Espa[nñ]ol|Castellano|Online)[\s\S]*$/i, "")
+    .replace(/\s+(?:Sub|Latino|Espa[nñ]ol|Online|Gratis|HD)\b.*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return { title: title || fallbackTitle, image: ogi };
+}
+function inferSeriesKey(url) {
+  let p = url;
+  try { p = new URL(url).pathname; } catch { /* keep */ }
+  const parts = p.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+  while (parts.length > 1 && /^(ver|watch|anime|animes|episodio|episode|capitulo|cap|series|serie|tv|online)$/i.test(parts[0])) parts.shift();
+  let slug = parts[parts.length - 1] || "anime";
+  slug = slug.replace(/[-_/]?(?:episodio|capitulo|cap|episode|ep)?[-_/]?\d+$/i, "") || slug;
+  return slug.replace(/[^a-z0-9-]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || "anime";
+}
+async function fetchGenericEpisode(epUrl, hint = {}) {
+  const r = await fetchWithTimeout(epUrl, { headers: GENERIC_CRAWL_HEADERS }, HOSTED_RUNTIME ? 8000 : 12000);
+  if (!r.ok) return null;
+  const html = await r.text();
+  const embeds = extractEmbedUrls(html);
+  if (!embeds.length) return null;
+  const key = hint.key || inferSeriesKey(epUrl);
+  const meta = extractCrawlMeta(html, hint.title || prettifyJkSlug(key));
+  const epNum = Number(hint.episode || (epUrl.match(/(\d+)\/?$/) || [])[1] || 1);
+  return { key, slug: key, episode: epNum, title: hint.title || meta.title, image: hint.image || meta.image, embeds, episodeUrl: epUrl };
+}
+// Find episode-page links inside an anime/listing page (generic heuristic).
+function findEpisodeLinks(html, base) {
+  const out = [];
+  const seen = new Set();
+  const push = (href) => {
+    let u = href;
+    if (u.startsWith("/")) u = base.replace(/\/+$/, "") + u;
+    if (!/^https?:\/\//i.test(u)) return;
+    if (seen.has(u)) return;
+    seen.add(u);
+    out.push(u);
+  };
+  for (const m of html.matchAll(/href=["'](\/?(?:ver|watch|episodio|episode|capitulo)\/[^"'#?]+?-?\d+)["']/gi)) push(m[1]);
+  for (const m of html.matchAll(/href=["']((?:https?:\/\/[^"']+)?\/[a-z0-9-]+\/\d+)["']/gi)) push(m[1]);
+  return out;
+}
+
+// AnimeFLV adapter: anime pages expose `var episodes = [[num,id],…]`.
+function animeFlvBase(url) {
+  const m = String(url).match(/^(https?:\/\/[a-z0-9.\-]*animeflv\.net)/i);
+  return (m ? m[1] : "https://www3.animeflv.net").replace(/^http:/, "https:");
+}
+async function crawlAnimeFlvAnime(base, slug, cap = HOSTED_RUNTIME ? 26 : 60) {
+  const r = await fetchWithTimeout(`${base}/anime/${slug}`, { headers: GENERIC_CRAWL_HEADERS }, HOSTED_RUNTIME ? 8000 : 12000);
+  if (!r.ok) throw new Error(`AnimeFLV anime page HTTP ${r.status}`);
+  const html = await r.text();
+  const m = html.match(/var\s+episodes\s*=\s*(\[[\s\S]*?\]);/);
+  let nums = [];
+  if (m) { try { nums = JSON.parse(m[1]).map((a) => Number(a[0])).filter(Boolean); } catch { /* ignore */ } }
+  if (!nums.length) throw new Error("No episodes found on the AnimeFLV page.");
+  const meta = extractCrawlMeta(html, prettifyJkSlug(slug));
+  const episodes = [...new Set(nums)].sort((a, b) => b - a).slice(0, cap);
+  const records = await mapLimit(episodes, 6, (ep) =>
+    fetchGenericEpisode(`${base}/ver/${slug}-${ep}`, { key: slug, episode: ep, title: meta.title, image: meta.image }).catch(() => null));
+  return records.filter(Boolean);
+}
+async function crawlGenericSite(base, limit = 16) {
+  const r = await fetchWithTimeout(`${base}/`, { headers: GENERIC_CRAWL_HEADERS }, HOSTED_RUNTIME ? 9000 : 14000);
+  if (!r.ok) throw new Error(`Homepage HTTP ${r.status}`);
+  const html = await r.text();
+  const links = findEpisodeLinks(html, base).slice(0, limit);
+  if (!links.length) throw new Error("No episode links found on the homepage.");
+  const records = await mapLimit(links, 5, (u) => fetchGenericEpisode(u).catch(() => null));
+  return records.filter(Boolean);
+}
+async function crawlGenericAnime(animeUrl, base, cap = HOSTED_RUNTIME ? 26 : 60) {
+  const r = await fetchWithTimeout(animeUrl, { headers: GENERIC_CRAWL_HEADERS }, HOSTED_RUNTIME ? 8000 : 12000);
+  if (!r.ok) throw new Error(`Anime page HTTP ${r.status}`);
+  const html = await r.text();
+  const meta = extractCrawlMeta(html, prettifyJkSlug(inferSeriesKey(animeUrl)));
+  const key = inferSeriesKey(animeUrl);
+  let links = findEpisodeLinks(html, base);
+  // de-dupe to this series + cap (newest first)
+  links = [...new Set(links)].slice(0, cap);
+  if (!links.length) {
+    // Maybe the URL itself is an episode page.
+    const one = await fetchGenericEpisode(animeUrl, { key, title: meta.title, image: meta.image });
+    return one ? [one] : [];
+  }
+  const records = await mapLimit(links, 6, (u) => fetchGenericEpisode(u, { key, title: meta.title, image: meta.image }).catch(() => null));
+  return records.filter(Boolean);
+}
+
+// Read an og:<prop> meta value regardless of attribute order.
+function ogMeta(html, prop) {
+  const a = html.match(new RegExp(`<meta[^>]+property=["']og:${prop}["'][^>]*content=["']([^"']+)["']`, "i"));
+  if (a) return a[1];
+  const b = html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:${prop}["']`, "i"));
+  return b ? b[1] : "";
+}
+
+// AnimeAV1 adapter — reuses the tested episode-source resolver so a crawl of
+// animeav1.com/media/<slug> imports the same playable servers the AnimeAV1
+// scraper provides (Streamwish/Mega/HLS/…).
+async function fetchAnimeAv1CrawlEpisode(slug, ep, meta = {}) {
+  const res = await fetchAnimeAv1EpisodeSourcesDirect(slug, ep, "ALL").catch(() => null);
+  if (!res || !res.sources?.length) return null;
+  const embeds = [];
+  const seen = new Set();
+  for (const s of res.sources) {
+    const url = s.videoUrl || s.externalUrl || s.url;
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    embeds.push({ provider: s.provider || "AnimeAV1", url });
+  }
+  if (!embeds.length) return null;
+  return { key: slug, slug, episode: Number(ep), title: meta.title || prettifyJkSlug(slug), image: meta.image || "", embeds, episodeUrl: `${ANIMEAV1_BASE}/media/${slug}/${ep}` };
+}
+async function crawlAnimeAv1Anime(slug, cap = HOSTED_RUNTIME ? 24 : 60) {
+  const page = await fetchWithTimeout(`${ANIMEAV1_BASE}/media/${encodeURIComponent(slug)}`, { headers: ANIMEAV1_HEADERS }, HOSTED_RUNTIME ? 8000 : 12000);
+  if (!page.ok) throw new Error(`AnimeAV1 anime page HTTP ${page.status}`);
+  const html = await page.text();
+  const nums = [...new Set([...html.matchAll(new RegExp(`/media/${slug}/(\\d+)`, "g"))].map((m) => Number(m[1])))].filter(Boolean);
+  if (!nums.length) throw new Error("No episodes found on the AnimeAV1 page.");
+  const meta = {
+    title: decodeHtmlEntities(ogMeta(html, "title") || (html.match(/<h1[^>]*>([^<]+)<\/h1>/i) || [])[1] || prettifyJkSlug(slug))
+      .replace(/\s*[|\-–·»].*$/, "").trim() || prettifyJkSlug(slug),
+    image: ogMeta(html, "image")
+      || (html.match(/name=["']twitter:image["'][^>]*content=["']([^"']+)["']/i) || [])[1]
+      || (html.match(/https?:\/\/cdn\.animeav1\.com\/[^\s"')]+\.(?:jpg|jpeg|png|webp)/i) || [])[0]
+      || ""
+  };
+  const episodes = nums.sort((a, b) => b - a).slice(0, cap);
+  const records = await mapLimit(episodes, 4, (ep) => fetchAnimeAv1CrawlEpisode(slug, ep, meta).catch(() => null));
+  return records.filter(Boolean);
+}
+async function crawlAnimeAv1Site(limit = 18) {
+  const items = await fetchAnimeAv1LatestEpisodes().catch(() => []);
+  const pairs = items.slice(0, limit);
+  const records = await mapLimit(pairs, 4, (it) => fetchAnimeAv1CrawlEpisode(it.slug, it.episode, { title: it.title, image: it.image }).catch(() => null));
+  return records.filter(Boolean);
+}
+
+function looksLikeEpisodeUrl(path) {
+  return /\/ver\/|\/watch\/|\/episodio|\/capitulo|\/episode|-\d+$|\/\d+$/i.test(path);
+}
+
+async function handleCrawl(request, response) {
+  const started = Date.now();
+  let payload = {};
+  try { payload = await readJsonBody(request); } catch { payload = {}; }
+  let rawUrl = String(payload?.url || "").trim();
+  if (rawUrl && !/^https?:\/\//i.test(rawUrl)) rawUrl = "https://" + rawUrl.replace(/^\/+/, "");
+
+  let parsed;
+  try { parsed = new URL(rawUrl); } catch { sendJson(response, { ok: false, error: "Please paste a valid website URL." }); return; }
+  const base = `${parsed.protocol}//${parsed.host}`;
+  const domain = parsed.host.replace(/^www\d*\./, "");
+  const path = parsed.pathname.replace(/^\/+|\/+$/g, "");
+
+  try {
+    let records = [];
+    let kind = String(payload?.kind || "").trim();
+
+    if (/jkanime\.net/i.test(parsed.host)) {
+      // Dedicated jkanime adapter (its episode URLs are /<slug>/<num>).
+      const { slug, episode } = parseJkUrl(rawUrl);
+      if (episode && slug) { const e = await fetchJkanimeEpisode(slug, episode); records = e ? [e] : []; kind = "episode"; }
+      else if (slug) { records = await crawlJkanimeAnime(slug); kind = "anime"; }
+      else { records = await crawlJkanimeSite(); kind = "site"; }
+    } else if (/animeflv\.net/i.test(parsed.host)) {
+      const afBase = animeFlvBase(rawUrl);
+      const ver = path.match(/^ver\/(.+?)-(\d+)$/i);
+      const an = path.match(/^anime\/([a-z0-9-]+)/i);
+      if (ver) { const e = await fetchGenericEpisode(`${afBase}/ver/${ver[1]}-${ver[2]}`, { key: ver[1], episode: Number(ver[2]) }); records = e ? [e] : []; kind = "episode"; }
+      else if (an) { records = await crawlAnimeFlvAnime(afBase, an[1]); kind = "anime"; }
+      else { records = await crawlGenericSite(afBase); kind = "site"; }
+    } else if (/animeav1\.com/i.test(parsed.host)) {
+      const m = path.match(/^media\/([a-z0-9-]+)(?:\/(\d+))?/i);
+      if (m && m[2]) { const e = await fetchAnimeAv1CrawlEpisode(m[1], Number(m[2])); records = e ? [e] : []; kind = "episode"; }
+      else if (m) { records = await crawlAnimeAv1Anime(m[1]); kind = "anime"; }
+      else { records = await crawlAnimeAv1Site(); kind = "site"; }
+    } else {
+      // Generic: figure out any site.
+      if (!kind) kind = !path ? "site" : looksLikeEpisodeUrl(path) ? "episode" : "anime";
+      if (kind === "episode") { const e = await fetchGenericEpisode(rawUrl); records = e ? [e] : []; }
+      else if (kind === "anime") { records = await crawlGenericAnime(rawUrl, base); }
+      else { records = await crawlGenericSite(base); }
+    }
+
+    const catalog = buildCrawlCatalog(records, { source: domain, idPrefix: /jkanime/i.test(domain) ? "jk" : "crawl" });
+    const totalEpisodes = catalog.reduce((n, a) => n + a.episodes.length, 0);
+    if (!catalog.length) {
+      sendJson(response, { ok: false, error: `No playable episodes found on ${domain} for that link. Try pasting a specific anime or episode page.` });
+      return;
+    }
+    sendJson(response, {
+      ok: true,
+      name: kind === "site" ? domain : (catalog[0]?.title || domain),
+      kind,
+      catalog,
+      totalEpisodes,
+      playableCount: totalEpisodes,
+      duration: `${((Date.now() - started) / 1000).toFixed(1)}s`
+    });
+  } catch (error) {
+    sendJson(response, { ok: false, error: `Crawl failed: ${error.message}` });
+  }
+}
+
+// ── Embed resolver ────────────────────────────────────────────────────────────
+// Turn an embed page (Streamwish/Filemoon/Voe/Mp4upload/Streamtape/…) into a
+// direct stream URL (.m3u8/.mp4) so the native Android player can play it. So the
+// app's "every source plays in the native player" works for iframe hosts too.
+function unpackPackedJs(packed) {
+  // Dean Edwards' p,a,c,k,e,d unpacker (used by Streamwish/Filemoon/jwplayer skins).
+  // Greedy payload, anchored by the `,base,count,'keys'.split('|')` tail — the
+  // payload contains escaped quotes, so a non-greedy match stops too early.
+  const m = String(packed).match(/}\s*\(\s*'([\s\S]*)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([\s\S]*?)'\.split\('\|'\)/);
+  if (!m) return "";
+  const payload = m[1];
+  const base = parseInt(m[2], 10);
+  let count = parseInt(m[3], 10);
+  const keys = m[4].split("|");
+  const enc = (c) => (c < base ? "" : enc(Math.floor(c / base))) + ((c = c % base) > 35 ? String.fromCharCode(c + 29) : c.toString(36));
+  let out = payload.replace(/\\'/g, "'").replace(/\\\\/g, "\\");
+  while (count--) {
+    if (keys[count]) out = out.replace(new RegExp("\\b" + enc(count) + "\\b", "g"), keys[count]);
+  }
+  return out;
+}
+function extractStreamFromEmbed(html) {
+  const text = String(html || "");
+  const pick = (u) => u && { url: u.replace(/\\\//g, "/"), type: /\.m3u8(\?|#|$)/i.test(u) ? "hls" : "mp4" };
+  // 1) m3u8/mp4 sitting directly in the page markup or inline scripts.
+  let m = text.match(/https?:\/\/[^\s"'\\<>]+\.m3u8[^\s"'\\<>]*/i);
+  if (m) return pick(m[0]);
+  m = text.match(/["'](?:file|src|source)["']\s*:\s*["'](https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*)["']/i);
+  if (m) return pick(m[1]);
+  // 2) packed eval(...) payloads (Streamwish/Filemoon family) → unpack → file:"…".
+  for (const p of text.matchAll(/eval\(function\(p,a,c,k,e,d\)\{[\s\S]*?\}\([\s\S]*?\)\)\s*\)?/g)) {
+    const un = unpackPackedJs(p[0]);
+    let u = (un.match(/file\s*:\s*"([^"]+\.m3u8[^"]*)"/i) ||
+             un.match(/sources?\s*:\s*\[\s*\{[^}]*?(?:file|src)\s*:\s*"([^"]+)"/i) ||
+             un.match(/"(https?:\/\/[^"]+\.m3u8[^"]*)"/i) ||
+             un.match(/file\s*:\s*"([^"]+\.mp4[^"]*)"/i) ||
+             un.match(/"(https?:\/\/[^"]+\.mp4[^"]*)"/i));
+    if (u) return pick(u[1]);
+  }
+  // 3) last resort: any .mp4 in the page.
+  m = text.match(/https?:\/\/[^\s"'\\<>]+\.mp4[^\s"'\\<>]*/i);
+  if (m) return pick(m[0]);
+  return null;
+}
+async function handleResolveEmbed(reqUrl, response) {
+  const target = reqUrl.searchParams.get("url");
+  if (!target || !/^https?:\/\//i.test(target)) {
+    sendJson(response, { ok: false, error: "Missing embed url." }, 400);
+    return;
+  }
+  // Already a direct stream? Pass it straight through.
+  if (/\.(m3u8|mp4)(\?|#|$)/i.test(target)) {
+    sendJson(response, { ok: true, url: target, type: /\.m3u8/i.test(target) ? "hls" : "mp4" }, 200, { "Cache-Control": "public, max-age=120" });
+    return;
+  }
+  try {
+    const host = (target.match(/^https?:\/\/([^/]+)/) || [])[1] || "";
+    const r = await fetchWithTimeout(target, {
+      headers: { ...GENERIC_CRAWL_HEADERS, Referer: `https://${host}/` }
+    }, HOSTED_RUNTIME ? 8000 : 12000);
+    if (!r.ok) throw new Error(`embed HTTP ${r.status}`);
+    const html = await r.text();
+    const stream = extractStreamFromEmbed(html);
+    if (!stream) { sendJson(response, { ok: false, error: "No playable stream found in this embed." }); return; }
+    sendJson(response, {
+      ok: true,
+      url: stream.url,
+      type: stream.type,
+      referer: `https://${host}/`
+    }, 200, { "Cache-Control": "public, max-age=120" });
+  } catch (error) {
+    sendJson(response, { ok: false, error: `Resolve failed: ${error.message}` }, 502);
+  }
+}
+
+// Parse AnimeAV1's homepage "Últimos Episodios" grid in display order. Each card
+// is an <article> with an "Episodio <n>" badge, a title, a thumbnail, and an
+// anchor href="/media/<slug>/<ep>" carrying a sr-only "Ver <title> <ep>" label.
+function parseAnimeAv1Latest(html = "", limit = 40) {
+  const out = [];
+  const seen = new Set();
+  const re = /<article\b[^>]*>([\s\S]*?)<\/article>/g;
+  let m;
+  while ((m = re.exec(html)) && out.length < limit) {
+    const block = m[1];
+    const link = block.match(/href="\/media\/([^"\/]+)\/(\d+)"/);
+    if (!link) continue;                                   // not an episode card
+    const slug = cleanAnimeAv1Slug(link[1]);
+    if (!slug || seen.has(slug)) continue;
+    const sr = block.match(/<span class="sr-only">\s*Ver\s+([\s\S]*?)<\/span>/i);
+    const epBadge = block.match(/Episodio\s*<span[^>]*>\s*(\d+)\s*<\/span>/i);
+    const img = block.match(/<img[^>]+src="([^"]+)"/i);
+    const episode = Number(epBadge?.[1] || link[2] || 0);
+    let title = decodeHtmlEntities((sr?.[1] || "").trim());
+    title = title.replace(/\s+\d+\s*$/, "").trim();        // drop trailing episode number
+    if (!title) continue;
+    seen.add(slug);
+    out.push({ slug, episode, title, image: img?.[1] || "" });
+  }
+  return out;
+}
+
+async function fetchAnimeAv1LatestEpisodes() {
+  if (animeAv1LatestCache && Date.now() - animeAv1LatestCacheAt < ANIMEAV1_LATEST_TTL_MS) {
+    return animeAv1LatestCache;
+  }
+  const upstream = await fetchWithTimeout(`${ANIMEAV1_BASE}/`, { headers: ANIMEAV1_HEADERS }, HOSTED_RUNTIME ? 7000 : 10000);
+  if (!upstream.ok) throw new Error(`AnimeAV1 homepage returned HTTP ${upstream.status}.`);
+  const html = await upstream.text();
+  const items = parseAnimeAv1Latest(html);
+  if (items.length) {
+    animeAv1LatestCache = items;
+    animeAv1LatestCacheAt = Date.now();
+  }
+  return items;
+}
+
+async function handleAnimeAv1Latest(response) {
+  try {
+    const items = await fetchAnimeAv1LatestEpisodes();
+    sendJson(response, {
+      ok: items.length > 0,
+      source: "AnimeAV1",
+      count: items.length,
+      items
+    }, 200, { "Cache-Control": "public, max-age=120" });
+  } catch (error) {
+    // Serve a stale cache if we have one, otherwise report the failure.
+    if (animeAv1LatestCache?.length) {
+      sendJson(response, { ok: true, source: "AnimeAV1", stale: true, count: animeAv1LatestCache.length, items: animeAv1LatestCache });
+      return;
+    }
+    sendJson(response, { ok: false, source: "AnimeAV1", error: "AnimeAV1 latest failed.", detail: error.message, items: [] }, 502);
+  }
+}
+
 async function handleAnimeAv1Search(url, response) {
   const title = url.searchParams.get("title") || "";
   const id = url.searchParams.get("id") || "";
@@ -5808,6 +6526,7 @@ query($id:Int){
     bannerImage
     description(asHtml:false)
     genres averageScore popularity
+    studios{ nodes{ name isAnimationStudio } }
   }
 }`;
 
@@ -5837,6 +6556,7 @@ query($search:String){
       bannerImage
       description(asHtml:false)
       genres averageScore popularity
+      studios{ nodes{ name isAnimationStudio } }
     }
   }
 }`;
@@ -6045,6 +6765,8 @@ function normalizeAniListShow(entry) {
     latestAiredEp,
     status: entry.status || "",
     nextAiringEpisodeNumber: nextAiringEp || null,
+    // Absolute instant (ms) the next episode airs — timezone-independent.
+    nextAiringAt: entry.nextAiringEpisode?.airingAt ? entry.nextAiringEpisode.airingAt * 1000 : null,
     genre,
     genres: entry.genres || [genre],
     day,
@@ -6096,26 +6818,55 @@ function normalizeJikanShow(entry, source) {
 
 function mergeShows(items) {
   const byKey = new Map();
+  const idMap = new Map(); // malId -> anilistId or vice versa
+
+  // First pass: Link IDs
   items.forEach((show) => {
-    const key = show.malId ? `mal-${show.malId}` : show.anilistId ? `anilist-${show.anilistId}` : `title-${normalizeTitle(show.title)}`;
-    const current = byKey.get(key);
+    if (show.malId && show.anilistId) {
+      idMap.set(`mal-${show.malId}`, `anilist-${show.anilistId}`);
+      idMap.set(`anilist-${show.anilistId}`, `mal-${show.malId}`);
+    }
+  });
+
+  items.forEach((show) => {
+    const malKey = show.malId ? `mal-${show.malId}` : null;
+    const aniKey = show.anilistId ? `anilist-${show.anilistId}` : null;
+    const titleKey = `title-${normalizeTitle(show.title)}`;
+
+    // Find the best primary key for this show
+    let key = malKey || aniKey || titleKey;
+    if (malKey && idMap.has(malKey)) key = idMap.get(malKey);
+    else if (aniKey && idMap.has(aniKey)) key = aniKey; // prefer anilist as master key
+
+    const current = byKey.get(key) || byKey.get(malKey) || byKey.get(aniKey) || byKey.get(titleKey);
+
     // When merging episode counts, take the lower value so that a source with the
     // actual latest-aired episode (e.g. AniList) isn't overwritten by a source that
     // only knows the planned total (e.g. Jikan).
-    const epA = Number(current?.episode);
-    const epB = Number(show.episode);
+    const epA = Number(current?.latestAiredEp || current?.episode);
+    const epB = Number(show.latestAiredEp || show.episode);
     const mergedEpisode = epA && epB ? Math.min(epA, epB) : (epA || epB || current?.episode || show.episode);
-    byKey.set(key, {
+
+    const merged = {
       ...current,
       ...show,
+      id: current?.id || show.id,
+      anilistId: current?.anilistId || show.anilistId,
+      malId: current?.malId || show.malId,
       episode: mergedEpisode,
       image: current?.image || show.image,
       banner: current?.banner || show.banner,
-      description: current?.description || show.description,
+      description: (current?.description?.length || 0) > (show.description?.length || 0) ? current.description : show.description,
       source: current ? `${current.source} + ${show.source}` : show.source
-    });
+    };
+
+    byKey.set(key, merged);
+    if (malKey) byKey.set(malKey, merged);
+    if (aniKey) byKey.set(aniKey, merged);
+    if (titleKey) byKey.set(titleKey, merged);
   });
-  return [...byKey.values()];
+
+  return [...new Set(byKey.values())];
 }
 
 function normalizeTitle(value) {
@@ -6179,6 +6930,442 @@ function readJsonBody(request) {
   });
 }
 
+function decodeUnderHentaiImage(value = "") {
+  if (!value) return "";
+  try {
+    const parsed = new URL(decodeHtmlEntities(value), UNDERHENTAI_BASE);
+    const wasPageSpeed = /\.pagespeed\./i.test(parsed.pathname);
+    let pathname = parsed.pathname.replace(/\.pagespeed\.[^/]+$/i, "");
+    let filename = pathname.split("/").pop() || "";
+    filename = filename.replace(/^\d+x\d+x/i, "");
+    if (wasPageSpeed && filename.startsWith("x")) filename = filename.slice(1);
+    const slash = pathname.lastIndexOf("/");
+    parsed.pathname = `${slash >= 0 ? pathname.slice(0, slash + 1) : "/"}${filename}`;
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
+function underHentaiAttribute(tag = "", name = "") {
+  const match = String(tag).match(new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+  return decodeHtmlEntities(match?.[1] ?? match?.[2] ?? match?.[3] ?? "");
+}
+
+function isSafeAdultMetadata(item = {}) {
+  if (item.safetyExcluded === true) return false;
+  const metadata = [
+    item.title,
+    item.officialTitle,
+    item.description,
+    item.brand,
+    ...(Array.isArray(item.genres) ? item.genres : [])
+  ].filter(Boolean).join(" ").toLowerCase();
+  if (UNDERHENTAI_MINOR_MARKERS.some((marker) => metadata.includes(marker))) return false;
+  return !UNDERHENTAI_MINOR_PATTERNS.some((pattern) => pattern.test(metadata));
+}
+
+function readUnderHentaiCatalog() {
+  try {
+    const payload = JSON.parse(fs.readFileSync(UNDERHENTAI_CATALOG_FILE, "utf8"));
+    const items = Array.isArray(payload.items) ? payload.items.filter(isSafeAdultMetadata) : [];
+    return { ...payload, items };
+  } catch {
+    return { source: "UnderHentai", generatedAt: null, totalFound: 0, excludedForSafety: 0, items: [] };
+  }
+}
+
+function readUnderHentaiDetails() {
+  if (underHentaiDetailsSnapshot) return underHentaiDetailsSnapshot;
+  try {
+    const payload = JSON.parse(fs.readFileSync(UNDERHENTAI_DETAILS_FILE, "utf8"));
+    const items = Array.isArray(payload.items) ? payload.items.filter(isSafeAdultMetadata) : [];
+    underHentaiDetailsSnapshot = {
+      ...payload,
+      items,
+      bySlug: new Map(items.map((item) => [String(item.slug || "").toLowerCase(), item]))
+    };
+  } catch {
+    underHentaiDetailsSnapshot = { source: "UnderHentai", generatedAt: null, items: [], bySlug: new Map() };
+  }
+  return underHentaiDetailsSnapshot;
+}
+
+function hasUnderHentaiDirectEmbed(sourceOption = {}) {
+  return Array.isArray(sourceOption.embeds)
+    && sourceOption.embeds.some((embed) => /krakenfiles\.com\//i.test(String(embed)));
+}
+
+function prepareUnderHentaiSnapshotItem(item = {}) {
+  const slug = String(item.slug || "").toLowerCase();
+  return {
+    ...item,
+    episodes: (Array.isArray(item.episodes) ? item.episodes : []).map((episode) => ({
+      ...episode,
+      sourceOptions: (Array.isArray(episode.sourceOptions) ? episode.sourceOptions : [])
+        .filter(hasUnderHentaiDirectEmbed)
+        .map((sourceOption, releaseIndex) => ({
+          id: `underhentai-e${episode.number || episode.episode}-v${releaseIndex + 1}`,
+          label: sourceOption.label || `Stream ${releaseIndex + 1}`,
+          type: "resolver",
+          streamResolver: {
+            type: "underhentai",
+            endpoint: `/api/adult/underhentai/stream?slug=${encodeURIComponent(slug)}&episode=${encodeURIComponent(episode.number || episode.episode)}&release=${encodeURIComponent(sourceOption.releaseIndex ?? releaseIndex)}`
+          },
+          variant: sourceOption.variant || "",
+          format: sourceOption.format || "",
+          size: sourceOption.size || "",
+          subtitles: sourceOption.subtitles || "",
+          audio: sourceOption.audio || ""
+        })),
+      locked: !(Array.isArray(episode.sourceOptions) && episode.sourceOptions.some(hasUnderHentaiDirectEmbed))
+    }))
+  };
+}
+
+function parseUnderHentaiListing(html = "", page = 1) {
+  const items = [];
+  const articlePattern = /<article\b[^>]*class\s*=\s*(?:"[^"]*\bdata-block\b[^"]*"|'[^']*\bdata-block\b[^']*'|data-block)[^>]*>([\s\S]*?)<\/article>/gi;
+  for (const match of String(html).matchAll(articlePattern)) {
+    const block = match[1];
+    const linkTag = block.match(/<h2\b[^>]*>[\s\S]*?<a\b[^>]*>/i)?.[0] || "";
+    const href = underHentaiAttribute(linkTag, "href");
+    const title = stripHtml(block.match(/<h2\b[^>]*>([\s\S]*?)<\/h2>/i)?.[1] || "");
+    const imageTag = block.match(/<img\b[^>]*>/i)?.[0] || "";
+    const image = decodeUnderHentaiImage(underHentaiAttribute(imageTag, "src"));
+    if (!title || !href) continue;
+    try {
+      const itemUrl = new URL(href, UNDERHENTAI_BASE);
+      const slug = itemUrl.pathname.split("/").filter(Boolean).pop() || "";
+      if (slug) items.push({ slug, title, url: itemUrl.toString(), image, banner: image, page, genres: [], episodeCount: 0 });
+    } catch { /* malformed listing link */ }
+  }
+  return items.filter(isSafeAdultMetadata);
+}
+
+async function handleUnderHentaiCatalog(url, response) {
+  const snapshot = readUnderHentaiCatalog();
+  let items = snapshot.items;
+  if (!items.length) {
+    try {
+      const upstream = await fetchWithRetry(`${UNDERHENTAI_BASE}/`, { headers: UNDERHENTAI_HEADERS }, 2);
+      if (upstream.ok) items = parseUnderHentaiListing(await upstream.text(), 1);
+    } catch { /* return an empty but valid catalog below */ }
+  }
+  const query = String(url.searchParams.get("q") || "").trim().toLowerCase();
+  const filtered = query
+    ? items.filter((item) => `${item.title} ${item.officialTitle || ""} ${(item.genres || []).join(" ")}`.toLowerCase().includes(query))
+    : items;
+  sendJson(response, {
+    ok: true,
+    source: "UnderHentai",
+    adultOnly: true,
+    generatedAt: snapshot.generatedAt,
+    count: filtered.length,
+    totalFound: snapshot.totalFound || filtered.length,
+    excludedForSafety: snapshot.excludedForSafety || 0,
+    items: filtered
+  }, 200, { "Cache-Control": "public, max-age=900, stale-while-revalidate=21600" });
+}
+
+function parseUnderHentaiInfoBlock(html = "", label = "") {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return html.match(new RegExp(`<p>\\s*${escaped}\\s*<\\/p>([\\s\\S]*?)<\\/div>`, "i"))?.[1] || "";
+}
+
+function parseUnderHentaiTitlePage(html = "", sourceUrl = "") {
+  const title = stripHtml(html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1] || "");
+  const officialTitle = stripHtml(parseUnderHentaiInfoBlock(html, "Official Title"));
+  const brand = stripHtml(parseUnderHentaiInfoBlock(html, "Brand"));
+  const aired = stripHtml(parseUnderHentaiInfoBlock(html, "Aired"));
+  const genreBlock = parseUnderHentaiInfoBlock(html, "Genres");
+  const genres = [...genreBlock.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/gi)]
+    .map((match) => stripHtml(match[1]))
+    .filter(Boolean);
+  const coverTags = [...html.matchAll(/<img\b[^>]*(?:fetchpriority\s*=\s*(?:"high"|'high'|high)|\/uploads\/)[^>]*>/gi)];
+  const image = decodeUnderHentaiImage(coverTags.map((match) => underHentaiAttribute(match[0], "src")).find((value) => /\/uploads\//i.test(value)) || "");
+  const sectionMatches = [...html.matchAll(/class\s*=\s*(?:"ep2-header"|'ep2-header'|ep2-header)[^>]*>([\s\S]*?)<\/div>/gi)];
+  const episodes = new Map();
+
+  sectionMatches.forEach((header, sectionIndex) => {
+    const number = Number(stripHtml(header[1]).match(/(\d+)/)?.[1] || sectionIndex + 1);
+    const sectionStart = header.index + header[0].length;
+    const sectionEnd = sectionMatches[sectionIndex + 1]?.index ?? html.length;
+    const section = html.slice(sectionStart, sectionEnd);
+    const screenshots = [...section.matchAll(/\bdata-src\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/gi)]
+      .map((match) => decodeUnderHentaiImage(match[1] || match[2] || match[3] || ""))
+      .filter(Boolean);
+    const streams = [...section.matchAll(/<a\b[^>]*class\s*=\s*(?:"[^"]*\bep2-stream\b[^"]*"|'[^']*\bep2-stream\b[^']*'|ep2-stream)[^>]*>/gi)];
+    const sourceOptions = streams.map((stream, streamIndex) => {
+      const before = section.slice(0, stream.index);
+      const cardStart = Math.max(before.lastIndexOf('class="ep2-card'), before.lastIndexOf("class=ep2-card"), before.lastIndexOf("class='ep2-card"));
+      const card = before.slice(Math.max(0, cardStart));
+      const variant = stripHtml(
+        card.match(/class\s*=\s*(?:"ep2-vtype"|'ep2-vtype'|ep2-vtype)[^>]*>(?:\s*<span\b[^>]*>[\s\S]*?<\/span>)?\s*([^<]+)/i)?.[1]
+        || "Stream"
+      );
+      const metadata = {};
+      for (const pair of card.matchAll(/class\s*=\s*(?:"ep2-meta-label"|'ep2-meta-label'|ep2-meta-label)[^>]*>([\s\S]*?)<\/span>\s*<span\b[^>]*class\s*=\s*(?:"ep2-meta-value"|'ep2-meta-value'|ep2-meta-value)[^>]*>([\s\S]*?)<\/span>/gi)) {
+        metadata[stripHtml(pair[1]).toLowerCase()] = stripHtml(pair[2]).replace(/^[^A-Za-z0-9]+/, "");
+      }
+      const watchUrl = new URL(underHentaiAttribute(stream[0], "href"), sourceUrl || UNDERHENTAI_BASE).toString();
+      const details = [variant, metadata.subs, metadata.audio].filter(Boolean).join(" · ");
+      return {
+        id: `underhentai-e${number}-v${streamIndex + 1}`,
+        label: details || `Stream ${streamIndex + 1}`,
+        type: "resolver",
+        streamResolver: {
+          type: "underhentai",
+          endpoint: `/api/adult/underhentai/stream?watch=${encodeURIComponent(watchUrl)}`
+        },
+        variant,
+        format: metadata.format || "",
+        size: metadata.size || "",
+        subtitles: metadata.subs || "",
+        audio: metadata.audio || ""
+      };
+    });
+    episodes.set(number, {
+      episode: number,
+      number,
+      title: `Episode ${number}`,
+      image: screenshots[0] || image,
+      screenshots,
+      sourceOptions,
+      locked: !sourceOptions.length
+    });
+  });
+
+  const item = {
+    slug: (() => {
+      try { return new URL(sourceUrl).pathname.split("/").filter(Boolean).pop() || ""; } catch { return ""; }
+    })(),
+    title,
+    officialTitle,
+    brand,
+    aired,
+    genres,
+    image,
+    banner: [...episodes.values()].find((episode) => episode.image)?.image || image,
+    url: sourceUrl,
+    episodeCount: episodes.size,
+    description: [brand ? `Studio: ${brand}` : "", aired ? `Released: ${aired}` : ""].filter(Boolean).join(". "),
+    episodes: [...episodes.values()].sort((a, b) => a.episode - b.episode)
+  };
+  return isSafeAdultMetadata(item) ? item : null;
+}
+
+async function handleUnderHentaiDetails(url, response) {
+  const slug = String(url.searchParams.get("slug") || "").trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) {
+    sendJson(response, { ok: false, error: "Missing or invalid adult title id." }, 400);
+    return;
+  }
+  const cached = underHentaiDetailCache.get(slug);
+  if (cached && Date.now() - cached.ts < UNDERHENTAI_CACHE_TTL_MS) {
+    sendJson(response, { ok: true, source: "UnderHentai", adultOnly: true, cached: true, item: cached.data });
+    return;
+  }
+  const snapshotItem = readUnderHentaiDetails().bySlug.get(slug);
+  if (snapshotItem) {
+    const item = prepareUnderHentaiSnapshotItem(snapshotItem);
+    underHentaiDetailCache.set(slug, { data: item, ts: Date.now() });
+    sendJson(response, { ok: true, source: "UnderHentai", adultOnly: true, bundled: true, item });
+    return;
+  }
+  try {
+    const sourceUrl = `${UNDERHENTAI_BASE}/${encodeURIComponent(slug)}/`;
+    const upstream = await fetchWithRetry(sourceUrl, { headers: UNDERHENTAI_HEADERS }, 2);
+    if (!upstream.ok) throw new Error(`Title page returned HTTP ${upstream.status}`);
+    const item = parseUnderHentaiTitlePage(await upstream.text(), sourceUrl);
+    if (!item) {
+      sendJson(response, { ok: false, error: "This title is excluded by the adult-content safety filter." }, 404);
+      return;
+    }
+    underHentaiDetailCache.set(slug, { data: item, ts: Date.now() });
+    sendJson(response, { ok: true, source: "UnderHentai", adultOnly: true, item });
+  } catch (error) {
+    sendJson(response, { ok: false, error: error.message || "Adult title metadata is unavailable." }, 502);
+  }
+}
+
+function parseUnderHentaiEmbeds(html = "") {
+  const urls = [];
+  const pattern = /https:\/\/(?:www\.)?(?:krakenfiles\.com\/embed-video|luluvdo\.com\/embed|lulustream\.com\/embed)\/[A-Za-z0-9_-]+/gi;
+  for (const match of String(html).matchAll(pattern)) {
+    try {
+      const parsed = new URL(match[0]);
+      if (UNDERHENTAI_ALLOWED_EMBED_HOSTS.has(parsed.hostname.toLowerCase()) && !urls.includes(parsed.toString())) {
+        urls.push(parsed.toString());
+      }
+    } catch { /* malformed provider URL */ }
+  }
+  return urls;
+}
+
+async function resolveKrakenFiles(embedUrl) {
+  try {
+    log("info", "Attempting KrakenFiles resolution", { url: embedUrl });
+    const res = await fetchWithRetry(embedUrl, {
+      headers: {
+        "User-Agent": UNDERHENTAI_HEADERS["User-Agent"],
+        Accept: UNDERHENTAI_HEADERS.Accept,
+        Referer: UNDERHENTAI_BASE
+      }
+    }, 2);
+    if (!res.ok) {
+      log("warn", "KrakenFiles embed page fetch failed", { status: res.status, url: embedUrl });
+      return null;
+    }
+    const html = await res.text();
+
+    // Kraken's current embed page exposes the temporary signed MP4 directly.
+    // Prefer this clean media URL so the app never needs the provider iframe,
+    // advertising click handlers, fingerprinting, or telemetry scripts.
+    const sourceMatch = html.match(/<source\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i);
+    const sourceUrl = decodeHtmlEntities(sourceMatch?.[1] || sourceMatch?.[2] || sourceMatch?.[3] || "");
+    if (sourceUrl) {
+      try {
+        const parsed = new URL(sourceUrl);
+        if (parsed.protocol === "https:" && /(?:^|\.)krakencloud\.net$/i.test(parsed.hostname)) {
+          log("info", "KrakenFiles direct source found in embed page", { host: parsed.hostname });
+          return parsed.toString();
+        }
+      } catch { /* continue with the legacy resolver */ }
+    }
+
+    const idMatch = embedUrl.match(/\/embed-video\/([a-zA-Z0-9]+)/);
+    if (!idMatch) {
+      log("warn", "KrakenFiles ID not found in URL", { url: embedUrl });
+      return null;
+    }
+    const id = idMatch[1];
+
+    // Try multiple patterns for the data-token
+    const tokenMatch = html.match(/data-token="([^"]+)"/) ||
+                       html.match(/data-token='([^']+)'/) ||
+                       html.match(/token:\s*['"]([^'"]+)['"]/);
+
+    if (!tokenMatch) {
+      log("warn", "KrakenFiles token not found in HTML", { url: embedUrl });
+      return null;
+    }
+    const token = tokenMatch[1];
+
+    const ajaxUrl = `https://krakenfiles.com/ajax/video-url/${id}`;
+    log("info", "Fetching KrakenFiles direct URL via AJAX", { id, ajaxUrl });
+
+    const ajaxRes = await fetchWithRetry(ajaxUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Referer": embedUrl,
+        "X-Requested-With": "XMLHttpRequest",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
+      },
+      body: `token=${token}`
+    }, 1);
+
+    if (!ajaxRes.ok) {
+      log("warn", "KrakenFiles AJAX request failed", { status: ajaxRes.status, url: ajaxUrl });
+      return null;
+    }
+    const data = await ajaxRes.json();
+    if (data.url) {
+      log("info", "KrakenFiles resolution successful", { id });
+      return data.url;
+    } else {
+      log("warn", "KrakenFiles AJAX returned no URL", { data });
+      return null;
+    }
+  } catch (error) {
+    log("error", "KrakenFiles resolution error", { url: embedUrl, error: error.message });
+    return null;
+  }
+}
+
+async function handleUnderHentaiStream(url, response) {
+  const watch = String(url.searchParams.get("watch") || "").trim();
+  const slug = String(url.searchParams.get("slug") || "").trim().toLowerCase();
+  const episodeNumber = Number(url.searchParams.get("episode"));
+  const releaseIndex = Number(url.searchParams.get("release"));
+  let embeds = [];
+
+  try {
+    if (/^[a-z0-9][a-z0-9-]*$/.test(slug) && episodeNumber > 0 && releaseIndex >= 0) {
+      const snapshotItem = readUnderHentaiDetails().bySlug.get(slug);
+      const episode = snapshotItem?.episodes?.find((entry) => Number(entry.number || entry.episode) === episodeNumber);
+      const sourceOption = episode?.sourceOptions?.find((entry, index) => Number(entry.releaseIndex ?? index) === releaseIndex);
+      embeds = Array.isArray(sourceOption?.embeds) ? sourceOption.embeds.filter((embed) => {
+        try {
+          return UNDERHENTAI_ALLOWED_EMBED_HOSTS.has(new URL(embed).hostname.toLowerCase());
+        } catch {
+          return false;
+        }
+      }) : [];
+    } else {
+      let watchUrl;
+      try {
+        watchUrl = new URL(watch);
+      } catch {
+        sendJson(response, { ok: false, error: "Missing adult episode source reference." }, 400);
+        return;
+      }
+      if (!["underhentai.net", "www.underhentai.net"].includes(watchUrl.hostname.toLowerCase()) || watchUrl.pathname !== "/watch/") {
+        sendJson(response, { ok: false, error: "Adult episode URL is not allowed." }, 400);
+        return;
+      }
+      const upstream = await fetchWithRetry(watchUrl.toString(), { headers: UNDERHENTAI_HEADERS }, 2);
+      if (!upstream.ok) throw new Error(`Episode page returned HTTP ${upstream.status}`);
+      embeds = parseUnderHentaiEmbeds(await upstream.text());
+    }
+    if (!embeds.length) {
+      sendJson(response, { ok: false, error: "No supported playback provider was found for this release." }, 404);
+      return;
+    }
+
+    const sourceOptions = await Promise.all(embeds.map(async (embed, index) => {
+      const isKraken = /krakenfiles/i.test(embed);
+      let directUrl = null;
+      if (isKraken) {
+        directUrl = await resolveKrakenFiles(embed);
+      }
+      return {
+        id: `underhentai-provider-${index + 1}`,
+        label: isKraken ? "KrakenFiles" : "LuluStream",
+        type: directUrl ? "direct" : "iframe",
+        videoUrl: directUrl || "",
+        externalUrl: embed,
+        externalType: "iframe"
+      };
+    }));
+
+    const directSources = sourceOptions.filter((sourceOption) => sourceOption.type === "direct" && sourceOption.videoUrl);
+    if (!directSources.length) {
+      sendJson(response, {
+        ok: false,
+        error: "No ad-free direct playback source is currently available for this release."
+      }, 404);
+      return;
+    }
+    const bestSource = directSources[0];
+    const payload = {
+      ok: true,
+      source: "UnderHentai",
+      adultOnly: true,
+      videoUrl: bestSource.videoUrl || "",
+      externalUrl: "",
+      externalType: "",
+      sourceOptions: directSources
+    };
+    sendJson(response, payload);
+  } catch (error) {
+    sendJson(response, { ok: false, error: error.message || "Adult episode playback is unavailable." }, 502);
+  }
+}
+
 function sendJson(response, payload, status = 200, extraHeaders = {}) {
   response.writeHead(status, {
     ...SECURITY_HEADERS,
@@ -6208,4 +7395,245 @@ function maskSecret(value, visible = 4) {
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function fetchJikanJson(pathname) {
+  const run = async () => {
+    const waitMs = Math.max(0, 350 - (Date.now() - jikanLastRequestAt));
+    if (waitMs) await wait(waitMs);
+    jikanLastRequestAt = Date.now();
+    const upstream = await fetchWithRetry(`https://api.jikan.moe/v4${pathname}`);
+    if (!upstream.ok) throw new Error(`Jikan HTTP ${upstream.status}`);
+    return upstream.json();
+  };
+  const request = jikanRequestQueue.then(run, run);
+  jikanRequestQueue = request.catch(() => {});
+  return request;
+}
+
+async function handleJikanFull(url, response) {
+  const malId = url.searchParams.get("id");
+  if (!malId) return sendJson(response, { error: "Missing ID" }, 400);
+  try {
+    const cached = jikanFullCache.get(String(malId));
+    if (cached && Date.now() - cached.ts < JIKAN_EPISODE_CACHE_TTL_MS) {
+      return sendJson(response, { data: cached.data, cached: true });
+    }
+    const payload = await fetchJikanJson(`/anime/${encodeURIComponent(malId)}/full`);
+    const data = payload.data || null;
+    if (data) jikanFullCache.set(String(malId), { data, ts: Date.now() });
+    sendJson(response, { data });
+  } catch (error) {
+    console.error("[Jikan] full metadata error:", error);
+    sendJson(response, { error: error.message }, 500);
+  }
+}
+
+async function handleJikanSearch(url, response) {
+  const query = String(url.searchParams.get("q") || "").trim();
+  if (!query) return sendJson(response, { error: "Missing query" }, 400);
+  const cacheKey = normalizeTitle(query);
+  try {
+    const cached = jikanSearchCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < JIKAN_EPISODE_CACHE_TTL_MS) {
+      return sendJson(response, { data: cached.data, cached: true });
+    }
+    const payload = await fetchJikanJson(`/anime?q=${encodeURIComponent(query)}&limit=5&sfw=true`);
+    const data = payload.data || [];
+    jikanSearchCache.set(cacheKey, { data, ts: Date.now() });
+    sendJson(response, { data });
+  } catch (error) {
+    console.error("[Jikan] search error:", error);
+    sendJson(response, { error: error.message }, 500);
+  }
+}
+
+async function handleJikanEpisodes(url, response) {
+  const malId = url.searchParams.get("id");
+  if (!malId) return sendJson(response, { error: "Missing ID" }, 400);
+
+  try {
+    const cached = jikanEpisodeCache.get(String(malId));
+    if (cached && Date.now() - cached.ts < JIKAN_EPISODE_CACHE_TTL_MS) {
+      return sendJson(response, { data: cached.data, cached: true });
+    }
+
+    const firstPayload = await fetchJikanJson(`/anime/${encodeURIComponent(malId)}/episodes?page=1`);
+    const pageCount = Math.max(1, Math.min(30, Number(firstPayload.pagination?.last_visible_page || 1)));
+    const payloads = [firstPayload];
+
+    for (let page = 2; page <= pageCount; page += 2) {
+      const batch = [page, page + 1].filter((value) => value <= pageCount);
+      const results = await Promise.all(batch.map((pageNumber) =>
+        fetchJikanJson(`/anime/${encodeURIComponent(malId)}/episodes?page=${pageNumber}`)
+      ));
+      payloads.push(...results);
+    }
+
+    const episodes = payloads
+      .flatMap((payload) => payload.data || [])
+      .map(normalizeJikanEpisode)
+      .sort((a, b) => Number(a.episode || 0) - Number(b.episode || 0));
+    jikanEpisodeCache.set(String(malId), { data: episodes, ts: Date.now() });
+    sendJson(response, { data: episodes, pages: pageCount });
+  } catch (error) {
+    console.error("[Jikan] episodes error:", error);
+    sendJson(response, { error: error.message }, 500);
+  }
+}
+
+function normalizeJikanEpisode(ep) {
+  return {
+    episode: ep.mal_id,
+    title: ep.title,
+    title_japanese: ep.title_japanese,
+    image: ep.images?.webp?.image_url || ep.images?.jpg?.image_url || "",
+    aired: ep.aired,
+    filler: ep.filler,
+    recap: ep.recap,
+    forum_url: ep.forum_url
+  };
+}
+
+// ── TMDB proxy ───────────────────────────────────────────────────────────────
+// Thin proxy that keeps the TMDB credentials server-side. The client-side
+// ImageResolver does the title matching / confidence scoring / caching; here we
+// only forward search, show, and season requests (with shared server caching).
+function tmdbFetch(pathname, params = {}) {
+  if (!TMDB_CONFIGURED && TMDB_PROXY_BASE) {
+    const proxyParams = new URLSearchParams();
+    let route = "";
+    const tvMatch = pathname.match(/^\/tv\/(\d+)$/);
+    const seasonMatch = pathname.match(/^\/tv\/(\d+)\/season\/(\d+)$/);
+    if (pathname === "/search/tv") {
+      route = "search";
+      proxyParams.set("q", String(params.query || ""));
+      if (params.first_air_date_year) proxyParams.set("year", String(params.first_air_date_year));
+    } else if (seasonMatch) {
+      route = "season";
+      proxyParams.set("id", seasonMatch[1]);
+      proxyParams.set("season", seasonMatch[2]);
+    } else if (tvMatch) {
+      route = "tv";
+      proxyParams.set("id", tvMatch[1]);
+    } else {
+      return Promise.reject(new Error("Unsupported TMDB proxy route"));
+    }
+    const requestUrl = `${TMDB_PROXY_BASE}/${route}?${proxyParams.toString()}`;
+    return fetchWithTimeout(requestUrl, { headers: { Accept: "application/json" } }, TMDB_TIMEOUT_MS).then(async (upstream) => {
+      if (!upstream.ok) throw new Error(`TMDB proxy HTTP ${upstream.status}`);
+      return upstream.json();
+    });
+  }
+
+  const search = new URLSearchParams(params);
+  // v3 key goes in the query string; a v4 token goes in the Authorization header.
+  const headers = { Accept: "application/json" };
+  if (TMDB_READ_TOKEN) headers.Authorization = `Bearer ${TMDB_READ_TOKEN}`;
+  else if (TMDB_API_KEY) search.set("api_key", TMDB_API_KEY);
+  const qs = search.toString();
+  const requestUrl = `${TMDB_API_BASE}${pathname}${qs ? `?${qs}` : ""}`;
+  return fetchWithTimeout(requestUrl, { headers }, TMDB_TIMEOUT_MS).then(async (upstream) => {
+    if (!upstream.ok) throw new Error(`TMDB HTTP ${upstream.status}`);
+    return upstream.json();
+  });
+}
+
+function tmdbNotConfigured(response) {
+  // Not an error: the client treats configured:false as "fall back to AniList".
+  sendJson(response, { ok: true, configured: false, results: [] });
+}
+
+async function handleTmdbSearch(url, response) {
+  if (!TMDB_AVAILABLE) return tmdbNotConfigured(response);
+  const query = String(url.searchParams.get("q") || "").trim();
+  if (!query) return sendJson(response, { ok: false, configured: true, error: "Missing query" }, 400);
+  const year = String(url.searchParams.get("year") || "").trim();
+  const cacheKey = `${normalizeTitle(query)}|${year}`;
+  try {
+    const cached = tmdbSearchCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < TMDB_CACHE_TTL_MS) {
+      return sendJson(response, { ok: true, configured: true, cached: true, results: cached.data });
+    }
+    const params = { query, include_adult: "false", language: "en-US" };
+    if (year) params.first_air_date_year = year;
+    const payload = await tmdbFetch("/search/tv", params);
+    const results = Array.isArray(payload.results) ? payload.results.slice(0, 10) : [];
+    tmdbSearchCache.set(cacheKey, { data: results, ts: Date.now() });
+    sendJson(response, { ok: true, configured: true, results });
+  } catch (error) {
+    log("warn", "TMDB search failed", { query, error: error.message });
+    sendJson(response, { ok: false, configured: true, error: error.message, results: [] }, 502);
+  }
+}
+
+async function handleTmdbTv(url, response) {
+  if (!TMDB_AVAILABLE) return tmdbNotConfigured(response);
+  const id = String(url.searchParams.get("id") || "").trim();
+  if (!id) return sendJson(response, { ok: false, configured: true, error: "Missing id" }, 400);
+  try {
+    const cached = tmdbTvCache.get(id);
+    if (cached && Date.now() - cached.ts < TMDB_CACHE_TTL_MS) {
+      return sendJson(response, { ok: true, configured: true, cached: true, show: cached.data });
+    }
+    const payload = await tmdbFetch(`/tv/${encodeURIComponent(id)}`, { language: "en-US" });
+    const show = {
+      id: payload.id,
+      name: payload.name,
+      original_name: payload.original_name,
+      first_air_date: payload.first_air_date,
+      poster_path: payload.poster_path,
+      backdrop_path: payload.backdrop_path,
+      number_of_seasons: payload.number_of_seasons,
+      seasons: Array.isArray(payload.seasons)
+        ? payload.seasons.map((s) => ({
+            season_number: s.season_number,
+            name: s.name,
+            poster_path: s.poster_path,
+            air_date: s.air_date,
+            episode_count: s.episode_count
+          }))
+        : []
+    };
+    tmdbTvCache.set(id, { data: show, ts: Date.now() });
+    sendJson(response, { ok: true, configured: true, show });
+  } catch (error) {
+    log("warn", "TMDB tv fetch failed", { id, error: error.message });
+    sendJson(response, { ok: false, configured: true, error: error.message }, 502);
+  }
+}
+
+async function handleTmdbSeason(url, response) {
+  if (!TMDB_AVAILABLE) return tmdbNotConfigured(response);
+  const id = String(url.searchParams.get("id") || "").trim();
+  const season = String(url.searchParams.get("season") || "").trim();
+  if (!id || season === "") return sendJson(response, { ok: false, configured: true, error: "Missing id or season" }, 400);
+  const cacheKey = `${id}:${season}`;
+  try {
+    const cached = tmdbSeasonCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < TMDB_CACHE_TTL_MS) {
+      return sendJson(response, { ok: true, configured: true, cached: true, season: cached.data });
+    }
+    const payload = await tmdbFetch(`/tv/${encodeURIComponent(id)}/season/${encodeURIComponent(season)}`, { language: "en-US" });
+    const data = {
+      season_number: payload.season_number,
+      name: payload.name,
+      poster_path: payload.poster_path,
+      air_date: payload.air_date,
+          episodes: Array.isArray(payload.episodes)
+        ? payload.episodes.map((ep) => ({
+            episode_number: ep.episode_number,
+            name: ep.name,
+            overview: ep.overview,
+            still_path: ep.still_path,
+            air_date: ep.air_date
+          }))
+        : []
+    };
+    tmdbSeasonCache.set(cacheKey, { data, ts: Date.now() });
+    sendJson(response, { ok: true, configured: true, season: data });
+  } catch (error) {
+    log("warn", "TMDB season fetch failed", { id, season, error: error.message });
+    sendJson(response, { ok: false, configured: true, error: error.message }, 502);
+  }
 }

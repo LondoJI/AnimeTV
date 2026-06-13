@@ -20,11 +20,11 @@ const ImageResolver = (function () {
   "use strict";
 
   const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
-  const MATCH_CACHE_PREFIX = "zenkaitv:tmdb-match:v1:";
+  const MATCH_CACHE_PREFIX = "zenkaitv:tmdb-match:v2:";
   const MATCH_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
   const FAILED_CACHE_KEY = "zenkaitv:img-failed:v1";
   const FAILED_CACHE_MAX = 400;
-  const CONFIDENCE_THRESHOLD = 55; // below this we reject the TMDB match
+  const CONFIDENCE_THRESHOLD = 72; // reject loose matches that can attach the wrong anime artwork
 
   // Debug logging — on by default, silence with localStorage zenkaitv:img-debug=0
   function debugEnabled() {
@@ -40,9 +40,9 @@ const ImageResolver = (function () {
     if (!p) return "";
     return `${TMDB_IMG_BASE}/${size}${p.startsWith("/") ? "" : "/"}${p}`;
   }
-  const tmdbStillUrl   = (p) => tmdbImage(p, "w780");   // 16:9 episode still
-  const tmdbBackdropUrl = (p) => tmdbImage(p, "w1280"); // wide cinematic backdrop
-  const tmdbPosterUrl  = (p) => tmdbImage(p, "w500");   // vertical poster
+  const tmdbStillUrl   = (p) => tmdbImage(p, "w780");    // 16:9 episode still
+  const tmdbBackdropUrl = (p) => tmdbImage(p, "original"); // highest-quality wide backdrop
+  const tmdbPosterUrl  = (p) => tmdbImage(p, "w780");    // high-resolution vertical poster
 
   // ── Failed-image cache (so we never retry a known-broken URL) ───────────────
   let _failedMemory = null;
@@ -211,6 +211,7 @@ const ImageResolver = (function () {
     anime.tmdbBackdrop = data.showBackdrop || anime.tmdbBackdrop || null;
     anime.tmdbSeasonPoster = data.seasonPoster || anime.tmdbSeasonPoster || null;
     anime.tmdbEpisodeStills = data.episodeStills || anime.tmdbEpisodeStills || {};
+    anime.tmdbEpisodesByNum = data.episodesByNum || anime.tmdbEpisodesByNum || {};
     // Convenience bundle matching the documented imageSources shape.
     anime.imageSources = {
       poster: firstValidImage([anime.tmdbSeasonPoster, anime.tmdbPoster, anime.coverImageLarge, anime.image, anime.coverImage]) || null,
@@ -292,7 +293,7 @@ const ImageResolver = (function () {
       debug(`candidates for ${anilistId}:`, scored.map((s) => `${s.c.name} (#${s.c.id}) → ${s.confidence} [${s.reason}]`));
 
       const best = scored[0];
-      if (!best || best.confidence < CONFIDENCE_THRESHOLD) {
+      if (!best || best.confidence < CONFIDENCE_THRESHOLD || best.tScore < 72) {
         debug(`rejected best match for ${anilistId}: ${best?.c?.name} confidence ${best?.confidence} < ${CONFIDENCE_THRESHOLD}. AniList fallback.`);
         anime._tmdbResolved = true;
         return anime;
@@ -313,6 +314,7 @@ const ImageResolver = (function () {
       // Season-specific art (poster + episode stills) when we can map it.
       let seasonPoster = "";
       const episodeStills = {};
+      const episodesByNum = {};
       if (show) {
         const { season, reason } = pickTmdbSeason(anime, show);
         if (season) {
@@ -327,6 +329,15 @@ const ImageResolver = (function () {
             for (const ep of (payload?.season?.episodes || [])) {
               const still = tmdbStillUrl(ep.still_path);
               if (ep.episode_number && still) episodeStills[ep.episode_number] = still;
+              if (ep.episode_number) {
+                episodesByNum[ep.episode_number] = {
+                  episode: ep.episode_number,
+                  title: ep.name || "",
+                  description: ep.overview || "",
+                  aired: ep.air_date || "",
+                  thumbnail: still
+                };
+              }
             }
             debug(`fetched ${Object.keys(episodeStills).length} episode stills for ${anilistId}.`);
           } catch { /* show-level art still applies */ }
@@ -341,7 +352,8 @@ const ImageResolver = (function () {
         showPoster,
         showBackdrop,
         seasonPoster,
-        episodeStills
+        episodeStills,
+        episodesByNum
       };
       applyResolvedMatch(anime, resolved);
       anime._tmdbResolved = true;
@@ -365,9 +377,12 @@ const ImageResolver = (function () {
     const url = firstValidImage([
       tmdbData.episodeStill || getEpisodeStill(anime, episode),
       episode?.image, episode?.thumbnail, episode?.still, episode?.snapshot,
+      // No per-episode still (common for unaired shows): fall back to real show
+      // art so the row shows a poster instead of a bland gradient placeholder.
+      // The wide banner fits the 16:9 thumb best, then season/show posters.
       tmdbData.seasonPoster || anime.tmdbSeasonPoster,
-      tmdbData.showPoster || anime.tmdbPoster,
       anime.bannerImage || anime.banner,
+      tmdbData.showPoster || anime.tmdbPoster,
       anime.coverImageLarge,
       anime.coverImage || anime.image
     ]);

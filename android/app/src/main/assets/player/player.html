@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>AnimeTV Video Player</title>
+  <title>ZenkaiTV Video Player</title>
   <style>
     html,
     body {
@@ -26,20 +26,6 @@
       height: 100% !important;
       overflow: hidden;
       background: #000;
-    }
-
-    * {
-      pointer-events: none !important;
-      user-select: none !important;
-    }
-
-    video-js div,
-    video-js div * {
-      display: none !important;
-    }
-
-    video {
-      z-index: 99999 !important;
     }
 
     .scale-0 video,
@@ -66,7 +52,10 @@
 
       function streamTypeFromUrl(url) {
         var clean = String(url || "").split("?")[0].split("#")[0].toLowerCase();
+        if (location.hash === "#file") return "video/mp4";
+        if (location.hash === "#dash") return "application/dash+xml";
         if (clean.endsWith(".mpd")) return "application/dash+xml";
+        if (/krakencloud\.net\/play\/video\//i.test(clean)) return "video/mp4";
         if (clean.endsWith(".mp4") || clean.endsWith(".m4v") || clean.endsWith(".webm") || clean.endsWith(".mov")) return "video/mp4";
         return "application/x-mpegURL";
       }
@@ -80,6 +69,7 @@
           if (/anime-dunya/i.test(host)) return "anime-dunya.com";
           if (/watching\.onl|vidwish\.live|anivideo\.sbs|cloudbuzz\.lol|trycloud\.pro/i.test(host)) return "vidwish.live";
           if (/mp4upload\.com/i.test(host)) return "mp4upload.com";
+          if (/krakencloud\.net/i.test(host)) return "krakenfiles.com";
           return host;
         } catch (error) {
           return "";

@@ -420,7 +420,9 @@ function mergeShows(items) {
       source: current ? `${current.source} + ${show.source}` : show.source
     });
   });
-  return [...byKey.values()].slice(0, 320);
+  // Keep enough room for the regular catalog plus isolated mode-specific
+  // catalogs. Individual surfaces apply their own rendering limits.
+  return [...byKey.values()].slice(0, 1200);
 }
 
 function mergeEpisodes(current = [], incoming = []) {

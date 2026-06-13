@@ -46,6 +46,7 @@ for (const outDir of outDirs) {
 
   copyFileSync(join(sourceDir, "client.js"), join(outDir, "client.js"));
   copyDir(join(sourceDir, "js"), join(outDir, "js"));
+  copyDir(join(sourceDir, "player"), join(outDir, "player"));
 }
 
 console.log(`ZenkaiTV static build ready in ${outDirs.join(" and ")}`);

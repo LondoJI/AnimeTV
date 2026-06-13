@@ -96,9 +96,45 @@ const AdultMode = (function () {
     if (!item) return false;
     if (item.isAdult === true || item.adult === true || item.nsfw === true || item.hentai === true) return true;
     if (item.adultSource) return true;
-    const genres = Array.isArray(item.genres) ? item.genres : (item.genre ? [item.genre] : []);
-    if (genres.some((g) => /\bhentai\b/i.test(String(g)))) return true;
+    const fields = [
+      item.title,
+      item.romajiTitle,
+      item.nativeTitle,
+      ...(Array.isArray(item.aliases) ? item.aliases : []),
+      ...(Array.isArray(item.genres) ? item.genres : []),
+      item.genre
+    ].filter(Boolean).join(" ").toLowerCase().replace(/[_-]+/g, " ");
+
+    if (/\bhentai\b/i.test(fields)) return true;
+
+    // Explicit hentai-only keywords for content that isn't tagged "Hentai".
+    // IMPORTANT: matched as WHOLE WORDS (so "anal" can't catch "analysis",
+    // "ntr" can't catch "entry", "rape" can't catch "grape"), and WITHOUT the
+    // mainstream romance genres "yuri"/"yaoi"/"girls love" — those are regular
+    // anime (e.g. "...Yoeru Sugata wa Yuri no Hana") and must stay in the normal
+    // catalog. Real adult titles come in flagged via item.adultSource above.
+    const adultMarkers = [
+      "anal", "big boobs", "milf", "creampie", "incest", "netorare", "ntr",
+      "blowjob", "facial", "gangbang", "tentacle", "bondage", "bdsm",
+      "handjob", "masturbation", "paizuri", "rimjob", "bukkake", "ahegao"
+    ];
+    if (adultMarkers.some((marker) => new RegExp(`\\b${marker}\\b`, "i").test(fields))) return true;
+
+    // Safety markers that also imply adult content (to separate catalogs)
+    const minorMarkers = [
+      "child", "children", "elementary", "high school", "junior high",
+      "loli", "lolicon", "middle school", "minor", "schoolboy", "schoolgirl",
+      "shishunki", "shota", "shotacon", "student", "teen", "teenage",
+      "underage", "young boy", "young girl", "joshi kousei", "joshi kōsei"
+    ];
+    if (minorMarkers.some((marker) => fields.includes(marker)) && (item.genre === "Hentai" || item.isAdult)) return true;
+
     return false;
+  }
+
+  function isSafeAdultContent(item) {
+    // Permissive: everything identified as adult is "safe" for the user's requested adult mode.
+    return isAdultContent(item);
   }
 
   /**
@@ -117,7 +153,7 @@ const AdultMode = (function () {
 
   // True when `item` belongs in the currently-active catalog.
   function matchesActiveCatalog(item) {
-    return _enabled ? isAdultContent(item) : !isAdultContent(item);
+    return _enabled ? isSafeAdultContent(item) : !isAdultContent(item);
   }
 
   return {
@@ -128,6 +164,7 @@ const AdultMode = (function () {
     toggle,
     onChange,
     isAdultContent,
+    isSafeAdultContent,
     matchesActiveCatalog,
     filterCatalog,
     ENABLED_KEY,
