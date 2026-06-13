@@ -1864,6 +1864,9 @@ function getWatchPosterArtwork(show = {}, season = null) {
   show = show || {};
   season = season || {};
   const candidates = [
+    show.images?.poster,
+    show.images?.cover,
+    show.images?.thumbnail,
     show.tmdbSeasonPoster,
     show.tmdbPoster,
     show.coverImageLarge,
@@ -1872,7 +1875,9 @@ function getWatchPosterArtwork(show = {}, season = null) {
     show.cover,
     show.coverImage,
     show.thumbnail,
-    season.image,
+    season?.image,
+    show.images?.banner,
+    show.images?.backdrop,
     show.banner,
     show.backdrop
   ].map((value) => hqImage(String(value || "").trim()));
@@ -1881,6 +1886,9 @@ function getWatchPosterArtwork(show = {}, season = null) {
 
 function getCardPosterCandidates(show = {}) {
   const candidates = [
+    show.images?.poster,
+    show.images?.cover,
+    show.images?.thumbnail,
     show.tmdbSeasonPoster,
     show.tmdbPoster,
     show.coverImageLarge,
@@ -1889,7 +1897,8 @@ function getCardPosterCandidates(show = {}) {
     show.poster,
     show.cover,
     show.jikanImage,
-    show.thumbnail
+    show.thumbnail,
+    "logo-round.png"
   ];
   const expanded = [];
   candidates.forEach((value) => {
@@ -1912,11 +1921,13 @@ function getWatchBackdropArtwork(show = {}, season = null) {
   show = show || {};
   season = season || {};
   const candidates = [
+    show.images?.backdrop,
+    show.images?.banner,
     show.tmdbBackdrop,
     show.highQualityBackground,
     show.banner,
     show.bannerImage,
-    season.tmdbBackdrop,
+    season?.tmdbBackdrop,
     show.tmdbSeasonPoster,
     show.backdrop,
     show.heroImage,
@@ -1924,9 +1935,12 @@ function getWatchBackdropArtwork(show = {}, season = null) {
     show.landscapeImage,
     show.jikanBackground,
     show.coverImageLarge,
-    season.highQualityBackground,
-    season.banner,
-    season.backdrop
+    season?.highQualityBackground,
+    season?.banner,
+    season?.backdrop,
+    show.images?.poster,
+    show.images?.cover,
+    show.image
   ].map((value) => hqImage(String(value || "").trim()));
   return pickImage(candidates);
 }
@@ -2090,7 +2104,14 @@ document.addEventListener("error", (event) => {
   const img = event.target;
   if (!(img instanceof HTMLImageElement)) return;
   if (!img.isConnected) return; // Ignore unmounted/aborted image loads.
-  if (img.classList.contains("thumb-poster") || img.classList.contains("thumb-backdrop")) {
+  
+  const hasCandidates = img.classList.contains("thumb-poster") || 
+                        img.classList.contains("thumb-backdrop") ||
+                        img.classList.contains("ep-thumb-img") ||
+                        img.classList.contains("season-card-img") ||
+                        img.classList.contains("watch-poster");
+                        
+  if (hasCandidates) {
     try { ImageResolver.markImageFailed(img.currentSrc || img.src); } catch { /* resolver optional */ }
     let candidates = [];
     try { candidates = JSON.parse(decodeURIComponent(img.dataset.imageFallbacks || "")); } catch { /* no fallback list */ }
@@ -2107,8 +2128,10 @@ document.addEventListener("error", (event) => {
       return;
     }
   }
+  
   if (img.dataset.imgFallback) return;
   img.dataset.imgFallback = "1";
+  
   if (img.classList.contains("watch-poster")) {
     img.style.display = "none";
     const wrap = img.closest(".watch-ready-poster-wrap");
@@ -2118,6 +2141,14 @@ document.addEventListener("error", (event) => {
       ph.innerHTML = '<div class="play-symbol" aria-hidden="true"></div>';
       wrap.appendChild(ph);
     }
+  } else if (img.classList.contains("ep-thumb-img")) {
+    img.style.display = "none";
+    if (img.parentElement) {
+      img.parentElement.classList.remove("has-image");
+      img.parentElement.classList.add("is-placeholder");
+    }
+  } else if (img.classList.contains("season-card-img")) {
+    img.style.display = "none";
   } else if (img.classList.contains("thumb-poster") || img.classList.contains("thumb-backdrop") || img.closest(".carousel-dot")) {
     img.style.visibility = "hidden";   // reveal the card's gradient placeholder
   }
@@ -5369,12 +5400,27 @@ function resetVideoFrame() {
       ? `Source: ${escapeHtml(show.source)}`
       : "";
 
+  const watchPosterCandidates = [
+    poster,
+    show?.images?.poster,
+    show?.images?.cover,
+    show?.tmdbSeasonPoster,
+    show?.tmdbPoster,
+    show?.coverImageLarge,
+    show?.image,
+    "logo-round.png"
+  ].map(u => String(u || "").trim()).filter(Boolean);
+  const watchPosterUrl = watchPosterCandidates[0] || "";
+  const watchFallbackData = watchPosterCandidates.length
+    ? ` data-image-fallbacks="${escapeHtml(encodeURIComponent(JSON.stringify(watchPosterCandidates)))}" data-image-fallback-index="0"`
+    : "";
+
   frame.innerHTML = `
     <div class="watch-ready-state" id="watchArt">
       <div class="watch-ready-poster-wrap">
         ${
-          poster
-            ? `<img referrerpolicy="no-referrer" class="watch-poster" src="${escapeHtml(poster)}" alt="${escapeHtml(getShowTitle(show))}" loading="lazy" onerror="handleWatchPosterError(this)">`
+          watchPosterUrl
+            ? `<img referrerpolicy="no-referrer" class="watch-poster" src="${escapeHtml(watchPosterUrl)}" alt="${escapeHtml(getShowTitle(show))}" loading="lazy"${watchFallbackData} onerror="handleWatchPosterError(this)">`
             : `<div class="watch-poster-placeholder"><div class="play-symbol" aria-hidden="true"></div></div>`
         }
       </div>
@@ -5846,6 +5892,22 @@ function renderEpisodeList(show) {
             show,
             repeatedImages
           );
+          const tmdbStill = (typeof ImageResolver !== "undefined") ? ImageResolver.getEpisodeStill(show, { episode: num }) : "";
+          const epOwnImage = episode.image || episode.thumbnail || episode.still || episode.snapshot || epMeta?.thumbnail || "";
+          const epBackdrop = show.images?.backdrop || show.images?.banner || show.tmdbBackdrop || show.banner || show.bannerImage || "";
+          const epPoster = show.images?.poster || show.images?.cover || show.tmdbSeasonPoster || show.tmdbPoster || show.coverImageLarge || show.image || show.coverImage || "";
+          const epFallbacks = [
+            thumb,
+            tmdbStill,
+            epOwnImage,
+            epBackdrop,
+            epPoster,
+            "logo-round.png"
+          ].map(u => String(u || "").trim()).filter(Boolean);
+          const epImgSrc = epFallbacks[0] || "";
+          const epFallbackData = epFallbacks.length
+            ? ` data-image-fallbacks="${escapeHtml(encodeURIComponent(JSON.stringify(epFallbacks)))}" data-image-fallback-index="0"`
+            : "";
           const date = episodeAirDateLabel({ ...episode, aired: episode.aired || epMeta?.aired });
           const fallbackHue = (stableVisualHue(show.id || show.title) + (Number(num) * 19)) % 360;
           const locked = isEpisodeUnavailable(episode);
@@ -5867,8 +5929,8 @@ function renderEpisodeList(show) {
           <button class="ep-row focusable ${locked ? "is-locked" : ""} ${selected ? "is-selected" : ""} ${watchCls}"
                   data-season-index="${state.activeSeasonIndex}" data-episode-index="${episodeIndex}"
                   data-ep-search="${escapeHtml(search)}">
-            <span class="ep-thumb ${thumb ? "has-image" : "is-placeholder"}" style="--episode-hue:${fallbackHue}">
-              ${thumb ? `<img referrerpolicy="no-referrer" class="ep-thumb-img" src="${escapeHtml(thumb)}" alt="" loading="lazy" onerror="if(this.isConnected){try{ImageResolver.markImageFailed(this.src)}catch(e){};this.style.display='none';this.parentElement.classList.add('is-placeholder')}">` : ""}
+            <span class="ep-thumb ${epImgSrc ? "has-image" : "is-placeholder"}" style="--episode-hue:${fallbackHue}">
+              ${epImgSrc ? `<img referrerpolicy="no-referrer" class="ep-thumb-img" src="${escapeHtml(epImgSrc)}" alt="" loading="lazy"${epFallbackData}>` : ""}
               <span class="ep-thumb-num">${escapeHtml(String(num))}</span>
               <span class="ep-thumb-play" aria-hidden="true">▶</span>
               ${progressBar}
@@ -5895,9 +5957,21 @@ function renderEpisodeList(show) {
           const yr = season.year ? `<span class="season-year">${season.year}</span>` : "";
           const epLabel = epc ? `${epc} episode${epc === 1 ? "" : "s"}` : "";
           const selected = nav.isCurrent != null ? nav.isCurrent : (nav.localIndex === state.activeSeasonIndex && !nav.relatedShowId);
+          const seasonPosterCandidates = [
+            season.image,
+            show.tmdbSeasonPoster,
+            show.tmdbPoster,
+            show.coverImageLarge,
+            show.image,
+            "logo-round.png"
+          ].map(u => String(u || "").trim()).filter(Boolean);
+          const seasonPosterUrl = seasonPosterCandidates[0] || "";
+          const seasonFallbackData = seasonPosterCandidates.length
+            ? ` data-image-fallbacks="${escapeHtml(encodeURIComponent(JSON.stringify(seasonPosterCandidates)))}" data-image-fallback-index="0"`
+            : "";
           return `
           <button class="season-card focusable ${selected ? "is-selected" : ""}" data-season-card="${i}">
-            ${season.image ? `<img referrerpolicy="no-referrer" src="${escapeHtml(season.image)}" alt="" loading="lazy">` : ""}
+            ${seasonPosterUrl ? `<img referrerpolicy="no-referrer" class="season-card-img" src="${escapeHtml(seasonPosterUrl)}" alt="" loading="lazy"${seasonFallbackData}>` : ""}
             <strong>${escapeHtml(nav.label || season.title || `Season ${i + 1}`)}</strong>
             <small>${escapeHtml(season.sourceTitle || getSeasonDisplayTitle(show, season))}</small>
             <span>${epLabel}${badge}${yr}</span>
@@ -9439,3 +9513,82 @@ if (window.UpdateManager) {
 window.setTimeout(hideAppLoader, 850);
 // Best-effort background refresh of stale full-site crawls (if a crawler is wired).
 window.setTimeout(() => { try { checkSourceRefreshes(); } catch { /* ignore */ } }, 9000);
+
+window.runZenkaiDebugReport = window.runDevelopmentDebugReport = function() {
+  console.log("=== ZenkaiTV / AnimeTV Diagnostics Report ===");
+  if (!state.shows || state.shows.length === 0) {
+    console.warn("No shows loaded in state.shows.");
+    return;
+  }
+  
+  const report = [];
+  state.shows.forEach((show) => {
+    const title = show.title || show.name || "Unknown Title";
+    const id = show.id || show.slug || "Unknown ID";
+    
+    const hasPoster = !!(show.images?.poster || show.image || show.coverImage || show.coverImageLarge || show.poster);
+    const hasBanner = !!(show.images?.banner || show.banner || show.bannerImage || show.backdrop || show.images?.backdrop);
+    
+    const posterUrl = show.images?.poster || show.image || "";
+    const isPosterBroken = posterUrl && typeof ImageResolver !== "undefined" && ImageResolver.isImageFailed(posterUrl);
+    const bannerUrl = show.images?.banner || show.banner || "";
+    const isBannerBroken = bannerUrl && typeof ImageResolver !== "undefined" && ImageResolver.isImageFailed(bannerUrl);
+    
+    const seasonsList = show.seasons || (show.episodes ? (typeof groupEpisodesBySeason !== "undefined" ? groupEpisodesBySeason(show.episodes) : []) : []);
+    const seasonNumbers = seasonsList.map(s => s.seasonNumber ?? s.season ?? null).filter(n => n !== null);
+    const duplicateSeasons = seasonNumbers.filter((item, index) => seasonNumbers.indexOf(item) !== index);
+    
+    let hasDuplicateEpisodes = false;
+    let missingEpisodeThumbnailsCount = 0;
+    const episodes = show.episodes || [];
+    const totalEpisodes = episodes.length;
+    
+    const epNumbers = episodes.map(e => e.episode ?? e.number ?? null).filter(n => n !== null);
+    const dupEps = epNumbers.filter((item, index) => epNumbers.indexOf(item) !== index);
+    if (dupEps.length > 0) {
+      hasDuplicateEpisodes = true;
+    }
+    
+    episodes.forEach(ep => {
+      const epThumb = ep.image || ep.thumbnail || ep.still || ep.snapshot || "";
+      if (!epThumb) {
+        missingEpisodeThumbnailsCount++;
+      }
+    });
+
+    const isSuspiciousMerge = (seasonsList.length > 15) || (dupEps.length > totalEpisodes * 0.2);
+
+    report.push({
+      ID: id,
+      Title: title,
+      "Total Seasons": seasonsList.length,
+      "Total Episodes": totalEpisodes,
+      "Has Poster": hasPoster ? (isPosterBroken ? "Broken" : "Yes") : "No",
+      "Has Banner": hasBanner ? (isBannerBroken ? "Broken" : "Yes") : "No",
+      "Dup Seasons": duplicateSeasons.length > 0 ? duplicateSeasons.join(", ") : "None",
+      "Dup Episodes": hasDuplicateEpisodes ? `${[...new Set(dupEps)].slice(0, 5).join(", ")}${dupEps.length > 5 ? "..." : ""}` : "None",
+      "Missing Ep Thumbs": missingEpisodeThumbnailsCount,
+      "Suspicious Merge": isSuspiciousMerge ? "Yes" : "No"
+    });
+  });
+  
+  console.table(report);
+  
+  const totalShows = state.shows.length;
+  const missingPosterCount = report.filter(r => r["Has Poster"] === "No").length;
+  const brokenPosterCount = report.filter(r => r["Has Poster"] === "Broken").length;
+  const missingBannerCount = report.filter(r => r["Has Banner"] === "No").length;
+  const brokenBannerCount = report.filter(r => r["Has Banner"] === "Broken").length;
+  const showsWithDupSeasons = report.filter(r => r["Dup Seasons"] !== "None").length;
+  const showsWithDupEpisodes = report.filter(r => r["Dup Episodes"] !== "None").length;
+  
+  console.log(`Summary:
+- Total Shows: ${totalShows}
+- Missing Posters: ${missingPosterCount}
+- Broken Posters: ${brokenPosterCount}
+- Missing Banners: ${missingBannerCount}
+- Broken Banners: ${brokenBannerCount}
+- Shows with Duplicate Seasons: ${showsWithDupSeasons}
+- Shows with Duplicate Episodes: ${showsWithDupEpisodes}
+`);
+};

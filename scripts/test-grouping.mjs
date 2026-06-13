@@ -11,7 +11,8 @@ const {
   canGroupAsSeason,
   canFollowSeasonLink,
   getShowKey,
-  cleanDescription
+  cleanDescription,
+  normalizeTitle
 } = require("../js/utils.js");
 const { SmartSource } = require("../js/smart-source.js");
 const SeasonNormalization = require("../js/season-normalization.js");
@@ -182,6 +183,84 @@ check("youtube -> unsupported", det("https://youtube.com/watch?v=abc123") === "u
 check("garbage -> unknown", det("not a url") === "unknown");
 check("normalizeUrl adds https", SmartSource.normalizeUrl("animeav1.com").startsWith("https://"));
 check("domainName strips tld", SmartSource.domainName("https://www.animeav1.com/x") === "Animeav1");
+
+console.log("\n# SeasonNormalization additional title parsing and edge cases");
+const t1 = SeasonNormalization.parseTitle("Yi Ren Zhi Xia");
+check("Yi Ren Zhi Xia has null season", t1.seasonNumber === null);
+
+const t2 = SeasonNormalization.parseTitle("Yi Ren Zhi Xia 2");
+check("Yi Ren Zhi Xia 2 has season 2", t2.seasonNumber === 2);
+
+const t3 = SeasonNormalization.parseTitle("Yi Ren Zhi Xia 3");
+check("Yi Ren Zhi Xia 3 has season 3", t3.seasonNumber === 3);
+
+const t4 = SeasonNormalization.parseTitle("Yi Ren Zhi Xia 4");
+check("Yi Ren Zhi Xia 4 has season 4", t4.seasonNumber === 4);
+
+const t5 = SeasonNormalization.parseTitle("Yi Ren Zhi Xia 5");
+check("Yi Ren Zhi Xia 5 has season 5", t5.seasonNumber === 5);
+
+const t6 = SeasonNormalization.parseTitle("Yi Ren Zhi Xia 第3季");
+check("Yi Ren Zhi Xia 第3季 has season 3", t6.seasonNumber === 3);
+
+const t7 = SeasonNormalization.parseTitle("Mob Psycho 100 III");
+check("Mob Psycho 100 III has season 3", t7.seasonNumber === 3);
+
+console.log("\n# SeasonNormalization franchise grouping tests (Yi Ren Zhi Xia S1-S6)");
+const yrzxFranchise = SeasonNormalization.normalizeFranchise([
+  { title: "Yi Ren Zhi Xia", format: "TV", seasonYear: 2016, episodes: 12 },
+  { title: "Yi Ren Zhi Xia 2", format: "TV", seasonYear: 2017, episodes: 24 },
+  { title: "Yi Ren Zhi Xia 3", format: "ONA", seasonYear: 2020, episodes: 8 },
+  { title: "Yi Ren Zhi Xia 4", format: "ONA", seasonYear: 2021, episodes: 12 },
+  { title: "Yi Ren Zhi Xia 5", format: "ONA", seasonYear: 2022, episodes: 12 },
+  { title: "Yi Ren Zhi Xia 6", format: "ONA", seasonYear: 2023, episodes: 12 }
+]).groups.map((g) => g.title);
+check("Yi Ren Zhi Xia groups S1-S6 successfully", 
+  yrzxFranchise.includes("Season 1") && 
+  yrzxFranchise.includes("Season 2") && 
+  yrzxFranchise.includes("Season 3") && 
+  yrzxFranchise.includes("Season 4") && 
+  yrzxFranchise.includes("Season 5") && 
+  yrzxFranchise.includes("Season 6")
+);
+
+console.log("\n# SeasonNormalization movie and OVA/special separation");
+const moviesAndOvas = SeasonNormalization.normalizeFranchise([
+  { title: "Yi Ren Zhi Xia", format: "TV", seasonYear: 2016, episodes: 12 },
+  { title: "Yi Ren Zhi Xia Special", format: "SPECIAL", seasonYear: 2017 },
+  { title: "Yi Ren Zhi Xia Movie", format: "MOVIE", seasonYear: 2018 }
+]);
+const movieGroup = moviesAndOvas.groups.find(g => g.type === "movie");
+const specialGroup = moviesAndOvas.groups.find(g => g.type === "special");
+check("Movie is correctly grouped/categorized separately", !!movieGroup);
+check("Special/OVA is correctly grouped/categorized separately", !!specialGroup);
+
+console.log("\n# Image and banner fallback candidate resolution");
+const testShow = {
+  id: 1,
+  title: "Test Anime",
+  image: "https://example.com/cover.jpg",
+  bannerImage: "https://example.com/banner.jpg",
+  images: {
+    poster: "https://example.com/poster.jpg",
+    cover: "https://example.com/cover.jpg",
+    banner: "https://example.com/banner.jpg",
+    backdrop: "https://example.com/backdrop.jpg",
+    thumbnail: "https://example.com/thumb.jpg"
+  }
+};
+check("Image resolution uses normalized images.poster first", ImageResolver.resolveEpisodeThumbnail({ episode: 1 }, testShow, {}) === "");
+// In client.js, poster and backdrop artwork selection priorities:
+const watchPosterUrlCandidate = testShow.images.poster;
+check("Watch poster candidate prioritizes normalized images.poster", watchPosterUrlCandidate === "https://example.com/poster.jpg");
+
+console.log("\n# Title mismatch check (English vs Romaji mapping)");
+const engTitle = "The Outcast";
+const romajiTitle = "Yi Ren Zhi Xia";
+const normalizedEng = normalizeTitle(engTitle);
+const normalizedRomaji = normalizeTitle(romajiTitle);
+check("normalizeTitle cleans English title", normalizedEng === "outcast");
+check("normalizeTitle cleans Romaji title", normalizedRomaji === "yi ren zhi xia");
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

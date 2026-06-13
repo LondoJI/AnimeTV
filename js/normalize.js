@@ -177,7 +177,15 @@ function groupEpisodesBySeason(episodes = []) {
   });
   return [...bySeason.values()].map((season) => ({
     ...season,
-    episodes: season.episodes.sort((a, b) => Number(a.episode || a.number || 0) - Number(b.episode || b.number || 0))
+    episodes: season.episodes.sort((a, b) => {
+      const numA = Number(a.episode || a.number || a.episodeNumber || 0);
+      const numB = Number(b.episode || b.number || b.episodeNumber || 0);
+      if (numA !== numB) return numA - numB;
+      const dateA = a.airDate || a.aired || a.air_date || "";
+      const dateB = b.airDate || b.aired || b.air_date || "";
+      if (dateA && dateB) return new Date(dateA) - new Date(dateB);
+      return 0;
+    })
   })).sort((a, b) => Number(a.season || 0) - Number(b.season || 0));
 }
 
@@ -363,6 +371,14 @@ function normalizeAniListShow(entry) {
     source: "AniList",
     image: entry.coverImage?.extraLarge || entry.coverImage?.large || "",
     banner: entry.bannerImage || "",
+    images: {
+      poster: entry.coverImage?.extraLarge || entry.coverImage?.large || "",
+      cover: entry.coverImage?.extraLarge || entry.coverImage?.large || "",
+      banner: entry.bannerImage || "",
+      backdrop: entry.bannerImage || entry.coverImage?.extraLarge || entry.coverImage?.large || "",
+      thumbnail: entry.coverImage?.extraLarge || entry.coverImage?.large || "",
+      episodeStill: null
+    },
     siteUrl: entry.siteUrl || "",
     description: cleanDescription(entry.description),
     videoUrl: ""
@@ -396,6 +412,14 @@ function normalizeJikanShow(entry, source) {
     source,
     image: entry.images?.webp?.large_image_url || entry.images?.jpg?.large_image_url || "",
     banner: "",
+    images: {
+      poster: entry.images?.webp?.large_image_url || entry.images?.jpg?.large_image_url || "",
+      cover: entry.images?.webp?.large_image_url || entry.images?.jpg?.large_image_url || "",
+      banner: "",
+      backdrop: entry.images?.webp?.large_image_url || entry.images?.jpg?.large_image_url || "",
+      thumbnail: entry.images?.webp?.large_image_url || entry.images?.jpg?.large_image_url || "",
+      episodeStill: null
+    },
     siteUrl: entry.url || "",
     description: cleanDescription(entry.synopsis),
     videoUrl: ""
@@ -412,6 +436,10 @@ function mergeShows(items) {
       ...show,
       image: current?.image || show.image,
       banner: current?.banner || show.banner,
+      images: {
+        ...(current?.images || {}),
+        ...(show.images || {})
+      },
       description: current?.description || show.description,
       videoUrl: show.videoUrl || current?.videoUrl || "",
       episodes: mergeEpisodes(current?.episodes, show.episodes),

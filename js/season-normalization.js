@@ -160,27 +160,53 @@ const SeasonNormalization = (function() {
   }
 
   function parseTitle(title) {
-    const t = String(title).toLowerCase();
+    const t = String(title).toLowerCase().trim();
     
     const isFinalSeason = /\bfinal\s+season\b|\bthe\s+final\b/i.test(t);
     const isFinalChapters = /\bfinal\s+chapters\b|kanketsu/i.test(t);
     const isRecap = /\b(recap|summary|digest|総集編)\b/i.test(t);
     const isSpecial = /\b(ova|oav|special|extra|ona)\b/i.test(t);
 
-    // Season parsing
-    let seasonNumber = null;
-    const sm = t.match(/\bseason\s*(\d+)\b/i) || t.match(/\b(\d+)(?:st|nd|rd|th)\s*season\b/i);
-    if (sm) seasonNumber = parseInt(sm[1], 10);
-    else if (/\b(second|2nd)\s+season\b/i.test(t)) seasonNumber = 2;
-    else if (/\b(third|3rd)\s+season\b/i.test(t)) seasonNumber = 3;
-    else if (/\b(fourth|4th)\s+season\b/i.test(t)) seasonNumber = 4;
-    else if (/\b(fifth|5th)\s+season\b/i.test(t)) seasonNumber = 5;
-
-    // Part / Cour parsing
+    // Part / Cour parsing (parse this first so we know if trailing number is part-related)
     let partNumber = null;
     const pm = t.match(/\bpart\s*(\d+)\b/i) || t.match(/\bcour\s*(\d+)\b/i)
             || t.match(/\b(\d+)(?:st|nd|rd|th)\s+(?:part|cour)\b/i);
     if (pm) partNumber = parseInt(pm[1], 10);
+
+    // Season parsing
+    let seasonNumber = null;
+    const sm = t.match(/\bseason\s*(\d+)\b/i) || t.match(/\b(\d+)(?:st|nd|rd|th)\s*season\b/i) || t.match(/第\s*(\d+)\s*[季期]/);
+    if (sm) {
+      seasonNumber = parseInt(sm[1], 10);
+    } else if (/\b(second|2nd)\s+season\b/i.test(t)) {
+      seasonNumber = 2;
+    } else if (/\b(third|3rd)\s+season\b/i.test(t)) {
+      seasonNumber = 3;
+    } else if (/\b(fourth|4th)\s+season\b/i.test(t)) {
+      seasonNumber = 4;
+    } else if (/\b(fifth|5th)\s+season\b/i.test(t)) {
+      seasonNumber = 5;
+    } else if (/\b(sixth|6th)\s+season\b/i.test(t)) {
+      seasonNumber = 6;
+    } else {
+      // Check trailing Roman numerals
+      const romanMatch = t.match(/\b(ii|iii|iv|v|vi|vii|viii|ix|x)$/i);
+      if (romanMatch) {
+        const table = { ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10 };
+        seasonNumber = table[romanMatch[1].toLowerCase()] || null;
+      } else {
+        // Check trailing bare numbers: must not be preceded by part/cour/ep/episode/v/vol/volume/movie/recap/special
+        const trailingNumMatch = t.match(/\b(\d{1,2})$/);
+        if (trailingNumMatch) {
+          const num = parseInt(trailingNumMatch[1], 10);
+          const context = t.substring(0, trailingNumMatch.index).trim();
+          const isPartOrEp = /\b(part|cour|episode|ep|v|vol|volume|movie|recap|special)\s*$/i.test(context);
+          if (!isPartOrEp) {
+            seasonNumber = num;
+          }
+        }
+      }
+    }
 
     // Arc parsing
     let arcName = null;

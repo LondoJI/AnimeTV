@@ -258,6 +258,14 @@ const ImageResolver = (function () {
       backdrop: firstValidImage([anime.tmdbBackdrop, anime.bannerImage, anime.banner, anime.tmdbSeasonPoster, anime.coverImageLarge]) || null,
       banner: anime.bannerImage || anime.banner || null
     };
+    anime.images = {
+      poster: firstValidImage([anime.tmdbSeasonPoster, anime.tmdbPoster, anime.coverImageLarge, anime.image, anime.coverImage]) || null,
+      cover: anime.coverImageLarge || anime.image || anime.coverImage || null,
+      banner: anime.bannerImage || anime.banner || null,
+      backdrop: firstValidImage([anime.tmdbBackdrop, anime.bannerImage, anime.banner, anime.tmdbSeasonPoster, anime.coverImageLarge]) || null,
+      thumbnail: firstValidImage([anime.tmdbSeasonPoster, anime.coverImageLarge, anime.image]) || null,
+      episodeStill: null
+    };
   }
 
   // Resolve + attach TMDB artwork to an anime object. Safe to call repeatedly;
