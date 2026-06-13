@@ -8827,9 +8827,15 @@ function renderEmbeddedAniPubPlayer(show, externalUrl) {
           frameborder="0"
           allowfullscreen
           allow="autoplay; fullscreen; picture-in-picture; encrypted-media; web-share"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-popups allow-popups-to-escape-sandbox"
           referrerpolicy="no-referrer"
         ></iframe>
+        <!-- The iframe stays sandboxed: we grant popups so the embed host's
+             player will actually run (otherwise it shows "Sandboxed: player not
+             allowed"), but we deliberately WITHHOLD allow-top-navigation so the
+             host can NEVER redirect or hijack the real ZenkaiTV tab — ad popups
+             are confined to a separate tab the user can close. Minimal-ad source
+             ordering (ad-free hosts first) keeps popups rare in practice. -->
         ${renderVidstreamTopbar(label)}
       </div>
       ${renderPlayerEpisodeActions("")}
