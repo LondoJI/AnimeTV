@@ -4724,11 +4724,13 @@ body.adult-mode .vid-loader-text {
   pointer-events: auto;
 }
 
-/* iframe fills remaining space after topbar */
-.vidstream-player.is-iframe .vid-player-stage > iframe {
+/* iframe or video fills remaining space after topbar */
+.vidstream-player.is-iframe .vid-player-stage > iframe,
+.vidstream-player.is-iframe .vid-player-stage > video {
   flex: 1 1 0;
   min-height: 0;
   height: auto;
+  position: relative !important;
 }
 
 .vidstream-player.is-iframe .player-inline-prefs {
