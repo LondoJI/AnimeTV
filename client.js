@@ -285,6 +285,37 @@ function t(key) {
   return TRANSLATIONS[state.appLanguage]?.[key] || TRANSLATIONS.en[key] || key;
 }
 
+function updateFilterButtons() {
+  const isAdult = typeof AdultMode !== "undefined" && AdultMode.isEnabled();
+  const filters = isAdult
+    ? [
+        { id: "all", label: t("all") },
+        { id: "yuri", label: "Yuri" },
+        { id: "milf", label: "Milf" },
+        { id: "netorare", label: "Netorare" },
+        { id: "harem", label: "Harem" }
+      ]
+    : [
+        { id: "all", label: t("all") },
+        { id: "action", label: t("action") },
+        { id: "comedy", label: t("comedy") },
+        { id: "fantasy", label: t("fantasy") },
+        { id: "romance", label: t("romance") }
+      ];
+
+  document.querySelectorAll(".filters").forEach((group) => {
+    const buttons = group.querySelectorAll("button");
+    buttons.forEach((btn, index) => {
+      const f = filters[index];
+      if (f && btn) {
+        btn.dataset.filter = f.id;
+        btn.textContent = f.label;
+        btn.classList.toggle("is-selected", state.filter === f.id);
+      }
+    });
+  });
+}
+
 function applyAppLanguage() {
   document.documentElement.lang = state.appLanguage;
   document.querySelector('[data-route="home"]:not(.brand)')?.lastChild && (document.querySelector('[data-route="home"]:not(.brand)').lastChild.textContent = ` ${t("navHome")}`);
@@ -311,11 +342,7 @@ function applyAppLanguage() {
   setPlaceholder(searchInputTop, "searchLong");
   setPlaceholder(searchInputLibrary, "searchAnime");
   setPlaceholder(searchInputAniPub, "searchAniPub");
-  ["all", "action", "comedy", "fantasy", "romance"].forEach((filter) => {
-    document.querySelectorAll(`[data-filter="${filter}"]`).forEach((button) => {
-      button.textContent = filter === "all" ? t("all") : t(filter);
-    });
-  });
+  updateFilterButtons();
   if (fakePlay) fakePlay.textContent = t("play");
   if (castButton) castButton.textContent = t("cast");
   setFavoriteButtonState(Boolean(state.activeShow && state.favorites.includes(state.activeShow.id)));
@@ -1248,7 +1275,9 @@ function refreshCatalogStatus() {
 function visibleShows() {
   return catalogShows().filter((show) => {
     const matchesSearch = matchesShowSearch(show);
-    const matchesFilter = state.filter === "all" || show.genre === state.filter;
+    const matchesFilter = state.filter === "all" ||
+      (show.genre && String(show.genre).toLowerCase() === state.filter.toLowerCase()) ||
+      (Array.isArray(show.genres) && show.genres.some(g => String(g).toLowerCase() === state.filter.toLowerCase()));
     return matchesSearch && matchesFilter;
   });
 }
@@ -1620,7 +1649,11 @@ function latestEpisodeReleases(limit = HOME_CARD_LIMIT) {
   const ranked = catalogShows()
     .filter((show) => {
       if (!matchesShowSearch(show)) return false;
-      if (state.filter !== "all" && show.genre !== state.filter) return false;
+      if (state.filter !== "all") {
+        const matchesG = (show.genre && String(show.genre).toLowerCase() === state.filter.toLowerCase()) ||
+          (Array.isArray(show.genres) && show.genres.some(g => String(g).toLowerCase() === state.filter.toLowerCase()));
+        if (!matchesG) return false;
+      }
       if (!(show.image || show.poster || show.cover)) return false;
       const status = (show.status || "").toUpperCase();
       if (status === "FINISHED" || status === "CANCELLED" || status.includes("FINISH")) return false;
@@ -1747,7 +1780,11 @@ function buildLatestEpisodesList(limit = HOME_CARD_LIMIT) {
     if (usedIds.has(card.id) || (titleKey && usedTitles.has(titleKey))) continue;
     if (typeof AdultMode !== "undefined" && !AdultMode.matchesActiveCatalog(card)) continue;
     if (!matchesShowSearch(card)) continue;
-    if (state.filter !== "all" && card.genre !== state.filter) continue;
+    if (state.filter !== "all") {
+      const matchesG = (card.genre && String(card.genre).toLowerCase() === state.filter.toLowerCase()) ||
+        (Array.isArray(card.genres) && card.genres.some(g => String(g).toLowerCase() === state.filter.toLowerCase()));
+      if (!matchesG) continue;
+    }
     usedIds.add(card.id);
     if (titleKey) usedTitles.add(titleKey);
     list.push(card);
@@ -2023,7 +2060,7 @@ function renderCarouselIndicators(items) {
   if (!carouselIndicators) return;
   carouselIndicators.innerHTML = items.slice(0, 8).map((show, index) => `
     <button class="carousel-dot focusable ${index === state.carouselIndex ? "is-selected" : ""}" data-carousel-index="${index}" aria-label="Show ${escapeHtml(getShowTitle(show))}">
-      ${carouselArtworkOrPoster(show) ? `<img src="${carouselArtworkOrPoster(show)}" alt="">` : "<span></span>"}
+      ${carouselArtworkOrPoster(show) ? `<img referrerpolicy="no-referrer" src="${carouselArtworkOrPoster(show)}" alt="">` : "<span></span>"}
     </button>
   `).join("");
 
@@ -2602,8 +2639,8 @@ function cardTemplate(show, index = 0) {
     : "";
   const image = posterUrl
     ? `
-        <img class="thumb-backdrop" src="${escapeHtml(posterUrl)}" alt="" loading="lazy"${fallbackData}>
-        <img class="thumb-poster" src="${escapeHtml(posterUrl)}" alt="" loading="lazy"${fallbackData}>
+        <img referrerpolicy="no-referrer" class="thumb-backdrop" src="${escapeHtml(posterUrl)}" alt="" loading="lazy"${fallbackData}>
+        <img referrerpolicy="no-referrer" class="thumb-poster" src="${escapeHtml(posterUrl)}" alt="" loading="lazy"${fallbackData}>
       `
     : "";
   return `
@@ -2749,7 +2786,7 @@ function renderSchedule() {
           ${shows.length ? shows.map((show) => `
             <button class="schedule-item focusable" data-open-show="${escapeHtml(show.id)}" data-open-season="${getCardTarget(show).seasonNumber}" data-open-episode="${getCardTarget(show).episodeNumber}">
               <span class="schedule-thumb">
-                ${show.image ? `<img src="${escapeHtml(show.image)}" alt="" loading="lazy">` : ""}
+                ${show.image ? `<img referrerpolicy="no-referrer" src="${escapeHtml(show.image)}" alt="" loading="lazy">` : ""}
                 <span>${cardEpisodeLabel(show)}</span>
               </span>
               <span class="schedule-copy">
@@ -2773,7 +2810,9 @@ function renderAniPubCatalog() {
     : allItems;
   const filtered = filteredByMode.filter((show) => {
     const matchesSearch = matchesShowSearch(show);
-    const matchesFilter = state.filter === "all" || show.genre === state.filter;
+    const matchesFilter = state.filter === "all" ||
+      (show.genre && String(show.genre).toLowerCase() === state.filter.toLowerCase()) ||
+      (Array.isArray(show.genres) && show.genres.some(g => String(g).toLowerCase() === state.filter.toLowerCase()));
     return matchesSearch && matchesFilter;
   });
   renderCards(anipubGrid, filtered);
@@ -3939,7 +3978,9 @@ function renderAddonSections() {
       const railId = `addonRail-${cssSafeId(section.id)}`;
       const matchingItems = section.items.filter((show) => {
         const matchesSearch = matchesShowSearch(show);
-        const matchesFilter = state.filter === "all" || show.genre === state.filter;
+        const matchesFilter = state.filter === "all" ||
+          (show.genre && String(show.genre).toLowerCase() === state.filter.toLowerCase()) ||
+          (Array.isArray(show.genres) && show.genres.some(g => String(g).toLowerCase() === state.filter.toLowerCase()));
         return matchesSearch && matchesFilter;
       });
       const visibleLimit = state.search
@@ -4637,6 +4678,7 @@ function wireSourceButtons(root = document) {
 }
 
 function render() {
+  updateFilterButtons();
   const filtered = visibleShows();
   if (state.isLoadingCatalog && !filtered.length) {
     renderSkeletonCards(latestGrid, 14);
@@ -5316,7 +5358,7 @@ function resetVideoFrame() {
       <div class="watch-ready-poster-wrap">
         ${
           poster
-            ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="${escapeHtml(getShowTitle(show))}" loading="lazy" onerror="handleWatchPosterError(this)">`
+            ? `<img referrerpolicy="no-referrer" class="watch-poster" src="${escapeHtml(poster)}" alt="${escapeHtml(getShowTitle(show))}" loading="lazy" onerror="handleWatchPosterError(this)">`
             : `<div class="watch-poster-placeholder"><div class="play-symbol" aria-hidden="true"></div></div>`
         }
       </div>
@@ -5536,6 +5578,7 @@ function applyWatchBackdrop(show, season) {
     // Verify the winning art really loads; if it 404s, blacklist it and fall
     // back to the next candidate so the backdrop is never broken.
     const probe = new Image();
+    probe.referrerPolicy = "no-referrer";
     probe.onerror = () => {
       try { ImageResolver.markImageFailed(art); } catch { /* resolver optional */ }
       if (state.activeShow?.id === show.id) paint(getWatchBackdropArtwork(show, season));
@@ -5638,6 +5681,10 @@ function episodeThumb(episode = {}, season = {}, show = {}, repeatedImages = new
   if (!isAdultShow && comparable && (repeatedImages.has(comparable) || showLevelArt.has(comparable))) ownImage = "";
   if (typeof ImageResolver !== "undefined") {
     let tmdbStill = ImageResolver.getEpisodeStill(show, episode);
+    const num = Number(episode?.episode || episode?.episodeNumber || 0);
+    if (show.tmdbId && num && !tmdbStill) {
+      ImageResolver.lazyFetchEpisodeStill(show, num);
+    }
     const tmdbComparable = comparableImageUrl(tmdbStill);
     if (!isAdultShow && tmdbComparable && (repeatedImages.has(tmdbComparable) || showLevelArt.has(tmdbComparable))) tmdbStill = "";
     return ImageResolver.resolveEpisodeThumbnail(
@@ -5805,7 +5852,7 @@ function renderEpisodeList(show) {
                   data-season-index="${state.activeSeasonIndex}" data-episode-index="${episodeIndex}"
                   data-ep-search="${escapeHtml(search)}">
             <span class="ep-thumb ${thumb ? "has-image" : "is-placeholder"}" style="--episode-hue:${fallbackHue}">
-              ${thumb ? `<img class="ep-thumb-img" src="${escapeHtml(thumb)}" alt="" loading="lazy" onerror="try{ImageResolver.markImageFailed(this.src)}catch(e){};this.style.display='none';this.parentElement.classList.add('is-placeholder')">` : ""}
+              ${thumb ? `<img referrerpolicy="no-referrer" class="ep-thumb-img" src="${escapeHtml(thumb)}" alt="" loading="lazy" onerror="try{ImageResolver.markImageFailed(this.src)}catch(e){};this.style.display='none';this.parentElement.classList.add('is-placeholder')">` : ""}
               <span class="ep-thumb-num">${escapeHtml(String(num))}</span>
               <span class="ep-thumb-play" aria-hidden="true">▶</span>
               ${progressBar}
@@ -5834,7 +5881,7 @@ function renderEpisodeList(show) {
           const selected = nav.isCurrent != null ? nav.isCurrent : (nav.localIndex === state.activeSeasonIndex && !nav.relatedShowId);
           return `
           <button class="season-card focusable ${selected ? "is-selected" : ""}" data-season-card="${i}">
-            ${season.image ? `<img src="${escapeHtml(season.image)}" alt="" loading="lazy">` : ""}
+            ${season.image ? `<img referrerpolicy="no-referrer" src="${escapeHtml(season.image)}" alt="" loading="lazy">` : ""}
             <strong>${escapeHtml(nav.label || season.title || `Season ${i + 1}`)}</strong>
             <small>${escapeHtml(season.sourceTitle || getSeasonDisplayTitle(show, season))}</small>
             <span>${epLabel}${badge}${yr}</span>
@@ -6360,7 +6407,7 @@ function renderSourcePickerIn(frame) {
         <div class="source-picker">
           <div class="source-picker-hero">
             ${poster
-              ? `<img class="source-picker-art" src="${escapeHtml(poster)}" alt="${escapeHtml(getShowTitle(show))}" loading="lazy">`
+              ? `<img referrerpolicy="no-referrer" class="source-picker-art" src="${escapeHtml(poster)}" alt="${escapeHtml(getShowTitle(show))}" loading="lazy">`
               : `<div class="source-picker-art source-picker-art-placeholder"></div>`
             }
             <div class="source-picker-hero-text">
@@ -7158,7 +7205,7 @@ function renderContinueWatching() {
     <button class="show-card continue-card focusable" type="button"
             data-continue-key="${escapeHtml(e.episodeKey)}" data-show-id="${escapeHtml(String(e.showId || e.animeId))}">
       <span class="continue-thumb">
-        ${img ? `<img src="${escapeHtml(img)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : ""}
+        ${img ? `<img referrerpolicy="no-referrer" src="${escapeHtml(img)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : ""}
         <span class="continue-play" aria-hidden="true">▶</span>
       </span>
       <span>
@@ -8830,7 +8877,7 @@ function renderCastMessage(title, message) {
   const poster = state.activeShow?.image || state.activeShow?.banner || "";
   frame.innerHTML = `
     <div class="episode-video-empty cast-message">
-      ${poster ? `<img class="cast-mini-poster" src="${poster}" alt="">` : `<div class="play-symbol" aria-hidden="true"></div>`}
+      ${poster ? `<img referrerpolicy="no-referrer" class="cast-mini-poster" src="${poster}" alt="">` : `<div class="play-symbol" aria-hidden="true"></div>`}
       <strong>${title}</strong>
       <p>${message}</p>
       <button class="external-play-button focusable" type="button" data-cast-play>Play Here</button>
@@ -8883,6 +8930,7 @@ function wireOpenButtons() {
         const knownBackdrop = getWatchBackdropArtwork(show);
         if (!knownBackdrop) return;
         const image = new Image();
+        image.referrerPolicy = "no-referrer";
         image.decoding = "async";
         image.src = knownBackdrop;
       };
@@ -9321,6 +9369,7 @@ if (typeof AdultMode !== "undefined") {
   AdultMode.load();
   syncAdultModeChrome();
   AdultMode.onChange(async (on) => {
+    state.filter = "all";
     playThemeFlash(on);
     syncAdultModeChrome();
     if (on) await loadAdultCatalog();

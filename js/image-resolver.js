@@ -20,7 +20,7 @@ const ImageResolver = (function () {
   "use strict";
 
   const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
-  const MATCH_CACHE_PREFIX = "zenkaitv:tmdb-match:v3:";
+  const MATCH_CACHE_PREFIX = "zenkaitv:tmdb-match:v4:";
   const MATCH_CACHE_TTL_MS = 1000 * 60 * 60 * 24; // Refresh airing episode stills daily.
   const FAILED_CACHE_KEY = "zenkaitv:img-failed:v1";
   const FAILED_CACHE_MAX = 400;
@@ -233,6 +233,7 @@ const ImageResolver = (function () {
     anime.tmdbSeasonPoster = data.seasonPoster || anime.tmdbSeasonPoster || null;
     anime.tmdbEpisodeStills = data.episodeStills || anime.tmdbEpisodeStills || {};
     anime.tmdbEpisodesByNum = data.episodesByNum || anime.tmdbEpisodesByNum || {};
+    anime.tmdbSeasons = data.seasons || anime.tmdbSeasons || [];
     // Convenience bundle matching the documented imageSources shape.
     anime.imageSources = {
       poster: firstValidImage([anime.tmdbSeasonPoster, anime.tmdbPoster, anime.coverImageLarge, anime.image, anime.coverImage]) || null,
@@ -263,12 +264,27 @@ const ImageResolver = (function () {
       }
 
       // Search with the strongest titles first.
-      const searchTitles = [
+      const rawTitles = [
         anime.englishTitle || anime.title?.english,
         anime.romajiTitle || anime.title?.romaji,
         anime.nativeTitle || anime.title?.native,
         ...(Array.isArray(anime.synonyms) ? anime.synonyms.slice(0, 2) : [])
       ].map((t) => String(t || "").trim()).filter(Boolean);
+
+      const searchTitles = [];
+      const seenSearchTitles = new Set();
+      for (const t of rawTitles) {
+        const normRaw = norm(t);
+        if (normRaw && !seenSearchTitles.has(normRaw)) {
+          seenSearchTitles.add(normRaw);
+          searchTitles.push(t);
+        }
+        const stripped = stripSequelWords(t);
+        if (stripped && stripped.length > 2 && !seenSearchTitles.has(stripped)) {
+          seenSearchTitles.add(stripped);
+          searchTitles.push(stripped);
+        }
+      }
       const seenTitles = new Set();
       const year = String(anime.seasonYear || anime.year || "");
       debug(`search titles for ${anilistId}:`, searchTitles, "year:", year || "—");
@@ -347,12 +363,36 @@ const ImageResolver = (function () {
               { cache: "no-store" }, 12000
             );
             const payload = resp.ok ? await resp.json() : null;
-            for (const ep of (payload?.season?.episodes || [])) {
+            const tmdbEpisodes = payload?.season?.episodes || [];
+            
+            // Check if we need to offset episodes (e.g. all seasons grouped under Season 1 on TMDB)
+            let episodeOffset = 0;
+            const animeYear = Number(anime.seasonYear || anime.year || 0);
+            
+            if (Number(season.season_number) === 1 && tmdbEpisodes.length > 24 && animeYear) {
+              let matchingEp = tmdbEpisodes.find(ep => yearOf(ep.air_date) === animeYear);
+              if (!matchingEp && animeYear) {
+                matchingEp = tmdbEpisodes.find(ep => {
+                  const epYear = yearOf(ep.air_date);
+                  return epYear && Math.abs(epYear - animeYear) <= 1;
+                });
+              }
+              if (matchingEp) {
+                episodeOffset = matchingEp.episode_number - 1;
+                debug(`Grouped season detected. Mapped AniList Season to TMDB S1 starting at episode ${matchingEp.episode_number} (offset: ${episodeOffset})`);
+              }
+            }
+
+            for (const ep of tmdbEpisodes) {
               const still = tmdbStillUrl(ep.still_path);
-              if (ep.episode_number && still) episodeStills[ep.episode_number] = still;
-              if (ep.episode_number) {
-                episodesByNum[ep.episode_number] = {
-                  episode: ep.episode_number,
+              let targetEpisodeNum = ep.episode_number;
+              if (episodeOffset > 0) {
+                targetEpisodeNum = ep.episode_number - episodeOffset;
+              }
+              if (targetEpisodeNum > 0) {
+                if (still) episodeStills[targetEpisodeNum] = still;
+                episodesByNum[targetEpisodeNum] = {
+                  episode: targetEpisodeNum,
                   title: ep.name || "",
                   description: ep.overview || "",
                   aired: ep.air_date || "",
@@ -374,7 +414,8 @@ const ImageResolver = (function () {
         showBackdrop,
         seasonPoster,
         episodeStills,
-        episodesByNum
+        episodesByNum,
+        seasons: show?.seasons || []
       };
       applyResolvedMatch(anime, resolved);
       anime._tmdbResolved = true;
@@ -427,6 +468,74 @@ const ImageResolver = (function () {
     ]) || "";
   }
 
+  function findTmdbSeasonForEpisode(anime, episodeNumber) {
+    const seasons = anime.tmdbSeasons || [];
+    if (!seasons.length) return null;
+    const numberedSeasons = seasons
+      .filter((s) => Number(s.season_number) > 0)
+      .sort((a, b) => a.season_number - b.season_number);
+    let accumulated = 0;
+    for (const s of numberedSeasons) {
+      const count = Number(s.episode_count || 0);
+      if (episodeNumber > accumulated && episodeNumber <= accumulated + count) {
+        return {
+          seasonNumber: s.season_number,
+          episodeOffset: accumulated
+        };
+      }
+      accumulated += count;
+    }
+    return null;
+  }
+
+  const _lazyFetching = new Set();
+  async function lazyFetchEpisodeStill(anime, episodeNumber) {
+    if (!anime || !anime.tmdbId || !episodeNumber) return;
+    const mapping = findTmdbSeasonForEpisode(anime, episodeNumber);
+    if (!mapping) return;
+    if (anime._tmdbSeasonsLoaded && anime._tmdbSeasonsLoaded.has(mapping.seasonNumber)) return;
+    const key = `${anime.anilistId || anime.id}:${mapping.seasonNumber}`;
+    if (_lazyFetching.has(key)) return;
+    _lazyFetching.add(key);
+    try {
+      debug(`Lazy fetching TMDB season S${mapping.seasonNumber} for show ${anime.anilistId || anime.id} (contains absolute episode ${episodeNumber})...`);
+      const url = `./api/tmdb/season?id=${encodeURIComponent(anime.tmdbId)}&season=${encodeURIComponent(mapping.seasonNumber)}`;
+      const resp = typeof fetchWithTimeout === "function"
+        ? await fetchWithTimeout(url, { cache: "no-store" }, 12000)
+        : await fetch(url);
+      const payload = resp.ok ? await resp.json() : null;
+      const eps = payload?.season?.episodes || [];
+      let changed = false;
+      for (const ep of eps) {
+        const still = tmdbStillUrl(ep.still_path);
+        const absoluteEpNum = mapping.episodeOffset + ep.episode_number;
+        if (still) {
+          if (!anime.tmdbEpisodeStills) anime.tmdbEpisodeStills = {};
+          anime.tmdbEpisodeStills[absoluteEpNum] = still;
+          changed = true;
+        }
+        if (!anime.tmdbEpisodesByNum) anime.tmdbEpisodesByNum = {};
+        anime.tmdbEpisodesByNum[absoluteEpNum] = {
+          episode: absoluteEpNum,
+          title: ep.name || "",
+          description: ep.overview || "",
+          aired: ep.air_date || "",
+          thumbnail: still
+        };
+      }
+      if (changed) {
+        debug(`Lazy fetched S${mapping.seasonNumber} for show ${anime.anilistId || anime.id}. Triggering repaint.`);
+        if (typeof render === "function") render();
+      }
+    } catch (err) {
+      debug(`Lazy fetch failed: ${err.message}`);
+    } finally {
+      if (!anime._tmdbSeasonsLoaded) anime._tmdbSeasonsLoaded = new Set();
+      anime._tmdbSeasonsLoaded.add(mapping.seasonNumber);
+      _lazyFetching.delete(key);
+    }
+  }
+
   return {
     firstValidImage,
     markImageFailed,
@@ -436,6 +545,8 @@ const ImageResolver = (function () {
     resolveEpisodeThumbnail,
     resolvePrePlayerBackground,
     resolvePrePlayerPoster,
+    findTmdbSeasonForEpisode,
+    lazyFetchEpisodeStill,
     // exposed for tests / debugging
     scoreCandidate,
     titleScore,
