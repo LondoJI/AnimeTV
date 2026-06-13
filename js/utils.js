@@ -8,19 +8,19 @@ function readUiPreferences() {
     autoplayHero: true,
     defaultVolume: 0.1,
     playerFit: "cover",
-    playerEngine: "apk",
+    playerEngine: "native",
     playerQuality: 0,
     metadataDetail: true,
     subtitleTranslation: true,
     titleLanguage: "romaji",  // "english" | "romaji"
-    playerInterface: "custom" // "custom" | "native"
+    playerInterface: "native" // "custom" | "native"
   };
   try {
     let parsed = JSON.parse(localStorage.getItem(APP_UI_PREFS_KEY) || "{}");
-    const migrationKey = "zenkaitv:migrated-player-interface:v5";
+    const migrationKey = "zenkaitv:migrated-player-interface:v6";
     if (localStorage.getItem(migrationKey) !== "1") {
-      parsed.playerInterface = "custom";
-      parsed.playerEngine = "apk";
+      parsed.playerInterface = "native";
+      parsed.playerEngine = "native";
       localStorage.setItem(APP_UI_PREFS_KEY, JSON.stringify({ ...defaults, ...parsed }));
       localStorage.setItem(migrationKey, "1");
     }
