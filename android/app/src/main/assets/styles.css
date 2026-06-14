@@ -1204,6 +1204,8 @@ body:not([data-route="home"]) .stremio-search {
   animation: rise-in 520ms ease both;
 }
 
+body[data-route="home"] #continueWatching,
+body[data-route="home"] #continueWatchingAdult,
 body[data-route="home"] #latest {
   min-height: auto;
   padding-top: 0;
