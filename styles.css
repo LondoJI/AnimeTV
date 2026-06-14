@@ -8408,6 +8408,9 @@ body.reduce-motion .theme-flash { animation-duration: 1ms; }
   z-index: 1000;
   animation: fadeIn 0.25s ease forwards;
 }
+.auth-overlay[hidden] {
+  display: none !important;
+}
 .auth-card {
   width: 24rem;
   max-width: 90vw;
