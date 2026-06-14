@@ -9578,9 +9578,11 @@ function openCarouselShow() {
 }
 
 function getFocusableItems() {
-  // Trap remote focus inside the watch overlay while it's open, so D-pad can't
-  // wander onto the cards behind it. Otherwise navigate the whole page.
-  const root = (overlay && !overlay.hidden) ? overlay : document;
+  // Trap remote focus inside the active overlay (authOverlay or watchOverlay)
+  // so D-pad cannot wander onto the elements behind them.
+  const authOverlay = document.getElementById("authOverlay");
+  const root = (authOverlay && !authOverlay.hidden) ? authOverlay :
+               ((overlay && !overlay.hidden) ? overlay : document);
   return [...root.querySelectorAll(".focusable")]
     .filter((element) => !element.disabled && element.offsetParent !== null);
 }
@@ -10003,6 +10005,19 @@ document.addEventListener("keydown", (event) => {
   }
 
   if (event.key === "Escape" || event.key === "Backspace") {
+    const authOverlay = document.getElementById("authOverlay");
+    if (authOverlay && !authOverlay.hidden) {
+      event.preventDefault();
+      authOverlay.hidden = true;
+      sessionStorage.setItem("auth-skipped", "true");
+      
+      // Restore focus to a sensible page control
+      const items = getFocusableItems();
+      if (items.length) {
+        focusElement(initialFocusTarget(items));
+      }
+      return;
+    }
     if (!overlay.hidden) {
       event.preventDefault();
       closeShow();
@@ -10048,6 +10063,18 @@ if (typeof AdultMode !== "undefined") {
 // ── Supabase Authentication & Social Logins ──────────────────────────────────
 let supabase = null;
 
+function hasSupabaseSession() {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("sb-") && key.endsWith("-auth-token")) {
+        return true;
+      }
+    }
+  } catch (e) {}
+  return false;
+}
+
 async function initSupabase() {
   try {
     const res = await fetch("/api/config");
@@ -10061,9 +10088,10 @@ async function initSupabase() {
       state.user = session?.user || null;
       updateAuthUi();
       
-      // Show login pop up first if user is not logged in (optional to close)
-      if (!state.user) {
-        showAuthModal("login");
+      // Hide login modal if user is logged in
+      if (state.user) {
+        const authOverlay = document.getElementById("authOverlay");
+        if (authOverlay) authOverlay.hidden = true;
       }
     } else {
       console.warn("Supabase configuration is missing or inactive.");
@@ -10127,12 +10155,35 @@ function wireAuthEvents() {
   document.addEventListener("click", () => {
     if (dropdownMenu) dropdownMenu.hidden = true;
   });
-  if (closeBtn) closeBtn.onclick = () => { if (overlay) overlay.hidden = true; };
-  if (skipBtn) skipBtn.onclick = () => { if (overlay) overlay.hidden = true; };
+  if (closeBtn) {
+    closeBtn.onclick = () => {
+      if (overlay) overlay.hidden = true;
+      sessionStorage.setItem("auth-skipped", "true");
+      const items = getFocusableItems();
+      if (items.length) {
+        focusElement(initialFocusTarget(items));
+      }
+    };
+  }
+  if (skipBtn) {
+    skipBtn.onclick = () => {
+      if (overlay) overlay.hidden = true;
+      sessionStorage.setItem("auth-skipped", "true");
+      const items = getFocusableItems();
+      if (items.length) {
+        focusElement(initialFocusTarget(items));
+      }
+    };
+  }
   if (overlay) {
     overlay.onclick = (e) => {
       if (e.target === overlay) {
         overlay.hidden = true;
+        sessionStorage.setItem("auth-skipped", "true");
+        const items = getFocusableItems();
+        if (items.length) {
+          focusElement(initialFocusTarget(items));
+        }
       }
     };
   }
@@ -10443,9 +10494,8 @@ if (typeof AdultMode !== "undefined" && AdultMode.isEnabled()) {
 restartCarouselTimer();
 
 if (typeof window !== "undefined") {
-  initSupabase().then(() => {
-    wireAuthEvents();
-  });
+  wireAuthEvents();
+  initSupabase();
 }
 
 if (window.UpdateManager) {
