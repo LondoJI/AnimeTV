@@ -6961,14 +6961,31 @@ function openPlayerPanel(frame, type, video, episode, url, tracks = []) {
       showToast(`Subtitles: ${button.dataset.subChoice === "none" ? "off" : button.dataset.subChoice}`);
     });
   });
-  panel.querySelector("[data-copy-url]")?.addEventListener("click", () => copyExternalUrl(url));
+  panel.querySelector("[data-copy-url]")?.addEventListener("click", () => {
+    const selectedSource = getSelectedEpisodeSource(episode);
+    const copyTarget = selectedSource?.externalUrl || episode?.externalUrl || selectedSource?.videoUrl || url;
+    copyExternalUrl(copyTarget);
+  });
   panel.querySelector("[data-download-url]")?.addEventListener("click", () => {
-    const downloadUrl = getActiveDownloadUrl(url) || url;
-    if (downloadUrl.includes(".m3u8") || downloadUrl.includes("m3u8")) {
-      showToast("HLS stream detected. Copy the stream link to download via VLC/ffmpeg.");
+    const selectedSource = getSelectedEpisodeSource(episode);
+    let dlTarget = selectedSource?.downloadUrl || getActiveDownloadUrl(url) || url;
+    
+    const isHls = dlTarget.includes(".m3u8") || dlTarget.includes("m3u8");
+    const isBlobOrCdn = dlTarget.includes("-cdn") || dlTarget.includes("delivery-") || dlTarget.includes("/api/proxy") || dlTarget.includes("m3u8");
+    
+    if (isHls || isBlobOrCdn || isEmbedUrl(dlTarget)) {
+      if (selectedSource?.externalUrl) {
+        dlTarget = selectedSource.externalUrl;
+      } else if (episode?.externalUrl) {
+        dlTarget = episode.externalUrl;
+      }
+    }
+    
+    if (dlTarget) {
+      window.open(dlTarget, "_blank");
+      showToast("Opening download/host website...");
     } else {
-      window.open(downloadUrl, "_blank");
-      showToast("Opening download link in a new tab...");
+      showToast("Download URL not found.");
     }
   });
   panel.querySelector("[data-reload-player]")?.addEventListener("click", () => playActiveShow({ allowSourceLookup: false }));
