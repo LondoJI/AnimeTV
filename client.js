@@ -4795,6 +4795,7 @@ function setRoute(route) {
   if (route === "anipub") ensureAniPubCatalogLoaded();
   if (route === "settings") renderSettings();
   if (route === "sources") renderSources();
+  if (route === "profile") renderProfile();
   if ((route === "sources" || route === "search") && !state.externalSourcesLoaded) {
     scheduleExternalSourcesLoad();
   }
@@ -4804,6 +4805,14 @@ function setRoute(route) {
 
 function syncRouteVisibility() {
   sections.forEach((section) => {
+    if (section.id === "continueWatching" || section.id === "continueWatchingAdult") {
+      const isHome = state.route === "home";
+      if (!isHome) {
+        section.classList.add("is-hidden");
+        section.setAttribute("aria-hidden", "true");
+      }
+      return;
+    }
     const isHomeExtra = state.route === "home" && section.id === "latest";
     const isTarget = section.id === state.route;
     const hidden = !(isHomeExtra || isTarget);
@@ -5380,12 +5389,34 @@ function stopActivePlayback() {
 function toggleFavorite() {
   if (!state.activeShow) return;
   const id = state.activeShow.id;
-  state.favorites = state.favorites.includes(id)
-    ? state.favorites.filter((favorite) => favorite !== id)
-    : [...state.favorites, id];
+  const isAdding = !state.favorites.includes(id);
+  state.favorites = isAdding
+    ? [...state.favorites, id]
+    : state.favorites.filter((favorite) => favorite !== id);
   localStorage.setItem("anime-tv-favorites", JSON.stringify(state.favorites));
   setFavoriteButtonState(state.favorites.includes(id));
   render();
+  
+  // Database sync
+  if (supabase && state.user) {
+    if (isAdding) {
+      supabase.from("favorites").upsert({
+        user_id: state.user.id,
+        anime_id: String(id),
+        anime_title: state.activeShow.title || "",
+        poster_url: state.activeShow.image || ""
+      }).then(({ error }) => {
+        if (error) console.warn("DB favorite upsert error:", error.message);
+      });
+    } else {
+      supabase.from("favorites").delete()
+        .eq("user_id", state.user.id)
+        .eq("anime_id", String(id))
+        .then(({ error }) => {
+          if (error) console.warn("DB favorite delete error:", error.message);
+        });
+    }
+  }
 }
 
 function resetVideoFrame() {
@@ -7446,8 +7477,6 @@ function persistWatchMap() {
   try { localStorage.setItem(RESUME_POSITIONS_KEY, JSON.stringify(_watchMapCache || {})); } catch { /* quota / disabled */ }
 }
 
-// Single source of truth for writing a progress record. Used by the web <video>,
-// the native Android bridge, and manual mark-watched.
 function recordWatchProgress({ show, season, episode, positionSec, durationSec, episodeTitle, thumb, completed }) {
   if (!show) return;
   const seasonNumber = Number(season) || 1;
@@ -7460,6 +7489,10 @@ function recordWatchProgress({ show, season, episode, positionSec, durationSec, 
   let pos = Math.max(0, Math.floor(positionSec || 0));
   let progress = dur > 0 ? Math.min(100, Math.round((pos / dur) * 100)) : (prev.progress || 0);
   if (completed) { progress = 100; pos = dur || pos; }
+  const isAdult = Boolean(
+    show.isAdult || show.adult || show.adultSource || 
+    (typeof AdultMode !== "undefined" && AdultMode.isAdultContent(show))
+  );
   map[key] = {
     episodeKey: key,
     animeId: getAnimeTrackId(show),
@@ -7476,10 +7509,29 @@ function recordWatchProgress({ show, season, episode, positionSec, durationSec, 
     duration: dur,
     watched: progress >= 90,
     lastWatchedAt: Date.now(),
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
+    isAdult: isAdult || prev.isAdult || false
   };
   persistWatchMap();
   scheduleContinueWatchingRefresh();
+
+  // Database sync
+  if (supabase && state.user) {
+    supabase.from("watch_progress").upsert({
+      user_id: state.user.id,
+      anime_id: getAnimeTrackId(show),
+      episode_id: key,
+      episode_number: String(episodeNumber),
+      anime_title: getShowTitle(show) || show.title || "",
+      episode_title: episodeTitle || "",
+      poster_url: thumb || show.image || "",
+      progress_seconds: pos,
+      duration_seconds: dur,
+      updated_at: new Date().toISOString()
+    }).then(({ error }) => {
+      if (error) console.warn("DB progress upsert error:", error.message);
+    });
+  }
 }
 
 // Throttled writer wired to the web player's timeupdate (saves ~every 10s);
@@ -7511,6 +7563,38 @@ function getResumePosition(episode) {
 }
 
 // ── Watch-state readers (badges / stats / continue-watching) ────────────────
+// Helper to identify if a continue watching entry belongs to an adult/18+ catalog title
+function isEntryAdult(entry) {
+  if (!entry) return false;
+  if (entry.isAdult === true || entry.adult === true) return true;
+  const show = state.shows.find((s) => String(s.id) === String(entry.showId || entry.animeId));
+  if (show && (show.isAdult || show.adult || show.adultSource || (typeof AdultMode !== "undefined" && AdultMode.isAdultContent(show)))) {
+    return true;
+  }
+  if (typeof AdultMode !== "undefined" && AdultMode.isAdultContent(entry)) {
+    return true;
+  }
+  return false;
+}
+
+function renderContinueCardHtml(e) {
+  const img = e.thumb || e.poster || "";
+  const sub = `S${e.season}E${e.episode} · ${e.progress}%`;
+  return `
+  <button class="show-card continue-card focusable" type="button"
+          data-continue-key="${escapeHtml(e.episodeKey)}" data-show-id="${escapeHtml(String(e.showId || e.animeId))}">
+    <span class="continue-thumb">
+      ${img ? `<img referrerpolicy="no-referrer" src="${escapeHtml(img)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : ""}
+      <span class="continue-play" aria-hidden="true">▶</span>
+    </span>
+    <span>
+      <strong class="continue-card-title">${escapeHtml(e.title)}</strong>
+      <small class="continue-card-sub">${escapeHtml(sub)}</small>
+      <span class="continue-bar-outside"><span style="width:${e.progress}%"></span></span>
+    </span>
+  </button>`;
+}
+
 function getEpisodeWatchState(show, seasonNumber, episodeNumber) {
   const key = buildWatchKey(show, seasonNumber, episodeNumber);
   return key ? getWatchMap()[key] || null : null;
@@ -7548,49 +7632,52 @@ function scheduleContinueWatchingRefresh() {
 }
 
 function renderContinueWatching() {
-  const section = document.querySelector("#continueWatching");
-  const grid = document.querySelector("#continueGrid");
-  if (!section || !grid) return;
-  let list = getContinueWatchingList(20);
-  // Keep Continue Watching mutually exclusive too: hide entries whose show isn't
-  // in the currently-active catalog (regular entries in adult mode, and vice
-  // versa). Entries we can't resolve to a known show are treated as regular.
-  if (typeof AdultMode !== "undefined") {
-    list = list.filter((entry) => {
-      const show = state.shows.find((s) => String(s.id) === String(entry.showId || entry.animeId));
-      return AdultMode.matchesActiveCatalog(show || {});
-    });
+  const allEntries = getContinueWatchingList(20);
+  const regularEntries = allEntries.filter(e => !isEntryAdult(e));
+  const adultEntries = allEntries.filter(e => isEntryAdult(e));
+
+  // Render Regular section
+  const regSection = document.querySelector("#continueWatching");
+  const regGrid = document.querySelector("#continueGrid");
+  if (regSection && regGrid) {
+    if (!regularEntries.length) {
+      regSection.classList.add("is-hidden");
+      regGrid.dataset.cardsSig = "";
+      regGrid.innerHTML = "";
+    } else {
+      regSection.classList.remove("is-hidden");
+      const sig = regularEntries.map((e) => `${e.episodeKey}:${e.progress}`).join("|");
+      if (regGrid.dataset.cardsSig !== sig) {
+        regGrid.dataset.cardsSig = sig;
+        regGrid.innerHTML = regularEntries.map(renderContinueCardHtml).join("");
+        regGrid.querySelectorAll("[data-continue-key]").forEach((card) => {
+          card.onclick = () => resumeFromContinue(card.dataset.showId, card.dataset.continueKey);
+        });
+      }
+    }
   }
-  if (!list.length) {
-    section.classList.add("is-hidden");
-    grid.dataset.cardsSig = "";
-    grid.innerHTML = "";
-    return;
+
+  // Render Adult section (only if Adult Mode is enabled/confirmed)
+  const adultSection = document.querySelector("#continueWatchingAdult");
+  const adultGrid = document.querySelector("#continueGridAdult");
+  if (adultSection && adultGrid) {
+    const isAdultModeOn = typeof AdultMode !== "undefined" && AdultMode.isEnabled();
+    if (!isAdultModeOn || !adultEntries.length) {
+      adultSection.classList.add("is-hidden");
+      adultGrid.dataset.cardsSig = "";
+      adultGrid.innerHTML = "";
+    } else {
+      adultSection.classList.remove("is-hidden");
+      const sig = adultEntries.map((e) => `${e.episodeKey}:${e.progress}`).join("|");
+      if (adultGrid.dataset.cardsSig !== sig) {
+        adultGrid.dataset.cardsSig = sig;
+        adultGrid.innerHTML = adultEntries.map(renderContinueCardHtml).join("");
+        adultGrid.querySelectorAll("[data-continue-key]").forEach((card) => {
+          card.onclick = () => resumeFromContinue(card.dataset.showId, card.dataset.continueKey);
+        });
+      }
+    }
   }
-  section.classList.remove("is-hidden");
-  const sig = list.map((e) => `${e.episodeKey}:${e.progress}`).join("|");
-  if (grid.dataset.cardsSig === sig) return; // skip identical repaint
-  grid.dataset.cardsSig = sig;
-  grid.innerHTML = list.map((e) => {
-    const img = e.thumb || e.poster || "";
-    const sub = `S${e.season}E${e.episode} · ${e.progress}%`;
-    return `
-    <button class="show-card continue-card focusable" type="button"
-            data-continue-key="${escapeHtml(e.episodeKey)}" data-show-id="${escapeHtml(String(e.showId || e.animeId))}">
-      <span class="continue-thumb">
-        ${img ? `<img referrerpolicy="no-referrer" src="${escapeHtml(img)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : ""}
-        <span class="continue-play" aria-hidden="true">▶</span>
-      </span>
-      <span>
-        <strong class="continue-card-title">${escapeHtml(e.title)}</strong>
-        <small class="continue-card-sub">${escapeHtml(sub)}</small>
-        <span class="continue-bar-outside"><span style="width:${e.progress}%"></span></span>
-      </span>
-    </button>`;
-  }).join("");
-  grid.querySelectorAll("[data-continue-key]").forEach((card) => {
-    card.addEventListener("click", () => resumeFromContinue(card.dataset.showId, card.dataset.continueKey));
-  });
 }
 
 function resumeFromContinue(showId, key) {
@@ -9958,9 +10045,368 @@ if (typeof AdultMode !== "undefined") {
   });
 }
 
+// ── Supabase Authentication & Social Logins ──────────────────────────────────
+let supabase = null;
+
+async function initSupabase() {
+  try {
+    const res = await fetch("/api/config");
+    const config = await res.json();
+    if (config.ok && config.supabaseUrl && config.supabaseKey) {
+      supabase = window.supabase.createClient(config.supabaseUrl, config.supabaseKey);
+      setupSupabaseAuth();
+    } else {
+      console.warn("Supabase configuration is missing or inactive.");
+      setupMockAuth();
+    }
+  } catch (err) {
+    console.error("Failed to initialize Supabase:", err);
+    setupMockAuth();
+  }
+}
+
+function setupSupabaseAuth() {
+  if (!supabase) return;
+  supabase.auth.onAuthStateChange((event, session) => {
+    state.user = session?.user || null;
+    updateAuthUi();
+    if (event === "SIGNED_IN") {
+      syncWatchProgressFromDatabase();
+      syncFavoritesFromDatabase();
+    }
+  });
+}
+
+function updateAuthUi() {
+  const loginBtn = document.getElementById("authLoginBtn");
+  const menuContainer = document.getElementById("userProfileMenuContainer");
+  const initials = document.getElementById("userAvatarInitials");
+  const profileEmail = document.getElementById("profileEmail");
+  
+  if (state.user) {
+    if (loginBtn) loginBtn.hidden = true;
+    if (menuContainer) menuContainer.hidden = false;
+    const email = state.user.email || "";
+    if (initials) initials.textContent = email.substring(0, 2).toUpperCase();
+    if (profileEmail) profileEmail.textContent = email;
+  } else {
+    if (loginBtn) loginBtn.hidden = false;
+    if (menuContainer) menuContainer.hidden = true;
+    if (profileEmail) profileEmail.textContent = "";
+    if (state.route === "profile") {
+      setRoute("home");
+    }
+  }
+}
+
+function wireAuthEvents() {
+  const loginBtn = document.getElementById("authLoginBtn");
+  const avatarBtn = document.getElementById("userAvatarBtn");
+  const dropdownMenu = document.getElementById("userDropdownMenu");
+  const closeBtn = document.getElementById("authCloseBtn");
+  const overlay = document.getElementById("authOverlay");
+  
+  if (loginBtn) loginBtn.onclick = () => showAuthModal("login");
+  if (avatarBtn) {
+    avatarBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (dropdownMenu) dropdownMenu.hidden = !dropdownMenu.hidden;
+    };
+  }
+  document.addEventListener("click", () => {
+    if (dropdownMenu) dropdownMenu.hidden = true;
+  });
+  if (closeBtn) closeBtn.onclick = () => { if (overlay) overlay.hidden = true; };
+  
+  const gSignup = document.getElementById("goToSignupBtn");
+  if (gSignup) gSignup.onclick = () => showAuthView("signup");
+  
+  const gLogin = document.getElementById("goToLoginBtn");
+  if (gLogin) gLogin.onclick = () => showAuthView("login");
+  
+  const gLogin2 = document.getElementById("goToLoginBtn2");
+  if (gLogin2) gLogin2.onclick = () => showAuthView("login");
+  
+  const gForgot = document.getElementById("goToForgotBtn");
+  if (gForgot) gForgot.onclick = () => showAuthView("forgot");
+  
+  const loginForm = document.getElementById("loginForm");
+  if (loginForm) loginForm.onsubmit = (e) => { e.preventDefault(); handleLoginSubmit(); };
+  
+  const signupForm = document.getElementById("signupForm");
+  if (signupForm) signupForm.onsubmit = (e) => { e.preventDefault(); handleSignupSubmit(); };
+  
+  const forgotForm = document.getElementById("forgotForm");
+  if (forgotForm) forgotForm.onsubmit = (e) => { e.preventDefault(); handleForgotSubmit(); };
+  
+  const mProfile = document.getElementById("menuProfileBtn");
+  if (mProfile) mProfile.onclick = () => setRoute("profile");
+  
+  const mLogout = document.getElementById("menuLogoutBtn");
+  if (mLogout) mLogout.onclick = () => handleLogout();
+  
+  const pLogout = document.getElementById("profileLogoutBtn");
+  if (pLogout) pLogout.onclick = () => handleLogout();
+  
+  const gOAuth = document.getElementById("googleLoginBtn");
+  if (gOAuth) gOAuth.onclick = () => handleSocialLogin("google");
+  
+  const fOAuth = document.getElementById("facebookLoginBtn");
+  if (fOAuth) fOAuth.onclick = () => handleSocialLogin("facebook");
+}
+
+function showAuthModal(viewName) {
+  const overlay = document.getElementById("authOverlay");
+  if (overlay) {
+    overlay.hidden = false;
+    showAuthView(viewName);
+    const activeView = document.querySelector(`.auth-view:not([hidden])`);
+    const firstInput = activeView ? activeView.querySelector("input") : null;
+    if (firstInput) focusElement(firstInput);
+  }
+}
+
+function showAuthView(viewName) {
+  ["loginView", "signupView", "forgotView"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.hidden = (id !== `${viewName}View`);
+  });
+  document.querySelectorAll(".auth-error-msg, .auth-success-msg").forEach((el) => {
+    el.hidden = true;
+    el.textContent = "";
+  });
+}
+
+async function handleLoginSubmit() {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errorMsg = document.getElementById("loginErrorMsg");
+  const submitBtn = document.querySelector("#loginForm button[type='submit']");
+  
+  if (!email || !password) {
+    showAuthError(errorMsg, "Please enter both email and password.");
+    return;
+  }
+  if (!supabase) {
+    showAuthError(errorMsg, "Authentication service is not available.");
+    return;
+  }
+  setAuthLoading(submitBtn, true);
+  try {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    document.getElementById("authOverlay").hidden = true;
+  } catch (err) {
+    showAuthError(errorMsg, err.message || "Login failed.");
+  } finally {
+    setAuthLoading(submitBtn, false);
+  }
+}
+
+async function handleSignupSubmit() {
+  const email = document.getElementById("signupEmail").value.trim();
+  const password = document.getElementById("signupPassword").value;
+  const errorMsg = document.getElementById("signupErrorMsg");
+  const submitBtn = document.querySelector("#signupForm button[type='submit']");
+  
+  if (!email || !password) {
+    showAuthError(errorMsg, "Please enter both email and password.");
+    return;
+  }
+  if (password.length < 6) {
+    showAuthError(errorMsg, "Password must be at least 6 characters.");
+    return;
+  }
+  if (!supabase) {
+    showAuthError(errorMsg, "Authentication service is not available.");
+    return;
+  }
+  setAuthLoading(submitBtn, true);
+  try {
+    const { error } = await supabase.auth.signUp({ email, password });
+    if (error) throw error;
+    showAuthSuccess(errorMsg, "Registration successful! Please check your email for confirmation.");
+  } catch (err) {
+    showAuthError(errorMsg, err.message || "Signup failed.");
+  } finally {
+    setAuthLoading(submitBtn, false);
+  }
+}
+
+async function handleForgotSubmit() {
+  const email = document.getElementById("forgotEmail").value.trim();
+  const errorMsg = document.getElementById("forgotErrorMsg");
+  const successMsg = document.getElementById("forgotSuccessMsg");
+  const submitBtn = document.querySelector("#forgotForm button[type='submit']");
+  
+  if (!email) {
+    showAuthError(errorMsg, "Please enter your email.");
+    return;
+  }
+  if (!supabase) {
+    showAuthError(errorMsg, "Authentication service is not available.");
+    return;
+  }
+  setAuthLoading(submitBtn, true);
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/#profile`
+    });
+    if (error) throw error;
+    showAuthSuccess(successMsg, "Reset link sent! Check your inbox.");
+  } catch (err) {
+    showAuthError(errorMsg, err.message || "Failed to reset password.");
+  } finally {
+    setAuthLoading(submitBtn, false);
+  }
+}
+
+async function handleLogout() {
+  if (supabase) {
+    await supabase.auth.signOut();
+  }
+  state.user = null;
+  updateAuthUi();
+}
+
+async function handleSocialLogin(provider) {
+  if (!supabase) {
+    alert("Authentication is not configured.");
+    return;
+  }
+  try {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: `${window.location.origin}/`
+      }
+    });
+    if (error) throw error;
+  } catch (err) {
+    alert(`OAuth login failed: ${err.message}`);
+  }
+}
+
+function showAuthError(element, message) {
+  if (element) {
+    element.textContent = message;
+    element.hidden = false;
+  }
+}
+
+function showAuthSuccess(element, message) {
+  if (element) {
+    element.textContent = message;
+    element.hidden = false;
+  }
+}
+
+function setAuthLoading(button, isLoading) {
+  if (!button) return;
+  const textEl = button.querySelector(".btn-text");
+  const spinnerEl = button.querySelector(".btn-spinner");
+  button.disabled = isLoading;
+  if (isLoading) {
+    if (textEl) textEl.style.opacity = "0";
+    if (spinnerEl) spinnerEl.hidden = false;
+  } else {
+    if (textEl) textEl.style.opacity = "1";
+    if (spinnerEl) spinnerEl.hidden = true;
+  }
+}
+
+function setupMockAuth() {
+  const loginBtn = document.getElementById("authLoginBtn");
+  if (loginBtn) {
+    loginBtn.onclick = () => {
+      alert("Authentication config (SUPABASE_URL/SUPABASE_KEY) is missing. Set these environment variables in your server configuration to enable logins.");
+    };
+  }
+}
+
+function renderProfile() {
+  const profileSection = document.getElementById("profile");
+  if (!profileSection) return;
+  const emailEl = document.getElementById("profileEmail");
+  const avatarEl = document.getElementById("profileAvatarLarge");
+  
+  if (state.user) {
+    if (emailEl) emailEl.textContent = state.user.email || "";
+    if (avatarEl) avatarEl.textContent = (state.user.email || "U").substring(0, 2).toUpperCase();
+  } else {
+    setRoute("home");
+    showAuthModal("login");
+  }
+}
+
+async function syncWatchProgressFromDatabase() {
+  if (!supabase || !state.user) return;
+  try {
+    const { data, error } = await supabase
+      .from("watch_progress")
+      .select("*")
+      .eq("user_id", state.user.id);
+    if (error) throw error;
+    if (data && data.length) {
+      const map = getWatchMap();
+      data.forEach((row) => {
+        const key = row.episode_id;
+        const dur = Number(row.duration_seconds) || 0;
+        const pos = Number(row.progress_seconds) || 0;
+        const progress = dur > 0 ? Math.min(100, Math.round((pos / dur) * 100)) : 0;
+        
+        if (!map[key] || (row.updated_at && new Date(row.updated_at).getTime() > (map[key].updatedAt || 0))) {
+          map[key] = {
+            episodeKey: key,
+            animeId: row.anime_id,
+            showId: row.anime_id,
+            title: row.anime_title || "",
+            season: Number(row.episode_id.split(":s")[1]?.split(":e")[0]) || 1,
+            episode: Number(row.episode_number) || 1,
+            episodeTitle: row.episode_title || "",
+            thumb: row.poster_url || "",
+            poster: row.poster_url || "",
+            progress,
+            lastPosition: pos,
+            position: pos,
+            duration: dur,
+            watched: progress >= 90,
+            lastWatchedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now(),
+            updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now(),
+            isAdult: false
+          };
+        }
+      });
+      persistWatchMap();
+      renderContinueWatching();
+    }
+  } catch (err) {
+    console.warn("Failed to sync progress from database:", err.message);
+  }
+}
+
+async function syncFavoritesFromDatabase() {
+  if (!supabase || !state.user) return;
+  try {
+    const { data, error } = await supabase
+      .from("favorites")
+      .select("anime_id")
+      .eq("user_id", state.user.id);
+    if (error) throw error;
+    if (data) {
+      const dbFavs = data.map((d) => d.anime_id);
+      state.favorites = Array.from(new Set([...state.favorites, ...dbFavs]));
+      localStorage.setItem("anime-tv-favorites", JSON.stringify(state.favorites));
+      render();
+    }
+  } catch (err) {
+    console.warn("Failed to sync favorites from database:", err.message);
+  }
+}
+
 render();
 // Deep-link support: open the route named in the URL hash (e.g. #settings).
-const VALID_ROUTES = ["home", "library", "schedule", "favorites", "settings", "anipub", "sources"];
+const VALID_ROUTES = ["home", "library", "schedule", "favorites", "settings", "anipub", "sources", "profile"];
 const _hashRoute = (location.hash || "").replace(/^#/, "");
 setRoute(VALID_ROUTES.includes(_hashRoute) ? _hashRoute : "home");
 window.addEventListener("hashchange", () => {
@@ -9976,6 +10422,13 @@ if (typeof AdultMode !== "undefined" && AdultMode.isEnabled()) {
   loadAdultCatalog();
 }
 restartCarouselTimer();
+
+if (typeof window !== "undefined") {
+  initSupabase().then(() => {
+    wireAuthEvents();
+  });
+}
+
 if (window.UpdateManager) {
   window.animeTVUpdater = new window.UpdateManager({ currentVersion: "1.3.0" });
   window.animeTVUpdater.start();

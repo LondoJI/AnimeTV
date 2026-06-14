@@ -380,6 +380,15 @@ function handleRequest(request, response) {
     return;
   }
 
+  if (url.pathname === "/api/config") {
+    sendJson(response, {
+      ok: true,
+      supabaseUrl: process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "",
+      supabaseKey: process.env.SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
+    });
+    return;
+  }
+
   if (url.pathname === "/api/catalog") {
     handleCatalog(response);
     return;
@@ -5927,11 +5936,12 @@ function extractStreamFromEmbed(html) {
   // 2) packed eval(...) payloads (Streamwish/Filemoon family) → unpack → file:"…".
   for (const p of text.matchAll(/eval\(function\(p,a,c,k,e,d\)\{[\s\S]*?\}\([\s\S]*?\)\)\s*\)?/g)) {
     const un = unpackPackedJs(p[0]);
-    let u = (un.match(/file\s*:\s*"([^"]+\.m3u8[^"]*)"/i) ||
-             un.match(/sources?\s*:\s*\[\s*\{[^}]*?(?:file|src)\s*:\s*"([^"]+)"/i) ||
-             un.match(/"(https?:\/\/[^"]+\.m3u8[^"]*)"/i) ||
-             un.match(/file\s*:\s*"([^"]+\.mp4[^"]*)"/i) ||
-             un.match(/"(https?:\/\/[^"]+\.mp4[^"]*)"/i));
+    let u = (un.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i) ||
+             un.match(/sources?\s*:\s*\[\s*\{[^}]*?(?:file|src)\s*:\s*["']([^"']+)["']/i) ||
+             un.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/i) ||
+             un.match(/file\s*:\s*["']([^"']+\.mp4[^"']*)["']/i) ||
+             un.match(/src\s*:\s*["']([^"']+\.mp4[^"']*)["']/i) ||
+             un.match(/["'](https?:\/\/[^"']+\.mp4[^"']*)["']/i));
     if (u) return pick(u[1]);
   }
   // 3) last resort: any .mp4 in the page.
