@@ -5354,6 +5354,15 @@ function stopActivePlayback() {
   if (!frame) return;
   frame.querySelectorAll("video").forEach((video) => {
     try {
+      if (video._playerComponentInstance) {
+        console.log("[VideoPlayer] Destroying VideoPlayer instance in stopActivePlayback.");
+        video._playerComponentInstance.destroy();
+        video._playerComponentInstance = null;
+      } else if (video._animeTvHls) {
+        console.log("[VideoPlayer] Destroying HLS instance in stopActivePlayback.");
+        video._animeTvHls.destroy();
+        video._animeTvHls = null;
+      }
       video.pause();
       video.removeAttribute("src");
       video.load();
@@ -6832,55 +6841,170 @@ function playInNativeAndroidPlayer(streamUrl, streamType) {
   }
 }
 
+// Reusable Video Player component supporting HLS, adaptive quality fallback, loading states, error states and custom controls.
+class VideoPlayer {
+  constructor(videoElement, props) {
+    this.video = videoElement;
+    this.props = {
+      src: props.src || "",
+      poster: props.poster || "",
+      title: props.title || "",
+      subtitles: props.subtitles || [],
+      sources: props.sources || []
+    };
+    this.hlsInstance = null;
+  }
+
+  async init() {
+    const video = this.video;
+    const url = this.props.src;
+    if (!video || !url) return;
+
+    if (this.props.poster) {
+      video.poster = this.props.poster;
+    }
+
+    const sourceUrl = proxiedStreamUrl(url);
+    const streamType = streamTypeFromUrl(sourceUrl) || streamTypeFromUrl(url);
+
+    // Clean up any old HLS instance first
+    this.destroy();
+
+    // 1. Use hls.js for browsers that do not support HLS natively
+    if (streamType === "hls" && !video.canPlayType("application/vnd.apple.mpegurl")) {
+      console.info("[VideoPlayer] Initializing HLS stream via hls.js:", sourceUrl);
+      const Hls = await loadHlsScript();
+      if (Hls?.isSupported?.()) {
+        return new Promise((resolve) => {
+          const hls = new Hls({
+            enableWorker: true,
+            lowLatencyMode: false,
+            backBufferLength: 60,
+            xhrSetup: (xhr) => {
+              const proxyHost = streamProxyHost(url);
+              if (proxyHost) xhr.setRequestHeader("X-Stream-Prox", proxyHost);
+            }
+          });
+
+          this.hlsInstance = hls;
+          video._animeTvHls = hls;
+
+          hls.on(Hls.Events?.MEDIA_ATTACHED || "hlsMediaAttached", () => {
+            console.log("[VideoPlayer] HLS Media attached successfully.");
+          });
+
+          // Wait for MANIFEST_PARSED to resolve playback readiness
+          hls.on(Hls.Events?.MANIFEST_PARSED || "hlsManifestParsed", (event, data) => {
+            console.log("[VideoPlayer] HLS Manifest parsed successfully.");
+            resolve();
+          });
+
+          // Update subtitle/resolution status dynamically when levels switch (ABR Quality Fallback)
+          hls.on(Hls.Events?.LEVEL_SWITCHED || "hlsLevelSwitched", (event, data) => {
+            const level = hls.levels[data.level];
+            if (level && level.height) {
+              const status = document.querySelector("#subtitleStatus");
+              if (status) {
+                const streamName = streamType ? streamType.toUpperCase() : "Direct";
+                status.textContent = `${streamName} stream · ${level.height}p`;
+              }
+            }
+          });
+
+          hls.on(Hls.Events?.ERROR || "hlsError", (event, data) => {
+            if (data.fatal) {
+              console.error(`[VideoPlayer] Fatal HLS error: ${data.type} - ${data.details}`, data);
+              switch (data.type) {
+                case Hls.ErrorTypes.NETWORK_ERROR:
+                  console.log("[VideoPlayer] Network error, attempting to recover...");
+                  hls.startLoad();
+                  break;
+                case Hls.ErrorTypes.MEDIA_ERROR:
+                  console.log("[VideoPlayer] Media error, attempting to recover...");
+                  hls.recoverMediaError();
+                  break;
+                default:
+                  console.error("[VideoPlayer] Unrecoverable HLS error. Triggering fallback.");
+                  hls.destroy();
+                  video._animeTvHls = null;
+                  const errEvent = new Event("error");
+                  video.dispatchEvent(errEvent);
+                  break;
+              }
+            }
+          });
+
+          hls.loadSource(sourceUrl);
+          hls.attachMedia(video);
+
+          // Force resolve if parsing manifest takes too long
+          setTimeout(() => {
+            resolve();
+          }, 1000);
+        });
+      } else {
+        console.error("[VideoPlayer] HLS is not supported by this browser.");
+        showToast("HLS is not supported.");
+        const errEvent = new Event("error");
+        video.dispatchEvent(errEvent);
+        return;
+      }
+    } else if (streamType === "hls") {
+      // 2. Use native HLS playback for Safari/iOS when possible
+      console.info("[VideoPlayer] Initializing HLS stream natively:", sourceUrl);
+      video.src = sourceUrl;
+    } else {
+      // 3. For MP4/direct file links, assign directly
+      console.info("[VideoPlayer] Initializing MP4/direct file stream:", sourceUrl);
+      video.src = sourceUrl;
+    }
+  }
+
+  destroy() {
+    if (this.hlsInstance) {
+      console.log("[VideoPlayer] Destroying hls.js instance.");
+      try {
+        this.hlsInstance.destroy();
+      } catch (err) {
+        console.warn("[VideoPlayer] Error destroying HLS instance:", err);
+      }
+      this.hlsInstance = null;
+    }
+    if (this.video && this.video._animeTvHls) {
+      this.video._animeTvHls = null;
+    }
+  }
+}
+
 async function setupVideoSource(video, url) {
   if (!video || !url) return;
   const sourceUrl = proxiedStreamUrl(url);
   const streamType = streamTypeFromUrl(sourceUrl) || streamTypeFromUrl(url);
-  // Android TV app: hand HLS/MP4 streams to the native ExoPlayer (the WebView's
-  // <video>/hls.js path can't reliably play them on a TV WebView).
+  
   if (playInNativeAndroidPlayer(sourceUrl, streamType)) return;
-  if (video._animeTvHls) {
-    try {
-      video._animeTvHls.destroy();
-    } catch (error) {
-      // Ignore stale hls.js cleanup failures.
-    }
-    video._animeTvHls = null;
-  }
-  if (streamType === "hls" && !video.canPlayType("application/vnd.apple.mpegurl")) {
-    const Hls = await loadHlsScript();
-    if (Hls?.isSupported?.()) {
-      return new Promise((resolve) => {
-        const hls = new Hls({
-          enableWorker: true,
-          lowLatencyMode: false,
-          backBufferLength: 60,
-          xhrSetup: (xhr) => {
-            const proxyHost = streamProxyHost(url);
-            if (proxyHost) xhr.setRequestHeader("X-Stream-Prox", proxyHost);
-          }
-        });
-        
-        let resolved = false;
-        const cleanup = () => {
-          if (resolved) return;
-          resolved = true;
-          clearTimeout(timeout);
-          resolve();
-        };
-        const timeout = setTimeout(cleanup, 1000);
 
-        hls.on(Hls.Events?.MEDIA_ATTACHED || "hlsMediaAttached", () => {
-          video._animeTvHls = hls;
-          cleanup();
-        });
+  const episode = state.activeEpisode?.episode || {};
+  const tracks = normalizeSubtitleTracks(episode).map(t => ({
+    label: t.label || t.language || "Subtitle",
+    src: t.url,
+    lang: t.language || "es"
+  }));
+  const sources = getEpisodePlaybackSources(episode).map(s => ({
+    label: s.label || s.id,
+    url: s.videoUrl || s.externalUrl,
+    type: s.type === "iframe" ? "iframe" : (streamTypeFromUrl(s.videoUrl) === "hls" ? "hls" : "mp4")
+  }));
 
-        hls.loadSource(sourceUrl);
-        hls.attachMedia(video);
-      });
-    }
-  }
-  video.src = sourceUrl;
+  const playerComponent = new VideoPlayer(video, {
+    src: url,
+    poster: getWatchPosterArtwork(state.activeShow, state.activeEpisode?.season) || "",
+    title: currentEpisodeLabel(),
+    subtitles: tracks,
+    sources: sources
+  });
+
+  video._playerComponentInstance = playerComponent;
+  return playerComponent.init();
 }
 
 function renderPlayerPanelContent(type, episode, url, tracks = []) {
@@ -6962,30 +7086,66 @@ function openPlayerPanel(frame, type, video, episode, url, tracks = []) {
     });
   });
   panel.querySelector("[data-copy-url]")?.addEventListener("click", () => {
-    const selectedSource = getSelectedEpisodeSource(episode);
-    const copyTarget = selectedSource?.externalUrl || episode?.externalUrl || selectedSource?.videoUrl || url;
-    copyExternalUrl(copyTarget);
+    try {
+      const selectedSource = getSelectedEpisodeSource(episode);
+      const copyTarget = selectedSource?.externalUrl 
+        || episode?.externalUrl 
+        || selectedSource?.siteUrl 
+        || state.activeEpisodeUrl 
+        || selectedSource?.videoUrl 
+        || url 
+        || "";
+      if (copyTarget) {
+        copyExternalUrl(copyTarget);
+      } else {
+        showToast("No copyable link found.");
+      }
+    } catch (err) {
+      console.error("[VideoPlayer] Copy link failed:", err);
+      showToast("Copy failed.");
+    }
   });
   panel.querySelector("[data-download-url]")?.addEventListener("click", () => {
-    const selectedSource = getSelectedEpisodeSource(episode);
-    let dlTarget = selectedSource?.downloadUrl || getActiveDownloadUrl(url) || url;
-    
-    const isHls = dlTarget.includes(".m3u8") || dlTarget.includes("m3u8");
-    const isBlobOrCdn = dlTarget.includes("-cdn") || dlTarget.includes("delivery-") || dlTarget.includes("/api/proxy") || dlTarget.includes("m3u8");
-    
-    if (isHls || isBlobOrCdn || isEmbedUrl(dlTarget)) {
-      if (selectedSource?.externalUrl) {
-        dlTarget = selectedSource.externalUrl;
-      } else if (episode?.externalUrl) {
-        dlTarget = episode.externalUrl;
+    try {
+      const selectedSource = getSelectedEpisodeSource(episode);
+      let dlTarget = selectedSource?.downloadUrl || getActiveDownloadUrl(url) || url || "";
+      dlTarget = String(dlTarget);
+      
+      const isHls = dlTarget.includes(".m3u8") || dlTarget.includes("m3u8");
+      const isBlobOrCdn = dlTarget.includes("-cdn") || dlTarget.includes("delivery-") || dlTarget.includes("/api/proxy") || dlTarget.includes("m3u8");
+      
+      if (isHls || isBlobOrCdn || isEmbedUrl(dlTarget)) {
+        if (selectedSource?.externalUrl) {
+          dlTarget = selectedSource.externalUrl;
+        } else if (episode?.externalUrl) {
+          dlTarget = episode.externalUrl;
+        } else if (state.activeEpisodeUrl) {
+          dlTarget = state.activeEpisodeUrl;
+        }
       }
-    }
-    
-    if (dlTarget) {
-      window.open(dlTarget, "_blank");
-      showToast("Opening download/host website...");
-    } else {
-      showToast("Download URL not found.");
+      
+      if (!dlTarget || dlTarget.includes(".m3u8") || dlTarget.includes("/api/proxy")) {
+        if (state.activeEpisodeUrl) {
+          dlTarget = state.activeEpisodeUrl;
+        } else if (episode?.externalUrl) {
+          dlTarget = episode.externalUrl;
+        }
+      }
+      
+      if (dlTarget) {
+        try {
+          window.open(dlTarget, "_blank");
+          showToast("Opening download/host website...");
+        } catch (e) {
+          console.error("[VideoPlayer] window.open failed", e);
+          showToast("Blocked by browser. Click to open: " + dlTarget);
+        }
+      } else {
+        showToast("Download URL not found.");
+      }
+    } catch (err) {
+      console.error("[VideoPlayer] Download action failed:", err);
+      showToast("Download action failed.");
     }
   });
   panel.querySelector("[data-reload-player]")?.addEventListener("click", () => playActiveShow({ allowSourceLookup: false }));
@@ -7156,6 +7316,9 @@ function selectEpisodeByPosition(seasonIndex, episodeIndex, shouldPlay = true) {
   state.activeDetailTab = "episodes";
   state.activeEpisode = { season, episode, seasonIndex, episodeIndex };
   state.activeEpisodeUrl = getEpisodeUrl(episode);
+  if (episode._failedSourceIds) {
+    episode._failedSourceIds.clear();
+  }
   renderEpisodeList(state.activeShow);
   if (shouldPlay) {
     const frame = document.querySelector("#videoFrame");
@@ -7210,6 +7373,9 @@ function wirePlayerChrome(frame) {
       if (!selectedEpisode) return;
       selectedEpisode.selectedSourceId = button.dataset.playerSource;
       state.preferredSource = selectedEpisode.selectedSourceId;
+      if (selectedEpisode._failedSourceIds) {
+        selectedEpisode._failedSourceIds.clear();
+      }
       try {
         localStorage.setItem(PREFERRED_SOURCE_KEY, state.preferredSource);
       } catch (error) {
@@ -8666,32 +8832,62 @@ function renderDirectVideoPlayer(frame, url, episode) {
       const attempt = player?.play?.();
       if (attempt && typeof attempt.catch === "function") {
         attempt.catch(() => {
-          // The browser blocked autoplay because the click gesture was spent
-          // during async source setup — which is why playback used to need a
-          // SECOND click. Recover by starting muted (always allowed), then
-          // unmute on the next interaction. One click now starts the video.
           if (!player) return;
-          player.muted = true;
-          player.play().then(() => {
-            const unmute = () => {
-              player.muted = false;
-              document.removeEventListener("pointerdown", unmute);
-              document.removeEventListener("keydown", unmute);
+          const startMutedAutoplay = () => {
+            if (!player || !player.paused) return;
+            player.muted = true;
+            player.play().then(() => {
+              const unmute = () => {
+                player.muted = false;
+                document.removeEventListener("pointerdown", unmute);
+                document.removeEventListener("keydown", unmute);
+              };
+              document.addEventListener("pointerdown", unmute, { once: true });
+              document.addEventListener("keydown", unmute, { once: true });
+            }).catch(() => {
+              frame.querySelector(".vid-loader")?.setAttribute("hidden", "");
+              showToast("Press play to start this episode.");
+            });
+          };
+
+          if (player.readyState >= 2) {
+            startMutedAutoplay();
+          } else {
+            const onCanPlay = () => {
+              player.removeEventListener("canplay", onCanPlay);
+              startMutedAutoplay();
             };
-            document.addEventListener("pointerdown", unmute, { once: true });
-            document.addEventListener("keydown", unmute, { once: true });
-          }).catch(() => {
-            frame.querySelector(".vid-loader")?.setAttribute("hidden", "");
-            showToast("Press play to start this episode.");
-          });
+            player.addEventListener("canplay", onCanPlay);
+          }
         });
       }
     }).catch((error) => {
-      console.error("Video source setup failed", { url, error });
+      console.error("[VideoPlayer] Video source setup failed", { url, error });
     });
   }
   player?.addEventListener("error", () => {
-    console.error("Direct video playback failed", { url, episode });
+    console.error("[VideoPlayer] Direct video playback failed", { url, episode });
+    
+    // Mark current source as failed
+    const selectedSource = getSelectedEpisodeSource(episode);
+    if (selectedSource) {
+      episode._failedSourceIds = episode._failedSourceIds || new Set();
+      episode._failedSourceIds.add(selectedSource.id);
+    }
+    
+    // Find if there is another source we haven't tried yet
+    const allSources = getEpisodePlaybackSources(episode);
+    const nextSource = allSources.find(s => !episode._failedSourceIds?.has(s.id));
+    
+    if (nextSource) {
+      console.log(`[VideoPlayer] Source ${selectedSource?.id || "unknown"} failed. Trying next source: ${nextSource.id} (${nextSource.label})`);
+      showToast(`Playback failed. Trying server: ${nextSource.label}`);
+      episode.selectedSourceId = nextSource.id;
+      state.preferredSource = nextSource.id;
+      playActiveShow();
+      return;
+    }
+    
     if (isExternalIframeEpisode(episode)) {
       renderEmbeddedAniPubPlayer(state.activeShow || { title: "AniPub" }, episode.externalUrl);
       return;
@@ -8700,11 +8896,14 @@ function renderDirectVideoPlayer(frame, url, episode) {
       <div class="episode-video-empty">
         <div class="play-symbol" aria-hidden="true"></div>
         <strong>Playback failed</strong>
-        <p>The direct video stream could not play. If an AniPub embed is available, ZenkaiTV will use the embedded player; otherwise retry this episode.</p>
+        <p>The direct video stream could not play. No other servers are available. Please retry this episode or choose another source.</p>
         <button class="external-play-button focusable" type="button" data-retry-episode>Retry Episode</button>
       </div>
     `;
-    frame.querySelector("[data-retry-episode]")?.addEventListener("click", () => playActiveShow());
+    frame.querySelector("[data-retry-episode]")?.addEventListener("click", () => {
+      if (episode._failedSourceIds) episode._failedSourceIds.clear();
+      playActiveShow();
+    });
     refreshFocusables();
   });
   const resumeAt = getResumePosition(episode);
@@ -8757,6 +8956,9 @@ function playEpisodeByPosition(seasonIndex, episodeIndex) {
   state.activeDetailTab = "episodes";
   state.activeEpisode = { season, episode, seasonIndex, episodeIndex };
   state.activeEpisodeUrl = getEpisodeUrl(episode);
+  if (episode._failedSourceIds) {
+    episode._failedSourceIds.clear();
+  }
   renderEpisodeList(state.activeShow);
   playActiveShow().then(() => {
     if (wasCinema) {
@@ -9612,6 +9814,66 @@ function setupTvTextInputs() {
 
 document.addEventListener("keydown", (event) => {
   lastInputWasPointer = false;
+
+  // Intercept player shortcuts
+  const cinema = document.querySelector(".vidstream-player.is-cinema");
+  const player = document.querySelector("#animePlayer");
+  if (cinema && player && !player.isApkPlayer && !cinema.querySelector(".source-picker")) {
+    const ae = document.activeElement;
+    const editingText = !!ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA") && ae.type !== "range" && !ae.readOnly;
+    const isControlFocused = ae && (ae.classList.contains("focusable") || ae.closest(".vid-controls") || ae.closest(".vid-topbar") || ae.closest(".vid-panel"));
+    
+    if (!editingText) {
+      let handled = false;
+      if (event.key === " ") {
+        if (!isControlFocused || ae.tagName !== "BUTTON") {
+          event.preventDefault();
+          if (player.paused) player.play().catch(() => {});
+          else player.pause();
+          handled = true;
+        }
+      } else if (event.key === "ArrowLeft" && !isControlFocused) {
+        event.preventDefault();
+        player.currentTime = Math.max(0, player.currentTime - 10);
+        showToast("Rewind 10s");
+        handled = true;
+      } else if (event.key === "ArrowRight" && !isControlFocused) {
+        event.preventDefault();
+        player.currentTime = Math.min(player.duration || 0, player.currentTime + 10);
+        showToast("Forward 10s");
+        handled = true;
+      } else if (event.key === "ArrowUp" && !isControlFocused) {
+        event.preventDefault();
+        player.volume = Math.min(1, player.volume + 0.1);
+        player.muted = false;
+        showToast(`Volume ${Math.round(player.volume * 100)}%`);
+        handled = true;
+      } else if (event.key === "ArrowDown" && !isControlFocused) {
+        event.preventDefault();
+        player.volume = Math.max(0, player.volume - 0.1);
+        if (player.volume === 0) player.muted = true;
+        showToast(`Volume ${Math.round(player.volume * 100)}%`);
+        handled = true;
+      } else if (event.key === "f" || event.key === "F") {
+        event.preventDefault();
+        toggleNativeFullscreen(cinema);
+        handled = true;
+      } else if (event.key === "m" || event.key === "M") {
+        event.preventDefault();
+        player.muted = !player.muted;
+        showToast(player.muted ? "Muted" : "Unmuted");
+        handled = true;
+      }
+      
+      if (handled) {
+        if (typeof _playerIdleKeyHandler === "function") {
+          _playerIdleKeyHandler();
+        }
+        return;
+      }
+    }
+  }
+
   const keyMap = {
     ArrowRight: "right",
     ArrowLeft: "left",

@@ -35,5 +35,8 @@
   "license": "MIT",
   "engines": {
     "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "hls.js": "^1.6.16"
   }
 }
