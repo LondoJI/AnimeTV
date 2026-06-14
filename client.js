@@ -6801,19 +6801,34 @@ async function setupVideoSource(video, url) {
   if (streamType === "hls" && !video.canPlayType("application/vnd.apple.mpegurl")) {
     const Hls = await loadHlsScript();
     if (Hls?.isSupported?.()) {
-      const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: false,
-        backBufferLength: 60,
-        xhrSetup: (xhr) => {
-          const proxyHost = streamProxyHost(url);
-          if (proxyHost) xhr.setRequestHeader("X-Stream-Prox", proxyHost);
-        }
+      return new Promise((resolve) => {
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: false,
+          backBufferLength: 60,
+          xhrSetup: (xhr) => {
+            const proxyHost = streamProxyHost(url);
+            if (proxyHost) xhr.setRequestHeader("X-Stream-Prox", proxyHost);
+          }
+        });
+        
+        let resolved = false;
+        const cleanup = () => {
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(timeout);
+          resolve();
+        };
+        const timeout = setTimeout(cleanup, 1000);
+
+        hls.on(Hls.Events?.MEDIA_ATTACHED || "hlsMediaAttached", () => {
+          video._animeTvHls = hls;
+          cleanup();
+        });
+
+        hls.loadSource(sourceUrl);
+        hls.attachMedia(video);
       });
-      hls.loadSource(sourceUrl);
-      hls.attachMedia(video);
-      video._animeTvHls = hls;
-      return;
     }
   }
   video.src = sourceUrl;
