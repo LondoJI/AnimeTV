@@ -8310,9 +8310,12 @@ body.reduce-motion .theme-flash { animation-duration: 1ms; }
    ────────────────────────────────────────────────────────────────────────── */
 .auth-controls-container {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  margin-left: auto;
-  margin-right: 0.8rem;
+  justify-content: center;
+  width: 100%;
+  margin: 1.5rem auto 0.5rem;
+  padding: 0 0.4rem;
   z-index: 50;
 }
 .auth-header-btn {
@@ -8326,7 +8329,18 @@ body.reduce-motion .theme-flash { animation-duration: 1ms; }
   letter-spacing: 0.03em;
   box-shadow: 0 0.2rem 0.8rem rgba(0, 210, 255, 0.35);
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, width 0.2s ease, height 0.2s ease, border-radius 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.auth-header-btn .auth-btn-icon {
+  width: 1.15rem;
+  height: 1.15rem;
+  display: none !important;
+}
+.auth-header-btn[hidden] {
+  display: none !important;
 }
 .auth-header-btn:is(:hover, :focus-visible, .is-tv-focused) {
   transform: scale(1.05);
@@ -8336,6 +8350,32 @@ body.reduce-motion .theme-flash { animation-duration: 1ms; }
 .user-profile-menu-container {
   position: relative;
   display: inline-block;
+}
+.user-profile-menu-container[hidden] {
+  display: none !important;
+}
+
+/* Collapsed sidebar styling for auth controls */
+body.sidebar-collapsed .auth-controls-container {
+  padding: 0;
+}
+body.sidebar-collapsed .auth-header-btn {
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0;
+  border-radius: 50%;
+  box-shadow: 0 0.2rem 0.6rem rgba(0, 210, 255, 0.25);
+}
+body.sidebar-collapsed .auth-header-btn .auth-btn-text {
+  display: none !important;
+}
+body.sidebar-collapsed .auth-header-btn .auth-btn-icon {
+  display: block !important;
+}
+body.sidebar-collapsed .user-profile-menu-container {
+  display: flex;
+  justify-content: center;
+  width: 100%;
 }
 .user-avatar-btn {
   width: 2.2rem;
