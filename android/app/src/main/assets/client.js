@@ -6920,9 +6920,18 @@ function renderPlayerPanelContent(type, episode, url, tracks = []) {
   return `
     <strong>More options</strong>
     <div class="vid-panel-grid">
-      <button class="focusable vid-panel-choice" type="button" data-copy-url>Copy stream link</button>
-      <a class="focusable vid-panel-choice" href="${escapeHtml(getActiveDownloadUrl(url) || url)}" download>Download video</a>
-      <button class="focusable vid-panel-choice" type="button" data-reload-player>Reload player</button>
+      <button class="focusable vid-panel-choice" type="button" data-copy-url>
+        <span class="choice-icon">🔗</span>
+        <span class="choice-text">Copy stream link</span>
+      </button>
+      <button class="focusable vid-panel-choice" type="button" data-download-url>
+        <span class="choice-icon">⤓</span>
+        <span class="choice-text">Download video</span>
+      </button>
+      <button class="focusable vid-panel-choice" type="button" data-reload-player>
+        <span class="choice-icon">↻</span>
+        <span class="choice-text">Reload player</span>
+      </button>
     </div>
   `;
 }
@@ -6953,6 +6962,15 @@ function openPlayerPanel(frame, type, video, episode, url, tracks = []) {
     });
   });
   panel.querySelector("[data-copy-url]")?.addEventListener("click", () => copyExternalUrl(url));
+  panel.querySelector("[data-download-url]")?.addEventListener("click", () => {
+    const downloadUrl = getActiveDownloadUrl(url) || url;
+    if (downloadUrl.includes(".m3u8") || downloadUrl.includes("m3u8")) {
+      showToast("HLS stream detected. Copy the stream link to download via VLC/ffmpeg.");
+    } else {
+      window.open(downloadUrl, "_blank");
+      showToast("Opening download link in a new tab...");
+    }
+  });
   panel.querySelector("[data-reload-player]")?.addEventListener("click", () => playActiveShow({ allowSourceLookup: false }));
   refreshFocusables();
 }
@@ -9158,10 +9176,49 @@ function showExternalOpenFailure(errorPanel) {
 }
 
 async function copyExternalUrl(externalUrl) {
+  if (!externalUrl) return;
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    try {
+      await navigator.clipboard.writeText(externalUrl);
+      showToast("Link copied to clipboard!");
+      return;
+    } catch (err) {
+      console.warn("navigator.clipboard.writeText failed, trying fallback...", err);
+    }
+  }
+
+  // Fallback using document.execCommand
   try {
-    await navigator.clipboard.writeText(externalUrl);
-  } catch (error) {
+    const textarea = document.createElement("textarea");
+    textarea.value = externalUrl;
+    textarea.style.position = "fixed";
+    textarea.style.top = "0";
+    textarea.style.left = "0";
+    textarea.style.width = "2em";
+    textarea.style.height = "2em";
+    textarea.style.padding = "0";
+    textarea.style.border = "none";
+    textarea.style.outline = "none";
+    textarea.style.boxShadow = "none";
+    textarea.style.background = "transparent";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const successful = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    if (successful) {
+      showToast("Link copied to clipboard!");
+      return;
+    }
+  } catch (err) {
+    console.warn("document.execCommand copy failed:", err);
+  }
+
+  // Final fallback
+  try {
     window.prompt("Copy this link", externalUrl);
+  } catch (err) {
+    showToast("Copy failed. Link: " + externalUrl);
   }
 }
 

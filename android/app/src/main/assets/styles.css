@@ -4673,23 +4673,43 @@ body.adult-mode .vid-loader-text {
 }
 
 .vid-panel-choice {
-  min-height: 2.35rem;
-  padding: 0 0.8rem;
-  border: 0.08rem solid rgba(255, 255, 255, 0.08);
-  border-radius: 0.6rem;
-  color: rgba(246, 243, 255, 0.86);
-  background: rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2.8rem;
+  padding: 0.45rem 1rem;
+  border: 0.08rem solid rgba(255, 255, 255, 0.06);
+  border-radius: 0.8rem;
+  color: rgba(246, 243, 255, 0.88);
+  background: rgba(255, 255, 255, 0.05);
   font: inherit;
-  font-weight: 850;
+  font-weight: 600;
   text-align: left;
   text-decoration: none;
   cursor: pointer;
+  transition: all 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .vid-panel-choice:is(:hover, :focus-visible, .is-tv-focused) {
   outline: 0;
   color: #ffffff;
-  background: rgba(138, 92, 255, 0.34);
+  background: rgba(138, 92, 255, 0.28);
+  border-color: rgba(138, 92, 255, 0.45);
+  transform: translateX(0.25rem);
+  box-shadow: 0 0.25rem 1rem rgba(138, 92, 255, 0.15);
+}
+
+.vid-panel-choice .choice-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  opacity: 0.7;
+  transition: opacity 0.22s ease;
+}
+
+.vid-panel-choice:is(:hover, :focus-visible, .is-tv-focused) .choice-icon {
+  opacity: 1;
 }
 
 .vidstream-player.is-iframe {
