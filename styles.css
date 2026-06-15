@@ -5965,36 +5965,7 @@ body.player-cinema-open .close-button {
   image-rendering: auto;
 }
 
-/* Hero trailer video — sits above the cover image but below the readability
-   gradient (.carousel-stage::after, z-index:1), so the title stays legible.
-   Inserted right after .carousel-backdrop and covers the stage like the image. */
-.carousel-trailer {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 600ms ease;
-}
 
-.carousel-stage.is-trailer-playing .carousel-trailer {
-  opacity: 1;
-}
-
-.carousel-trailer iframe {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 177.78vh;   /* 16:9 cover by viewport height */
-  height: 56.25vw;   /* 16:9 cover by viewport width  */
-  min-width: 100%;
-  min-height: 100%;
-  transform: translate(-50%, -50%);
-  border: 0;
-  pointer-events: none;
-}
-
-body.reduce-motion .carousel-trailer { display: none; }
 
 .carousel-stage::after {
   content: "";
@@ -8696,4 +8667,74 @@ body.is-tv .topbar-auth {
   grid-template-rows: auto;
   grid-auto-columns: clamp(13rem, 22vw, 16rem);
 }
+
+/* Episode range chunk selector for large episode lists */
+.watch-side .ep-chunks-container {
+  flex: 0 0 auto;
+  margin: 0 0 0.55rem;
+  padding: 0 0.15rem;
+  overflow-x: auto;
+  scrollbar-width: none; /* Firefox */
+}
+.watch-side .ep-chunks-container::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+.watch-side .ep-chunks {
+  display: flex;
+  gap: 0.4rem;
+  padding-bottom: 0.2rem;
+}
+.watch-side .ep-chunk-btn {
+  flex: 0 0 auto;
+  min-width: 4.5rem;
+  height: 2.2rem;
+  padding: 0 0.6rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(240, 241, 250, 0.7);
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease, transform 100ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.watch-side .ep-chunk-btn:is(:hover, :focus-visible, .is-tv-focused) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+}
+.watch-side .ep-chunk-btn.is-selected {
+  color: #fff;
+  background: #8a5cff;
+  box-shadow: 0 0.3rem 0.6rem rgba(138, 92, 255, 0.25);
+}
+.watch-side .ep-chunk-btn:active {
+  transform: scale(0.96);
+}
+
+/* Continue watching Clear All button */
+.clear-continue-btn {
+  margin-left: auto;
+  padding: 0.4rem 0.8rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(240, 241, 250, 0.6);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease, transform 100ms ease;
+}
+.clear-continue-btn:is(:hover, :focus-visible, .is-tv-focused) {
+  color: #ff4a4a;
+  background: rgba(255, 74, 74, 0.15);
+  outline: none;
+}
+.clear-continue-btn:active {
+  transform: scale(0.96);
+}
+
 

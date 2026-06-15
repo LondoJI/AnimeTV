@@ -2049,13 +2049,10 @@ function renderCarousel() {
   if (!pool.length) {
     pool = sortCarouselQuality(catalogShows().filter((s) => carouselArtworkOrPoster(s))).slice(0, 12);
   }
-  // Kick off trailer lookups for the pool; re-renders when they resolve.
-  ensureCarouselTrailers(pool);
   // Stable line-up so the hero doesn't reshuffle/blink when trailers or airing
   // data resolve in the background.
   const items = buildStableCarouselItems(pool);
   if (!items.length) {
-    stopCarouselTrailer();
     _carouselPaintedId = null;
     carouselStage.classList.add("is-loading");
     carouselBackdrop.classList.remove("has-banner");
@@ -2094,8 +2091,6 @@ function renderCarousel() {
   carouselOpen.dataset.openSeason = String(target.seasonNumber || "");
   carouselOpen.dataset.openEpisode = String(target.episodeNumber || "");
   carouselStage.dataset.openShow = String(show.id || "");
-  // Show the cover for a beat, then play this anime's trailer (stops on move).
-  scheduleCarouselTrailer(show);
 }
 
 function renderCarouselIndicators(items) {
@@ -2215,8 +2210,6 @@ const CAROUSEL_IMAGE_HOLD_MS = 2600;   // show the cover this long before the vi
 const CAROUSEL_ADVANCE_MS    = 15000;  // auto-advance dwell per slide
 const _trailerCache = new Map();       // anilistId(str) -> {id, site} | null | undefined
 const _TRAILER_LS_PREFIX = "zenkaitv-trailer:";
-let _carouselTrailerTimer = null;
-let _carouselTrailerEl = null;
 let _trailerFetchInFlight = false;
 
 function _readTrailerCache(id) {
@@ -2263,15 +2256,6 @@ async function fetchAniListTrailers(ids) {
   } finally {
     _trailerFetchInFlight = false;
   }
-}
-
-function ensureCarouselTrailers(pool) {
-  const ids = pool.filter((s) => s.anilistId).map((s) => String(s.anilistId));
-  const unknown = ids.filter((id) => _readTrailerCache(id) === undefined);
-  if (!unknown.length) return;
-  fetchAniListTrailers(unknown).then(() => {
-    if (state.route === "home" && overlay.hidden) renderCarousel();
-  });
 }
 
 // ── AniList per-show extras: HQ banner backdrop + per-episode titles/thumbnails
@@ -2610,80 +2594,7 @@ function trailerEmbedUrl(trailer) {
   return `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&mute=1&controls=0&loop=1&playlist=${id}&modestbranding=1&playsinline=1&rel=0&iv_load_policy=3&disablekb=1&fs=0&enablejsapi=1`;
 }
 
-let _carouselTrailerMsgHandler = null;
-let _carouselTrailerRevealTimer = null;
 
-function stopCarouselTrailer() {
-  if (_carouselTrailerTimer) { window.clearTimeout(_carouselTrailerTimer); _carouselTrailerTimer = null; }
-  if (_carouselTrailerRevealTimer) { window.clearTimeout(_carouselTrailerRevealTimer); _carouselTrailerRevealTimer = null; }
-  if (_carouselTrailerMsgHandler) { window.removeEventListener("message", _carouselTrailerMsgHandler); _carouselTrailerMsgHandler = null; }
-  if (_carouselTrailerEl) { _carouselTrailerEl.remove(); _carouselTrailerEl = null; }
-  carouselStage?.classList.remove("is-trailer-playing");
-}
-
-function scheduleCarouselTrailer(show) {
-  stopCarouselTrailer();
-  if (!state.uiPreferences.autoplayHero) return;      // "Hero autoplay" setting governs this
-  if (!state.uiPreferences.motion) return;            // respect reduce-motion preference
-  if (!show || !show.anilistId) return;
-  const trailer = _readTrailerCache(String(show.anilistId));
-  if (!trailer || !trailer.id) return;
-  const slideId = String(show.id || "");
-  _carouselTrailerTimer = window.setTimeout(() => {
-    // Only start if we're still on the same slide, on home, with no show open.
-    if (state.route !== "home" || !overlay.hidden) return;
-    if (String(carouselStage?.dataset.openShow || "") !== slideId) return;
-    const url = trailerEmbedUrl(trailer);
-    if (!url || !carouselBackdrop) return;
-    const wrap = document.createElement("div");
-    wrap.className = "carousel-trailer";
-    wrap.setAttribute("aria-hidden", "true");
-    const frame = document.createElement("iframe");
-    frame.src = url;
-    frame.title = "";
-    frame.tabIndex = -1;
-    frame.setAttribute("frameborder", "0");
-    frame.setAttribute("allow", "autoplay; encrypted-media; picture-in-picture");
-    wrap.appendChild(frame);
-    carouselBackdrop.insertAdjacentElement("afterend", wrap);
-    _carouselTrailerEl = wrap;
-
-    // IMPORTANT: do NOT reveal the iframe yet — a loading YouTube/Dailymotion
-    // iframe paints solid black, and fading that in over the hero is the
-    // "whole screen blinks black" glitch. Keep it invisible (opacity 0) until
-    // the video is actually playing, then fade in.
-    const reveal = () => {
-      if (_carouselTrailerEl !== wrap) return;            // slide changed already
-      carouselStage.classList.add("is-trailer-playing");
-    };
-
-    if (trailer.site !== "dailymotion") {
-      frame.addEventListener("load", () => {
-        try {
-          frame.contentWindow.postMessage(
-            JSON.stringify({ event: "listening", id: 1, channel: "widget" }), "*"
-          );
-        } catch { /* cross-origin handshake best-effort */ }
-      });
-      _carouselTrailerMsgHandler = (e) => {
-        if (typeof e.origin !== "string" || !/youtube\.com|youtube-nocookie\.com/.test(e.origin)) return;
-        let data;
-        try { data = typeof e.data === "string" ? JSON.parse(e.data) : e.data; } catch { return; }
-        if (!data) return;
-        if (data.event === "onError") { stopCarouselTrailer(); return; }
-        // playerState 1 = PLAYING → safe to fade in (real frames are showing).
-        const playerState = data.event === "onStateChange" ? data.info
-          : (data.event === "infoDelivery" ? data.info?.playerState : undefined);
-        if (playerState === 1) reveal();
-      };
-      window.addEventListener("message", _carouselTrailerMsgHandler);
-    }
-
-    // Fallback reveal in case playback events never arrive (Dailymotion, blocked
-    // postMessage, etc.) — by now the iframe has had time to render real frames.
-    _carouselTrailerRevealTimer = window.setTimeout(reveal, 2200);
-  }, CAROUSEL_IMAGE_HOLD_MS);
-}
 
 function cardTemplate(show, index = 0) {
   const isFavorite = state.favorites.includes(show.id);
@@ -4839,9 +4750,7 @@ function setRoute(route) {
 
   if (clearedSearch) render();   // refresh the now-unfiltered Home grids
   syncRouteVisibility();
-  // The hero trailer only runs on Home — stop it elsewhere, restart on return.
   if (route === "home") { renderCarousel(); loadAnimeAv1Latest(); }
-  else stopCarouselTrailer();
   if (route === "anipub") ensureAniPubCatalogLoaded();
   if (route === "settings") renderSettings();
   if (route === "sources") renderSources();
@@ -4883,7 +4792,6 @@ function scrollToRoute(route) {
 }
 
 async function openShow(id, target = {}) {
-  stopCarouselTrailer();   // never leave a hero trailer running behind the overlay
   const wantedId = String(id || "");
   let show = state.shows.find((entry) => String(entry.id) === wantedId || getShowKey(entry) === wantedId);
   if (!show) {
@@ -4909,6 +4817,7 @@ async function openShow(id, target = {}) {
   // straight to the episode list (matches the reference composition).
   state.activeDetailTab = "episodes";
   state.activeSeasonIndex = 0;
+  state.activeEpisodeChunkIndex = 0;
   const openToken = `${show.id || getShowKey(show)}:${Date.now()}`;
   state.activeOpenToken = openToken;
 
@@ -5387,6 +5296,7 @@ function applyOpenTarget(show, target = {}) {
   if (!episode) return;
   state.activeEpisode = { season: activeSeason, episode, seasonIndex, episodeIndex: safeEpisodeIndex };
   state.activeEpisodeUrl = getEpisodeUrl(episode);
+  state.activeEpisodeChunkIndex = Math.floor(safeEpisodeIndex / 100);
 }
 
 function closeShow() {
@@ -5398,6 +5308,7 @@ function closeShow() {
   state.activeEpisode = null;
   state.activeDetailTab = "episodes";
   state.activeSeasonIndex = 0;
+  state.activeEpisodeChunkIndex = 0;
   if (episodeList) {
     episodeList.hidden = true;
     episodeList.innerHTML = "";
@@ -5925,6 +5836,28 @@ function renderEpisodeList(show) {
   const franchiseList = getFranchiseSeasonList(show) || [];
   const cardSeasons = franchiseList.length ? franchiseList : seasons;
 
+  // Chunking/pagination for large episode lists (>150 episodes)
+  const EPISODE_CHUNK_SIZE = 100;
+  const totalEpisodes = episodes.length;
+  const useChunking = totalEpisodes > 150;
+  let chunkedEpisodes = episodes;
+  let chunksCount = 0;
+
+  if (useChunking) {
+    chunksCount = Math.ceil(totalEpisodes / EPISODE_CHUNK_SIZE);
+    if (state.activeEpisodeChunkIndex === undefined || state.activeEpisodeChunkIndex === null) {
+      if (state.activeEpisode && state.activeEpisode.seasonIndex === state.activeSeasonIndex) {
+        state.activeEpisodeChunkIndex = Math.floor(state.activeEpisode.episodeIndex / EPISODE_CHUNK_SIZE);
+      } else {
+        state.activeEpisodeChunkIndex = 0;
+      }
+    }
+    state.activeEpisodeChunkIndex = Math.max(0, Math.min(state.activeEpisodeChunkIndex, chunksCount - 1));
+    const startIdx = state.activeEpisodeChunkIndex * EPISODE_CHUNK_SIZE;
+    const endIdx = startIdx + EPISODE_CHUNK_SIZE;
+    chunkedEpisodes = episodes.slice(startIdx, endIdx);
+  }
+
   episodeList.hidden = false;
   episodeList.innerHTML = `
     <div class="detail-tabs detail-tabs-2" role="tablist" aria-label="Anime details">
@@ -5969,8 +5902,24 @@ function renderEpisodeList(show) {
         </div>`;
       })()}
 
+      ${useChunking ? `
+      <div class="ep-chunks-container">
+        <div class="ep-chunks">
+          ${Array.from({ length: chunksCount }).map((_, i) => {
+            const start = i * EPISODE_CHUNK_SIZE + 1;
+            const end = Math.min((i + 1) * EPISODE_CHUNK_SIZE, totalEpisodes);
+            const isSelected = i === state.activeEpisodeChunkIndex;
+            return `
+            <button class="ep-chunk-btn focusable ${isSelected ? "is-selected" : ""}" data-chunk-index="${i}" type="button">
+              ${start}-${end}
+            </button>`;
+          }).join("")}
+        </div>
+      </div>` : ""}
+
       <div class="ep-rows" id="epRows">
-        ${episodes.length ? episodes.map((episode, episodeIndex) => {
+        ${chunkedEpisodes.length ? chunkedEpisodes.map((episode, chunkLocalIndex) => {
+          const episodeIndex = useChunking ? (state.activeEpisodeChunkIndex * EPISODE_CHUNK_SIZE + chunkLocalIndex) : chunkLocalIndex;
           const num = episode.episode || episodeIndex + 1;
           // Prefer AniList per-episode metadata (real title + still), matched by
           // episode number.
@@ -6190,6 +6139,7 @@ function renderEpisodeList(show) {
     state.activeSeasonIndex = Math.max(0, target.localIndex);
     state.activeEpisode = null;
     state.activeEpisodeUrl = "";
+    state.activeEpisodeChunkIndex = 0;
     renderEpisodeList(ctx);
     resetVideoFrame();
     refreshFocusables();
@@ -6226,6 +6176,18 @@ function renderEpisodeList(show) {
       const episode = season?.episodes?.[Number(button.dataset.episodeIndex)];
       if (!season || !episode) return;
       selectEpisodeByPosition(Number(button.dataset.seasonIndex), Number(button.dataset.episodeIndex), true);
+    });
+  });
+
+  // ── Chunk selection ──────────────────────────────────────────────────────
+  episodeList.querySelectorAll("[data-chunk-index]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.chunkIndex);
+      state.activeEpisodeChunkIndex = idx;
+      renderEpisodeList(show);
+      const newBtn = episodeList.querySelector(`[data-chunk-index="${idx}"]`);
+      if (newBtn) focusElement(newBtn);
+      else refreshFocusables();
     });
   });
 }
@@ -7429,6 +7391,7 @@ function selectEpisodeByPosition(seasonIndex, episodeIndex, shouldPlay = true) {
   state.activeDetailTab = "episodes";
   state.activeEpisode = { season, episode, seasonIndex, episodeIndex };
   state.activeEpisodeUrl = getEpisodeUrl(episode);
+  state.activeEpisodeChunkIndex = Math.floor(episodeIndex / 100);
   if (episode._failedSourceIds) {
     episode._failedSourceIds.clear();
   }
@@ -7807,6 +7770,41 @@ function resumeFromContinue(showId, key) {
   const episodeNumber = m ? Number(m[2]) : 1;
   if (!showId) return;
   openShow(showId, { seasonNumber, episodeNumber, playIntent: true });
+}
+
+function clearContinueWatchingList(isAdult = false) {
+  const confirmMsg = isAdult
+    ? "Are you sure you want to clear your adult Continue Watching history?"
+    : "Are you sure you want to clear your Continue Watching history?";
+  if (!window.confirm(confirmMsg)) return;
+
+  const map = getWatchMap();
+  const keysToDelete = [];
+  for (const key in map) {
+    const entry = map[key];
+    if (entry && entry.progress > 0 && entry.progress < 90 && !entry.watched) {
+      const entryIsAdult = isEntryAdult(entry);
+      if (isAdult === entryIsAdult) {
+        keysToDelete.push(key);
+        delete map[key];
+      }
+    }
+  }
+
+  if (keysToDelete.length > 0) {
+    persistWatchMap();
+    renderContinueWatching();
+    if (supabase && state.user) {
+      supabase
+        .from("watch_progress")
+        .delete()
+        .eq("user_id", state.user.id)
+        .in("episode_id", keysToDelete)
+        .then(({ error }) => {
+          if (error) console.warn("Supabase delete error:", error.message);
+        });
+    }
+  }
 }
 
 // ── Native (Android) player → web bridge ────────────────────────────────────
@@ -9169,6 +9167,7 @@ function playEpisodeByPosition(seasonIndex, episodeIndex) {
   state.activeDetailTab = "episodes";
   state.activeEpisode = { season, episode, seasonIndex, episodeIndex };
   state.activeEpisodeUrl = getEpisodeUrl(episode);
+  state.activeEpisodeChunkIndex = Math.floor(episodeIndex / 100);
   if (episode._failedSourceIds) {
     episode._failedSourceIds.clear();
   }
@@ -9957,6 +9956,9 @@ document.querySelectorAll(".search-box").forEach((box) => {
 });
 
 sidebarToggle?.addEventListener("click", toggleSidebar);
+
+document.getElementById("clearContinueBtn")?.addEventListener("click", () => clearContinueWatchingList(false));
+document.getElementById("clearContinueBtnAdult")?.addEventListener("click", () => clearContinueWatchingList(true));
 
 closeOverlay.addEventListener("click", closeShow);
 favoriteButton.addEventListener("click", toggleFavorite);
