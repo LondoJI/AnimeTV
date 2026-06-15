@@ -1,4 +1,5 @@
 const http = require("http");
+const dns = require("dns");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
@@ -178,7 +179,7 @@ const SECURITY_HEADERS = {
   "Permissions-Policy": "autoplay=*, fullscreen=*, picture-in-picture=*, camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), xr-spatial-tracking=()",
   "Content-Security-Policy": [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'",
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "img-src 'self' data: blob: http: https:",
@@ -309,25 +310,39 @@ function installProcessSafetyNet() {
 installProcessSafetyNet();
 
 function loadLocalEnv() {
-  [".env.local", ".env"].forEach((file) => {
-    const envPath = path.join(root, file);
-    if (!fs.existsSync(envPath)) return;
-    try {
-      fs.readFileSync(envPath, "utf8")
-        .split(/\r?\n/)
-        .forEach((line) => {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith("#")) return;
-          const separator = trimmed.indexOf("=");
-          if (separator < 1) return;
-          const key = trimmed.slice(0, separator).trim();
-          if (file === ".env.local" && key === "PORT") return;
-          const value = trimmed.slice(separator + 1).trim().replace(/^['"]|['"]$/g, "");
-          if (key && process.env[key] === undefined) process.env[key] = value;
-        });
-    } catch (error) {
-      console.warn(`Could not load ${file}:`, error.message);
-    }
+  const dirs = [
+    root,
+    process.cwd(),
+    path.join(root, ".."),
+    path.join(root, ".vercel")
+  ];
+  const files = [
+    ".env.production.local",
+    ".env.local",
+    ".env.development.local",
+    ".env"
+  ];
+  dirs.forEach((dir) => {
+    files.forEach((file) => {
+      const envPath = path.join(dir, file);
+      if (!fs.existsSync(envPath)) return;
+      try {
+        fs.readFileSync(envPath, "utf8")
+          .split(/\r?\n/)
+          .forEach((line) => {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith("#")) return;
+            const separator = trimmed.indexOf("=");
+            if (separator < 1) return;
+            const key = trimmed.slice(0, separator).trim();
+            if (key === "PORT") return;
+            const value = trimmed.slice(separator + 1).trim().replace(/^['"]|['"]$/g, "");
+            if (key && process.env[key] === undefined) process.env[key] = value;
+          });
+      } catch (error) {
+        console.warn(`Could not load env from ${envPath}:`, error.message);
+      }
+    });
   });
 }
 
@@ -381,10 +396,32 @@ function handleRequest(request, response) {
   }
 
   if (url.pathname === "/api/config") {
+    // Accept the Supabase URL + PUBLIC (anon/publishable) key under any of the
+    // common env-var names. The Vercel Supabase integration sets SUPABASE_URL +
+    // SUPABASE_ANON_KEY, while Next/Vite/SvelteKit use NEXT_PUBLIC_/VITE_/PUBLIC_
+    // prefixes — so a var that's "set on Vercel" was being missed by the old,
+    // narrower list. NOTE: only the anon/publishable key is returned (it's sent
+    // to the browser); the service-role key is intentionally never read here.
+    const supabaseUrl =
+      process.env.SUPABASE_URL ||
+      process.env.NEXT_PUBLIC_SUPABASE_URL ||
+      process.env.PUBLIC_SUPABASE_URL ||
+      process.env.VITE_SUPABASE_URL ||
+      "";
+    const supabaseKey =
+      process.env.SUPABASE_KEY ||
+      process.env.SUPABASE_ANON_KEY ||
+      process.env.SUPABASE_PUBLISHABLE_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+      process.env.PUBLIC_SUPABASE_ANON_KEY ||
+      process.env.VITE_SUPABASE_ANON_KEY ||
+      "";
     sendJson(response, {
       ok: true,
-      supabaseUrl: process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "",
-      supabaseKey: process.env.SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
+      configured: Boolean(supabaseUrl && supabaseKey),
+      supabaseUrl,
+      supabaseKey
     });
     return;
   }
@@ -3721,6 +3758,38 @@ function getAniPubCatalogCache(limit) {
   };
 }
 
+async function isUrlDomainValid(urlStr) {
+  if (!urlStr) return false;
+  try {
+    const parsed = new URL(urlStr);
+    const hostname = parsed.hostname;
+    if (!hostname) return false;
+
+    // Hardcoded check for known dead/broken domains
+    const deadHostnames = ["gogoanime.com.by", "dead-domain.com"];
+    if (deadHostnames.some(dead => hostname.toLowerCase().includes(dead))) {
+      return false;
+    }
+
+    // Perform a quick DNS lookup with 1000ms timeout
+    const lookupPromise = new Promise((resolve) => {
+      dns.lookup(hostname, (err, address) => {
+        if (err || !address) {
+          resolve(false);
+        } else {
+          resolve(true);
+        }
+      });
+    });
+
+    const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(false), 1000));
+
+    return await Promise.race([lookupPromise, timeoutPromise]);
+  } catch (error) {
+    return false;
+  }
+}
+
 async function handleAniPubPlay(url, response) {
   const id = url.searchParams.get("id");
   const alt = url.searchParams.get("alt");
@@ -3734,6 +3803,20 @@ async function handleAniPubPlay(url, response) {
     const payload = await fetchAniPubDetails([id, alt].filter(Boolean));
     const link = getAniPubEpisodeLink(payload, episode);
     const externalUrl = stripAniPubSrc(link);
+
+    const isValid = await isUrlDomainValid(externalUrl);
+    if (!isValid) {
+      sendJson(response, {
+        ok: true,
+        externalUrl: "",
+        externalType: "unavailable",
+        sourceOptions: [],
+        server: "AniPub",
+        note: "AniPub did not return a playable or active stream link for this episode."
+      });
+      return;
+    }
+
     const videoUrl = extractDirectVideoUrl(link);
 
     if (!videoUrl) {
@@ -3783,33 +3866,36 @@ async function handleAniPubEpisodes(animeId, response) {
 
     const episodes = [];
     const episodeOne = stripAniPubSrc(local.link || local.Link || "");
+
+    const candidates = [];
     if (episodeOne) {
-      const videoUrl = extractDirectVideoUrl(episodeOne);
-      episodes.push({
-        number: 1,
-        episode: 1,
-        title: "Episode 1",
-        externalUrl: episodeOne,
-        externalType: "iframe",
-        videoUrl,
-        sourceOptions: buildAniPubSourceOptions(episodeOne, videoUrl),
-        audioTracks: getAvailableAudioTracks(local),
-        subtitles: getAvailableSubtitles(local),
-        server: "AniPub"
-      });
+      candidates.push({ number: 1, externalUrl: episodeOne, entry: local });
     }
 
     const list = Array.isArray(local.ep) ? local.ep : Array.isArray(local.Ep) ? local.Ep : [];
     list.forEach((entry, index) => {
       const externalUrl = stripAniPubSrc(typeof entry === "string" ? entry : entry?.link || entry?.Link || "");
-      if (!externalUrl) return;
-      const sourceEpisode = typeof entry === "string" ? {} : entry;
-      const number = index + 2;
+      if (externalUrl) {
+        candidates.push({ number: index + 2, externalUrl, entry });
+      }
+    });
+
+    const validations = await Promise.all(candidates.map(async (item) => {
+      const isValid = await isUrlDomainValid(item.externalUrl);
+      return { ...item, isValid };
+    }));
+
+    validations.forEach((item) => {
+      if (!item.isValid) return;
+      const number = item.number;
+      const externalUrl = item.externalUrl;
+      const sourceEpisode = typeof item.entry === "string" ? {} : item.entry;
       const videoUrl = extractDirectVideoUrl(externalUrl);
+
       episodes.push({
         number,
         episode: number,
-        title: sourceEpisode?.title || sourceEpisode?.name || sourceEpisode?.Title || `Episode ${number}`,
+        title: number === 1 ? "Episode 1" : (sourceEpisode?.title || sourceEpisode?.name || sourceEpisode?.Title || `Episode ${number}`),
         externalUrl,
         externalType: "iframe",
         videoUrl,
@@ -5299,6 +5385,11 @@ async function handleTioAnimeSources(url, response) {
 async function findTioAnimeSlugFromCatalog(title) {
   const normalized = normalizeTitle(title);
   if (!normalized) return null;
+
+  const lowerTitle = String(title || "").toLowerCase();
+  if (lowerTitle.includes("chainsaw") && lowerTitle.includes("reze")) {
+    return { slug: "chainsaw-man-movie-rezehen", title: "Chainsaw Man Movie: Reze-hen", match: "hardcoded-override" };
+  }
   const payload = await getTioAnimeSlugCatalog({
     force: false,
     pages: HOSTED_RUNTIME ? TIOANIME_HOSTED_SLUG_MAX_PAGES : 6
@@ -5370,15 +5461,20 @@ async function fetchTioAnimeEpisodeSourcesDirect(slug, episode) {
   }
   const html = await upstream.text();
   const sources = parseTioAnimeVideoSources(html, episodeUrl);
+  const playableSources = sources.filter((source) => {
+    const prov = String(source.provider).toLowerCase();
+    const url = String(source.url).toLowerCase();
+    return !prov.includes("mega") && !prov.includes("mediafire") && !url.includes("mega.nz") && !url.includes("mediafire.com");
+  });
   return {
-    ok: sources.length > 0,
+    ok: playableSources.length > 0,
     source: "TioAnime Direct",
     slug: safeSlug,
     episode: epNum,
     episodeUrl,
-    count: sources.length,
-    sources,
-    mega: sources.filter((source) => /mega/i.test(source.provider)).map((source) => source.url)
+    count: playableSources.length,
+    sources: playableSources,
+    mega: sources.filter((source) => /mega/i.test(source.provider) || /mega\.nz/i.test(source.url)).map((source) => source.url)
   };
 }
 
@@ -6226,6 +6322,11 @@ function parseAnimeAv1CatalogHtml(html = "") {
 }
 
 async function findAnimeAv1SlugForShow(show = {}) {
+  const lowerTitle = String(show.title || "").toLowerCase();
+  if (lowerTitle.includes("chainsaw") && lowerTitle.includes("reze")) {
+    return { slug: "chainsaw-man-movie-reze-hen", title: "Chainsaw Man Movie: Reze-hen", match: "hardcoded-override" };
+  }
+
   const searchKey = animeAv1SearchCandidates(show).map(normalizeTitle).filter(Boolean).join("|");
   const cached = animeAv1SlugSearchCache.get(searchKey);
   if (cached && Date.now() - cached.ts < ANIMEAV1_SLUG_CACHE_TTL_MS) return cached.data;
@@ -6336,10 +6437,22 @@ async function validateAnimeAv1Slug(slug) {
 
 async function fetchAnimeAv1EpisodeSourcesDirect(slug, episode, variant = "SUB") {
   const safeSlug = cleanAnimeAv1Slug(slug);
-  const epNum = Number(episode || 0);
-  const episodeUrl = `${ANIMEAV1_BASE}/media/${encodeURIComponent(safeSlug)}/${encodeURIComponent(epNum)}`;
-  const upstream = await fetchWithTimeout(episodeUrl, { headers: ANIMEAV1_HEADERS }, HOSTED_RUNTIME ? 7000 : 10000);
-  if (!upstream.ok) throw new Error(`AnimeAV1 episode page returned HTTP ${upstream.status}.`);
+  let epNum = Number(episode || 0);
+  let episodeUrl = `${ANIMEAV1_BASE}/media/${encodeURIComponent(safeSlug)}/${encodeURIComponent(epNum)}`;
+  let upstream = await fetchWithTimeout(episodeUrl, { headers: ANIMEAV1_HEADERS }, HOSTED_RUNTIME ? 7000 : 10000).catch(() => null);
+
+  if ((!upstream || !upstream.ok) && epNum === 1) {
+    const fallbackUrl = `${ANIMEAV1_BASE}/media/${encodeURIComponent(safeSlug)}/0`;
+    const fallbackUpstream = await fetchWithTimeout(fallbackUrl, { headers: ANIMEAV1_HEADERS }, HOSTED_RUNTIME ? 7000 : 10000).catch(() => null);
+    if (fallbackUpstream && fallbackUpstream.ok) {
+      upstream = fallbackUpstream;
+      episodeUrl = fallbackUrl;
+    }
+  }
+
+  if (!upstream || !upstream.ok) {
+    throw new Error(`AnimeAV1 episode page returned HTTP ${upstream ? upstream.status : "Failed"}.`);
+  }
   const html = await upstream.text();
   const allSources = parseAnimeAv1SourceBlock(html, "embeds");
   const allDownloads = parseAnimeAv1SourceBlock(html, "downloads");

@@ -396,10 +396,32 @@ function handleRequest(request, response) {
   }
 
   if (url.pathname === "/api/config") {
+    // Accept the Supabase URL + PUBLIC (anon/publishable) key under any of the
+    // common env-var names. The Vercel Supabase integration sets SUPABASE_URL +
+    // SUPABASE_ANON_KEY, while Next/Vite/SvelteKit use NEXT_PUBLIC_/VITE_/PUBLIC_
+    // prefixes — so a var that's "set on Vercel" was being missed by the old,
+    // narrower list. NOTE: only the anon/publishable key is returned (it's sent
+    // to the browser); the service-role key is intentionally never read here.
+    const supabaseUrl =
+      process.env.SUPABASE_URL ||
+      process.env.NEXT_PUBLIC_SUPABASE_URL ||
+      process.env.PUBLIC_SUPABASE_URL ||
+      process.env.VITE_SUPABASE_URL ||
+      "";
+    const supabaseKey =
+      process.env.SUPABASE_KEY ||
+      process.env.SUPABASE_ANON_KEY ||
+      process.env.SUPABASE_PUBLISHABLE_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+      process.env.PUBLIC_SUPABASE_ANON_KEY ||
+      process.env.VITE_SUPABASE_ANON_KEY ||
+      "";
     sendJson(response, {
       ok: true,
-      supabaseUrl: process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "",
-      supabaseKey: process.env.SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || ""
+      configured: Boolean(supabaseUrl && supabaseKey),
+      supabaseUrl,
+      supabaseKey
     });
     return;
   }
