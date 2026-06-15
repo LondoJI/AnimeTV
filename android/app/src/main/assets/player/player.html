@@ -35,6 +35,22 @@
     .scale-1 .vjs-tech { object-fit: cover !important; }
     .scale-2 video,
     .scale-2 .vjs-tech { object-fit: fill !important; }
+
+    .seek-flash {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 30;
+      padding: 0.6em 1em;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.55);
+      color: #fff;
+      font: 700 1.1rem/1 system-ui, -apple-system, sans-serif;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease;
+    }
+    .seek-flash.show { opacity: 1; }
   </style>
   <script>window.HELP_IMPROVE_VIDEOJS = false;</script>
   <script src="./video.min.js"></script>
@@ -257,8 +273,61 @@
           if (data && (data.vcmd === "play" || data.vcmd === "unmute")) restoreSound();
         } catch (error) {}
       });
-      // Send double click to toggle fullscreen on parent
-      window.addEventListener("dblclick", function () { send("toggleFullscreen", 1); });
+      // Double-tap / double-click zones: left third = rewind 10s, right third =
+      // forward 10s, center = toggle fullscreen on the parent. Works for both
+      // mouse (dblclick) and touch (manual double-tap detection).
+      function seekRelative(delta) {
+        try {
+          var dur = player.duration() || 0;
+          var next = (player.currentTime() || 0) + delta;
+          if (next < 0) next = 0;
+          if (dur && next > dur) next = dur;
+          player.currentTime(next);
+          flashSeek(delta);
+          restoreSound();
+        } catch (error) {}
+      }
+      function tapZone(clientX) {
+        var w = window.innerWidth || document.documentElement.clientWidth || 1;
+        if (clientX < w * 0.35) return "left";
+        if (clientX > w * 0.65) return "right";
+        return "center";
+      }
+      function handleDoubleTap(clientX) {
+        var zone = tapZone(clientX);
+        if (zone === "left") seekRelative(-10);
+        else if (zone === "right") seekRelative(10);
+        else send("toggleFullscreen", 1);
+      }
+      var _seekFlashEl = null;
+      function flashSeek(delta) {
+        if (!_seekFlashEl) {
+          _seekFlashEl = document.createElement("div");
+          _seekFlashEl.className = "seek-flash";
+          document.body.appendChild(_seekFlashEl);
+        }
+        _seekFlashEl.textContent = (delta < 0 ? "« " : "» ") + Math.abs(delta) + "s";
+        _seekFlashEl.style.left = delta < 0 ? "16%" : "auto";
+        _seekFlashEl.style.right = delta < 0 ? "auto" : "16%";
+        _seekFlashEl.classList.add("show");
+        clearTimeout(_seekFlashEl._t);
+        _seekFlashEl._t = setTimeout(function () { _seekFlashEl.classList.remove("show"); }, 600);
+      }
+      window.addEventListener("dblclick", function (event) { handleDoubleTap(event.clientX); });
+      var _lastTapTime = 0, _lastTapX = 0;
+      window.addEventListener("touchend", function (event) {
+        var now = Date.now();
+        var touch = event.changedTouches && event.changedTouches[0];
+        var x = touch ? touch.clientX : 0;
+        if (now - _lastTapTime < 320 && Math.abs(x - _lastTapX) < 60) {
+          if (event.cancelable) event.preventDefault();
+          handleDoubleTap(x);
+          _lastTapTime = 0;
+        } else {
+          _lastTapTime = now;
+          _lastTapX = x;
+        }
+      }, { passive: false });
     })();
   </script>
 </body>

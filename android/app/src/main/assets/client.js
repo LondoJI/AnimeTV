@@ -6442,6 +6442,7 @@ function renderVidstreamControls() {
   const fit = state.uiPreferences.playerFit || "contain";
   return `
     <div class="vid-controls" aria-label="Video controls">
+      <button class="vid-skip-intro focusable" type="button" data-player-skip-intro hidden>Skip Intro »</button>
       <input class="vid-seek focusable" id="playerSeek" type="range" min="0" max="1000" value="0" aria-label="Seek">
       <div class="vid-control-row">
         <button class="vid-icon-button focusable" type="button" data-player-prev ${nav.previous ? "" : "disabled"} aria-label="Previous episode" title="Previous episode">⏮</button>
@@ -7316,6 +7317,23 @@ function wireVidstreamControls(frame, video, episode, url, tracks = []) {
   const volumeSlider = frame.querySelector("#playerVolume");
   const loader = frame.querySelector(".vid-loader");
 
+  // Skip-intro: placeholder button, shown only while playback is inside an
+  // episode's intro window. No intro timestamps exist in the data yet, so it
+  // stays hidden — wired and ready for when introStart/introEnd are provided.
+  const skipIntroBtn = frame.querySelector("[data-player-skip-intro]");
+  const introStart = Number(episode?.introStart);
+  const introEnd = Number(episode?.introEnd);
+  const hasIntro = Number.isFinite(introStart) && Number.isFinite(introEnd) && introEnd > introStart;
+  const updateSkipIntro = () => {
+    if (!skipIntroBtn) return;
+    if (!hasIntro) { skipIntroBtn.hidden = true; return; }
+    const t = video.currentTime || 0;
+    skipIntroBtn.hidden = !(t >= introStart && t < introEnd);
+  };
+  skipIntroBtn?.addEventListener("click", () => {
+    if (hasIntro) { video.currentTime = introEnd; skipIntroBtn.hidden = true; }
+  });
+
   const updateTime = () => {
     const duration = video.duration || 0;
     const current = video.currentTime || 0;
@@ -7377,15 +7395,49 @@ function wireVidstreamControls(frame, video, episode, url, tracks = []) {
     button.addEventListener("click", () => openPlayerPanel(frame, button.dataset.playerPanel, video, episode, url, tracks));
   });
   
-  // Double click stage to toggle fullscreen
+  // Double-tap stage zones: left third = rewind 10s, right third = forward 10s,
+  // center = toggle fullscreen. (For the iframe player the equivalent lives in
+  // player.html, since the iframe captures its own touches.) Works for mouse
+  // dblclick and touch double-tap.
   const stage = frame.querySelector(".vid-player-stage");
+  const onStageDoubleTap = (clientX) => {
+    if (!stage) return;
+    const rect = stage.getBoundingClientRect();
+    const rel = (clientX - rect.left) / (rect.width || 1);
+    if (rel < 0.35) {
+      video.currentTime = Math.max(0, (video.currentTime || 0) - 10);
+      showToast("Rewind 10s");
+    } else if (rel > 0.65) {
+      video.currentTime = Math.min(video.duration || Infinity, (video.currentTime || 0) + 10);
+      showToast("Forward 10s");
+    } else {
+      toggleNativeFullscreen(shell);
+    }
+  };
+  const inChrome = (target) =>
+    target.closest(".vid-controls") || target.closest(".vid-topbar") || target.closest(".vid-panel");
   stage?.addEventListener("dblclick", (e) => {
-    if (e.target.closest(".vid-controls") || e.target.closest(".vid-topbar") || e.target.closest(".vid-panel")) return;
-    toggleNativeFullscreen(shell);
+    if (inChrome(e.target)) return;
+    onStageDoubleTap(e.clientX);
   });
+  let _stageLastTap = 0, _stageLastX = 0;
+  stage?.addEventListener("touchend", (e) => {
+    if (inChrome(e.target)) return;
+    const now = Date.now();
+    const x = e.changedTouches?.[0]?.clientX || 0;
+    if (now - _stageLastTap < 320 && Math.abs(x - _stageLastX) < 60) {
+      if (e.cancelable) e.preventDefault();
+      onStageDoubleTap(x);
+      _stageLastTap = 0;
+    } else {
+      _stageLastTap = now;
+      _stageLastX = x;
+    }
+  }, { passive: false });
 
   video.addEventListener("loadedmetadata", updateTime);
   video.addEventListener("timeupdate", updateTime);
+  video.addEventListener("timeupdate", updateSkipIntro);
   video.addEventListener("play", updateToggle);
   video.addEventListener("pause", updateToggle);
   video.addEventListener("volumechange", updateVolume);
@@ -7395,6 +7447,7 @@ function wireVidstreamControls(frame, video, episode, url, tracks = []) {
   updateToggle();
   updateVolume();
   updateTime();
+  updateSkipIntro();
   setupPlayerAutoHide(frame);
 }
 
