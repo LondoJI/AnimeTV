@@ -7777,6 +7777,18 @@ body.has-embedded-player .watch-side {
     radial-gradient(circle at 22% 84%, hsla(calc(var(--episode-hue) + 72), 88%, 58%, 0.36), transparent 42%),
     linear-gradient(135deg, hsl(var(--episode-hue), 46%, 22%), #0b0c17 72%);
 }
+.ep-thumb.is-fallback {
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 75% 20%, hsla(var(--episode-hue), 85%, 60%, 0.38), transparent 38%),
+    radial-gradient(circle at 25% 80%, hsla(calc(var(--episode-hue) + 60), 80%, 50%, 0.28), transparent 44%),
+    linear-gradient(135deg, hsl(var(--episode-hue), 40%, 16%), #080912 75%);
+}
+.ep-thumb.is-fallback .ep-thumb-img {
+  filter: blur(8px) brightness(0.44) saturate(1.1);
+  transform: scale(1.14);
+  opacity: 0.72;
+}
 .ep-thumb.is-placeholder::before {
   content: "";
   position: absolute;

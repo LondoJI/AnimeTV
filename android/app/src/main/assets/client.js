@@ -6017,6 +6017,19 @@ function renderEpisodeList(show) {
           ].map(u => String(u || "").trim())
            .filter(u => u && (isAdultShow || !isAdultImageUrl(u)));
           const epImgSrc = epFallbacks[0] || "";
+
+          // Detect if this thumbnail is a fallback (backdrop/banner or repeated image)
+          const backdropArt = new Set([
+            show.images?.backdrop, show.images?.banner, show.tmdbBackdrop,
+            show.banner, show.bannerImage
+          ].map(comparableImageUrl).filter(Boolean));
+          const compSrc = comparableImageUrl(epImgSrc);
+          const isFallback = epImgSrc && (
+            backdropArt.has(compSrc) ||
+            repeatedImages.has(compSrc) ||
+            showLevelArt.has(compSrc)
+          );
+
           const epFallbackData = epFallbacks.length
             ? ` data-image-fallbacks="${escapeHtml(encodeURIComponent(JSON.stringify(epFallbacks)))}" data-image-fallback-index="0"`
             : "";
@@ -6041,7 +6054,7 @@ function renderEpisodeList(show) {
           <button class="ep-row focusable ${locked ? "is-locked" : ""} ${selected ? "is-selected" : ""} ${watchCls}"
                   data-season-index="${state.activeSeasonIndex}" data-episode-index="${episodeIndex}"
                   data-ep-search="${escapeHtml(search)}">
-            <span class="ep-thumb ${epImgSrc ? "has-image" : "is-placeholder"}" style="--episode-hue:${fallbackHue}">
+            <span class="ep-thumb ${epImgSrc ? "has-image" : "is-placeholder"}${isFallback ? " is-fallback" : ""}" style="--episode-hue:${fallbackHue}">
               ${epImgSrc ? `<img referrerpolicy="no-referrer" class="ep-thumb-img" src="${escapeHtml(epImgSrc)}" alt="" loading="lazy"${epFallbackData}>` : ""}
               <span class="ep-thumb-num">${escapeHtml(String(num))}</span>
               <span class="ep-thumb-play" aria-hidden="true">▶</span>
