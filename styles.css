@@ -4865,19 +4865,21 @@ body.player-cinema-open .close-button {
 
 .vidstream-player.is-cinema {
   position: fixed;
-  top: 50%;
-  left: 50%;
+  top: 0;
+  left: 0;
   z-index: 10050;
   display: block;
-  width: min(92vw, 96rem);
-  height: min(78vh, 54rem);
+  /* True full-screen, edge-to-edge (Netflix-style) — no centered window. */
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
   padding: 0;
-  border: 0.08rem solid rgba(255, 255, 255, 0.16);
-  border-radius: 1rem;
+  border: 0;
+  border-radius: 0;
   background: #000;
   overflow: hidden;
-  transform: translate(-50%, -50%);
-  box-shadow: 0 1.4rem 5rem rgba(0, 0, 0, 0.62), 0 0 0 999rem rgba(2, 2, 8, 0.72);
+  transform: none;
+  box-shadow: none;
   transition: none;
 }
 
