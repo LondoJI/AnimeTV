@@ -20,7 +20,7 @@ const ImageResolver = (function () {
   "use strict";
 
   const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
-  const MATCH_CACHE_PREFIX = "zenkaitv:tmdb-match:v7:";
+  const MATCH_CACHE_PREFIX = "zenkaitv:tmdb-match:v8:";
   const MATCH_CACHE_TTL_MS = 1000 * 60 * 60 * 24; // Refresh airing episode stills daily.
   const FAILED_CACHE_KEY = "zenkaitv:img-failed:v1";
   const FAILED_CACHE_MAX = 400;
@@ -95,12 +95,27 @@ const ImageResolver = (function () {
              .replace(/\byofukashi no uta\b/g, "call of the night")
              .replace(/\byoukoso jitsuryoku shijou shugi no kyoushitsu e\b/g, "classroom of the elite")
              .replace(/\bclassroom of (?:the\s+)?elite.*\b/g, "classroom of the elite")
-             .replace(/\bhime kishi wa barbaroi no yome\b/g, "the warrior princess and the barbaric king")
+             .replace(/\bhime\s*kishi\s*wa\s*barbaroi\s*no\s*yome\b/g, "the warrior princess and the barbaric king")
              .replace(/\bkaoru hana wa rin to saku\b/g, "the fragrant flower blooms with dignity")
              .replace(/\bbleach sennen kessen hen.*\b/g, "bleach")
              .replace(/\bbleach thousand year blood war.*\b/g, "bleach")
              .replace(/\bjujutsu kaisen shimetsu kaiyu.*\b/g, "jujutsu kaisen")
-             .replace(/\bjujutsu kaisen culling game.*\b/g, "jujutsu kaisen");
+             .replace(/\bjujutsu kaisen culling game.*\b/g, "jujutsu kaisen")
+             .replace(/\bre zero.*\b/g, "re zero starting life in another world")
+             .replace(/\btensei shitara slime datta ken.*\b/g, "that time i got reincarnated as a slime")
+             .replace(/\bmairimashita\s*iruma\s*kun.*\b/g, "welcome to demon school iruma kun")
+             .replace(/\bjidou hanbaiki ni umarekawatta ore wa meikyuu wo samayou.*\b/g, "reborn as a vending machine i now wander the dungeon")
+             .replace(/\bhimesama\s*goumon\s*no jikan desu.*\b/g, "tis time for torture princess")
+             .replace(/\benen no shouboutai.*\b/g, "fire force")
+             .replace(/\bkanojo okarishimasu.*\b/g, "rent a girlfriend")
+             .replace(/\byozakura\s*san\s*chi\s*no\s*daisakusen.*\b/g, "mission yozakura family")
+             .replace(/\bsaikyou no shokugyou wa yuusha demo kenja demo naku kanteishi.*?\b/g, "the strongest job is apparently not a hero or a sage but an appraiser")
+             .replace(/\byomi no tsugai\b/g, "daemons of the shadow realm")
+             .replace(/\btongari boushi no atelier\b/g, "witch hat atelier")
+             .replace(/\bjishou akuyaku reijou na konyakusha no kansatsu kiroku\b/g, "an observation log of my fiancee a self proclaimed villainess")
+             .replace(/\bclass de 2\s*banme ni kawaii onnanoko to tomodachi ni natta\b/g, "i became friends with the second cutest girl in class")
+             .replace(/\breplica datte koi wo suru\b/g, "even a replica wants to fall in love")
+             .replace(/\bkuroneko to majo no kyoushitsu\b/g, "the black cat and the witch s classroom");
 
     return val
       .replace(/\b(season|part|tv|ova|ona|the|a|an)\b/g, "")
