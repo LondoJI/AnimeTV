@@ -6688,6 +6688,35 @@ function renderSourcePickerInSidePanel() {
     .map((source) => buildOptionRow(source, source.label || "Addons"))
     .join("");
 
+  // Build the "filter sources" dropdown (by server or by stream type). The
+  // option rows already carry data-source-provider / data-source-type, so the
+  // change handler below just shows/hides them.
+  const uniqueProviders = new Set();
+  const uniqueTypes = new Set();
+  allSources.forEach((s) => {
+    const def = pickerServerDefinitions.find((d) => d.match(s));
+    uniqueProviders.add(def ? def.label : (s.label || "Addons"));
+    if (s.type) uniqueTypes.add(s.type);
+  });
+  pickerServerDefinitions.forEach((def) => {
+    if (isPending && serverChecks[def.key] === undefined) uniqueProviders.add(def.label);
+  });
+  let filterSelectHtml = "";
+  if ((allSources.length > 0 || isPending) && (uniqueProviders.size > 1 || uniqueTypes.size > 1)) {
+    let optionsHtml = `<option value="all">All sources</option>`;
+    if (uniqueProviders.size > 1) {
+      optionsHtml += Array.from(uniqueProviders).sort()
+        .map((p) => `<option value="provider:${escapeHtml(p)}">${escapeHtml(p)}</option>`).join("");
+    }
+    if (uniqueTypes.size > 1) {
+      optionsHtml += Array.from(uniqueTypes).sort().map((t) => {
+        const label = t === "direct" ? "Direct video" : t === "resolver" ? "Resolver" : "Embedded player";
+        return `<option value="type:${escapeHtml(t)}">${escapeHtml(label)}</option>`;
+      }).join("");
+    }
+    filterSelectHtml = `<select class="source-filter-select side-source-filter focusable language-select" aria-label="Filter sources">${optionsHtml}</select>`;
+  }
+
   episodeList.hidden = false;
   episodeList.innerHTML = `
     <div class="side-source-picker">
@@ -6698,6 +6727,7 @@ function renderSourcePickerInSidePanel() {
           </svg>
         </button>
         <strong class="side-source-picker-title">${escapeHtml(epLabel || currentEpisodeLabel())}</strong>
+        ${filterSelectHtml}
       </div>
       <div class="source-picker-options side-source-picker-list">
         ${serverCards}
@@ -6706,10 +6736,29 @@ function renderSourcePickerInSidePanel() {
     </div>
   `;
 
+  // Back = return the side panel to the episode list (works even if a server
+  // scan is still in flight; the scan's refresh no-ops once the picker is gone).
   episodeList.querySelector(".side-source-picker-back")?.addEventListener("click", () => {
-    renderEpisodeList(state.activeShow);
+    if (state.activeShow) renderEpisodeList(state.activeShow);
+    else showEpisodeListTab();
     refreshFocusables();
   });
+
+  // Filter sources by server or stream type — show/hide the option rows.
+  const sideFilter = episodeList.querySelector(".side-source-filter");
+  if (sideFilter) {
+    sideFilter.addEventListener("change", (e) => {
+      const val = e.target.value;
+      episodeList.querySelectorAll(".source-picker-option").forEach((opt) => {
+        let matches = val === "all";
+        if (val.startsWith("provider:")) matches = opt.getAttribute("data-source-provider") === val.slice(9);
+        else if (val.startsWith("type:")) matches = opt.getAttribute("data-source-type") === val.slice(5);
+        opt.style.display = matches ? "" : "none";
+        opt.classList.toggle("focusable", matches && opt.classList.contains("source-picker-option-found"));
+      });
+      refreshFocusables();
+    });
+  }
 
   // Wire source selection
   episodeList.querySelectorAll("[data-player-source]").forEach((button) => {

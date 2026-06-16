@@ -9067,4 +9067,90 @@ body.is-tv .topbar-auth {
   opacity: 0.38;
 }
 
+/* ─── Side-panel inline source picker ───────────────────────────────────────
+   Replaces the episode list in .episode-list when an episode is clicked.
+   Uses the same .source-picker-option row styles as the cinema picker but
+   lives in the narrow right column without entering cinema / fullscreen mode.
+*/
+.side-source-picker {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  animation: fade-slide 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
 
+.side-source-picker-topbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.65rem 0.4rem 0.65rem 0.2rem;
+  border-bottom: 0.06rem solid rgba(255, 255, 255, 0.08);
+  min-height: 0;
+}
+
+.side-source-picker-back {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 50%;
+  border: 0.08rem solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+.side-source-picker-back svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+.side-source-picker-back:is(:hover, :focus-visible, .is-tv-focused) {
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  outline: none;
+}
+
+.side-source-picker-title {
+  flex: 1;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Compact "filter sources" dropdown inside the narrow side-panel topbar. */
+.side-source-filter.language-select {
+  flex: 0 0 auto;
+  max-width: 8.5rem;
+  min-height: 2rem;
+  margin-right: 0;
+  font-size: 0.75rem;
+  padding: 0 1.7rem 0 0.7rem;
+}
+
+.side-source-picker-list {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0 !important;
+  padding: 0 !important;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  min-height: 0;
+}
+.side-source-picker-list::-webkit-scrollbar { display: none; }
+
+/* Compact padding in the narrow panel */
+.side-source-picker-list .source-picker-option {
+  padding: 0.7rem 0.5rem !important;
+  grid-template-columns: 6.5rem 1fr !important;
+  gap: 0.8rem !important;
+}
