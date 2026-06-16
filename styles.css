@@ -9154,3 +9154,124 @@ body.is-tv .topbar-auth {
   grid-template-columns: 6.5rem 1fr !important;
   gap: 0.8rem !important;
 }
+
+/* ── Adult episode screenshot gallery ─────────────────────────────────── */
+.ep-gallery {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.55rem 0.5rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.18) transparent;
+  scroll-snap-type: x mandatory;
+  border-bottom: 0.06rem solid rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.25);
+}
+.ep-gallery::-webkit-scrollbar { height: 0.25rem; }
+.ep-gallery::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.22); border-radius: 9rem; }
+
+.ep-gallery-thumb {
+  flex: 0 0 auto;
+  position: relative;
+  width: 7.2rem;
+  height: 4.2rem;
+  border-radius: 0.45rem;
+  overflow: hidden;
+  scroll-snap-align: start;
+  cursor: pointer;
+  border: 0.12rem solid rgba(255,255,255,0.08);
+  transition: border-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+  background: rgba(255,255,255,0.06);
+}
+.ep-gallery-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+}
+.ep-gallery-thumb:is(:hover, :focus-visible) {
+  border-color: rgba(225,29,72,0.75);
+  transform: scale(1.04);
+  box-shadow: 0 0 0 0.16rem rgba(225,29,72,0.35);
+  outline: none;
+  z-index: 1;
+}
+.ep-gallery-thumb.is-active {
+  border-color: #e11d48;
+  box-shadow: 0 0 0 0.16rem rgba(225,29,72,0.4);
+}
+
+/* Lightbox overlay for full-size view */
+.ep-gallery-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0,0,0,0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fade-in 160ms ease both;
+  cursor: zoom-out;
+}
+.ep-gallery-lightbox img {
+  max-width: min(90vw, 70rem);
+  max-height: 85vh;
+  object-fit: contain;
+  border-radius: 0.6rem;
+  box-shadow: 0 2rem 6rem rgba(0,0,0,0.8);
+  pointer-events: none;
+}
+.ep-gallery-lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(255,255,255,0.12);
+  border: 0.08rem solid rgba(255,255,255,0.22);
+  color: #fff;
+  border-radius: 50%;
+  width: 2.8rem;
+  height: 2.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 1.3rem;
+  transition: background 150ms;
+}
+.ep-gallery-lightbox-nav:hover { background: rgba(255,255,255,0.25); }
+.ep-gallery-lightbox-nav.prev { left: 1.2rem; }
+.ep-gallery-lightbox-nav.next { right: 1.2rem; }
+.ep-gallery-lightbox-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: rgba(255,255,255,0.12);
+  border: 0.08rem solid rgba(255,255,255,0.22);
+  color: #fff;
+  border-radius: 50%;
+  width: 2.4rem;
+  height: 2.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 1.1rem;
+  transition: background 150ms;
+}
+.ep-gallery-lightbox-close:hover { background: rgba(225,29,72,0.4); }
+.ep-gallery-counter {
+  position: absolute;
+  bottom: 1.2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.6);
+  color: rgba(255,255,255,0.75);
+  font-size: 0.78rem;
+  padding: 0.2rem 0.7rem;
+  border-radius: 9rem;
+  pointer-events: none;
+}
+

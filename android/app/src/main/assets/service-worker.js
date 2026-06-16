@@ -1,4 +1,4 @@
-const CACHE_NAME = "zenkaitv-v307";
+const CACHE_NAME = "zenkaitv-v313";
 const ASSETS = [
   "./",
   "./index.html",
@@ -14,7 +14,17 @@ const ASSETS = [
   "./logo-mark-transparent.png",
   "./logo-wordmark.png",
   "./player/player.html",
-  "./player/video.min.js"
+  "./player/video.min.js",
+  "./js/constants.js",
+  "./js/translations.js",
+  "./js/utils.js",
+  "./js/season-normalization.js",
+  "./js/normalize.js",
+  "./js/anilist-metadata.js",
+  "./js/smart-source.js",
+  "./js/image-resolver.js",
+  "./js/adult-source-adapter.js",
+  "./js/adult-mode.js"
 ];
 
 self.addEventListener("install", (event) => {

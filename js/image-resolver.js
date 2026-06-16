@@ -346,6 +346,158 @@ const ImageResolver = (function () {
     };
   }
 
+  // ── Curated TMDB matches ────────────────────────────────────────────────────
+  // A handful of shows can't be found by the fuzzy title search: their romaji
+  // title differs too much from the TMDB English title ("Marriagetoxin" vs
+  // "Marriage Toxin", "Kill Ao" vs "Kill Blue"), so the confidence check rejects
+  // them. The result is the show banner repeated as every episode thumbnail and a
+  // low-resolution backdrop. Pinning the TMDB id here forces the right match;
+  // season/episode mapping then runs normally (franchise seasons still map by
+  // number/year, e.g. Re:Zero S4, Rent-a-Girlfriend S5). Each entry lists the
+  // title spellings we may receive from AniList or the scraper. ids verified on
+  // themoviedb.org.
+  const TMDB_ID_OVERRIDES = [
+    { tmdb: 290019, names: ["Class de 2-banme ni Kawaii Onnanoko to Tomodachi ni Natta", "I Made Friends with the Second Prettiest Girl in My Class", "I Became Friends with the Second Cutest Girl in the Class"] },
+    { tmdb: 301944, names: ["Marriagetoxin", "Marriage Toxin"] },
+    { tmdb: 300126, names: ["Liar Game"] },
+    { tmdb: 196285, names: ["Isekai Nonbiri Nouka 2", "Isekai Nonbiri Nouka", "Farming Life in Another World"] },
+    { tmdb: 65942,  names: ["Re:Zero kara Hajimeru Isekai Seikatsu 4th Season", "Re:Zero kara Hajimeru Isekai Seikatsu", "Re:ZERO -Starting Life in Another World-"] },
+    { tmdb: 283428, names: ["Koori no Jouheki", "Koori no Jyouheki", "The Ramparts of Ice"] },
+    { tmdb: 300131, names: ["Kill Ao", "Kill Blue"] },
+    { tmdb: 273467, names: ["Himekishi wa Barbaroi no Yome", "Hime Kishi wa Barbaroi no Yome", "The Warrior Princess and the Barbaric King"] },
+    { tmdb: 283905, names: ["Kamiina Botan, Yoeru Sugata wa Yuri no Hana", "Botan Kamiina Fully Blossoms When Drunk"] },
+    { tmdb: 304820, names: ["Nigashita Sakana wa Ookikatta ga Tsuriageta Sakana ga Ookisugita Ken", "Always a Catch!"] },
+    { tmdb: 96316,  names: ["Kanojo, Okarishimasu 5th Season", "Kanojo, Okarishimasu", "Kanojo Okarishimasu", "Rent-a-Girlfriend"] }
+  ];
+
+  // Compact key for override matching: lowercase, NFD-decompose, then drop every
+  // non a-z/0-9 character (so accents, punctuation and spaces all collapse). The
+  // curated names are all romaji/English, so dropping CJK is harmless. Independent
+  // of norm()'s translation rules; matches raw titles across spelling/spacing
+  // variants ("Re:Zero..." === "Re Zero...", "Marriagetoxin" === "Marriage Toxin").
+  function overrideKey(value) {
+    return String(value || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[^a-z0-9]+/g, "");
+  }
+
+  const _overrideIndex = (() => {
+    const map = new Map();
+    for (const entry of TMDB_ID_OVERRIDES) {
+      for (const name of entry.names) {
+        const key = overrideKey(name);
+        if (key) map.set(key, entry.tmdb);
+      }
+    }
+    return map;
+  })();
+
+  // Returns a pinned TMDB id when any of the anime's titles is in the curated
+  // list, otherwise null (and the normal fuzzy search runs).
+  function lookupTmdbOverride(anime) {
+    if (!anime) return null;
+    const titleObj = (anime.title && typeof anime.title === "object") ? anime.title : {};
+    const titles = [
+      typeof anime.title === "string" ? anime.title : "",
+      anime.englishTitle, anime.romajiTitle, anime.nativeTitle,
+      titleObj.english, titleObj.romaji, titleObj.native,
+      ...(Array.isArray(anime.synonyms) ? anime.synonyms : [])
+    ];
+    for (const t of titles) {
+      const key = overrideKey(t);
+      if (key && _overrideIndex.has(key)) return _overrideIndex.get(key);
+    }
+    return null;
+  }
+
+  // Fetch show-level art + season list + episode stills for a known TMDB id and
+  // assemble the resolved-match record. Shared by the fuzzy-match path and the
+  // curated-override path. `searchResult` supplies fallback poster/backdrop paths
+  // from a search hit for when the /tv detail fetch fails.
+  async function buildResolvedFromTmdbId(anime, tmdbId, confidence, searchResult = {}) {
+    const idLabel = anime.anilistId || anime.id;
+    let show = null;
+    try {
+      const resp = await fetchWithTimeout(`./api/tmdb/tv?id=${encodeURIComponent(tmdbId)}`, { cache: "no-store" }, 12000);
+      const payload = resp.ok ? await resp.json() : null;
+      show = payload?.show || null;
+    } catch { /* keep going with search-level paths below */ }
+
+    const showPoster = tmdbPosterUrl(show?.poster_path || searchResult.poster_path);
+    const showBackdrop = tmdbBackdropUrl(show?.backdrop_path || searchResult.backdrop_path);
+
+    // Season-specific art (poster + episode stills) when we can map it.
+    let seasonPoster = "";
+    const episodeStills = {};
+    const episodesByNum = {};
+    if (show) {
+      const { season, reason } = pickTmdbSeason(anime, show);
+      if (season) {
+        seasonPoster = tmdbPosterUrl(season.poster_path);
+        debug(`season mapping for ${idLabel}: TMDB S${season.season_number} (${reason})`);
+        try {
+          const resp = await fetchWithTimeout(
+            `./api/tmdb/season?id=${encodeURIComponent(tmdbId)}&season=${encodeURIComponent(season.season_number)}`,
+            { cache: "no-store" }, 12000
+          );
+          const payload = resp.ok ? await resp.json() : null;
+          const tmdbEpisodes = payload?.season?.episodes || [];
+
+          // Check if we need to offset episodes (e.g. all seasons grouped under Season 1 on TMDB)
+          let episodeOffset = 0;
+          const animeYear = Number(anime.seasonYear || anime.year || 0);
+
+          if (tmdbEpisodes.length > 12 && animeYear) {
+            let matchingEp = tmdbEpisodes.find(ep => yearOf(ep.air_date) === animeYear);
+            if (!matchingEp && animeYear) {
+              matchingEp = tmdbEpisodes.find(ep => {
+                const epYear = yearOf(ep.air_date);
+                return epYear && Math.abs(epYear - animeYear) <= 1;
+              });
+            }
+            if (matchingEp) {
+              episodeOffset = matchingEp.episode_number - 1;
+              debug(`Grouped season detected. Mapped AniList Season to TMDB S${season.season_number} starting at episode ${matchingEp.episode_number} (offset: ${episodeOffset})`);
+            }
+          }
+
+          for (const ep of tmdbEpisodes) {
+            const still = tmdbStillUrl(ep.still_path);
+            let targetEpisodeNum = ep.episode_number;
+            if (episodeOffset > 0) {
+              targetEpisodeNum = ep.episode_number - episodeOffset;
+            }
+            if (targetEpisodeNum > 0) {
+              if (still) episodeStills[targetEpisodeNum] = still;
+              episodesByNum[targetEpisodeNum] = {
+                episode: targetEpisodeNum,
+                title: ep.name || "",
+                description: ep.overview || "",
+                aired: ep.air_date || "",
+                thumbnail: still
+              };
+            }
+          }
+          debug(`fetched ${Object.keys(episodeStills).length} episode stills for ${idLabel}.`);
+        } catch { /* show-level art still applies */ }
+      } else {
+        debug(`season mapping for ${idLabel}: ${reason}`);
+      }
+    }
+
+    return {
+      tmdbId,
+      confidence,
+      showPoster,
+      showBackdrop,
+      seasonPoster,
+      episodeStills,
+      episodesByNum,
+      seasons: show?.seasons || []
+    };
+  }
+
   // Resolve + attach TMDB artwork to an anime object. Safe to call repeatedly;
   // it no-ops once resolved and dedupes concurrent calls.
   async function hydrateTmdbImages(anime) {
@@ -358,12 +510,29 @@ const ImageResolver = (function () {
     _inFlight.add(flightKey);
 
     try {
-      // Cached winning match?
+      // Curated override: pin the correct TMDB id for shows the fuzzy search
+      // can't match by title. Checked alongside the cache so the pin always wins,
+      // but a cache entry that already agrees with the pin is reused.
+      const overrideId = lookupTmdbOverride(anime);
+
+      // Cached winning match? (reuse only when it doesn't contradict the override)
       const cached = readMatchCache(anilistId);
-      if (cached) {
+      if (cached && (!overrideId || Number(cached.tmdbId) === Number(overrideId))) {
         applyResolvedMatch(anime, cached);
         anime._tmdbResolved = true;
         debug(`cache hit for ${anilistId} → TMDB ${cached.tmdbId} (confidence ${cached.confidence})`);
+        return anime;
+      }
+
+      if (overrideId) {
+        debug(`override: pinning TMDB #${overrideId} for ${anilistId} ("${anime.romajiTitle || anime.title || ""}")`);
+        const resolved = await buildResolvedFromTmdbId(anime, overrideId, 100);
+        applyResolvedMatch(anime, resolved);
+        anime._tmdbResolved = true;
+        // Don't cache a transient failure (no art came back) — retry next open.
+        if (resolved.showBackdrop || resolved.showPoster || Object.keys(resolved.episodeStills).length) {
+          writeMatchCache(anilistId, resolved);
+        }
         return anime;
       }
 
@@ -455,86 +624,7 @@ const ImageResolver = (function () {
       }
       debug(`accepted TMDB #${best.c.id} "${best.c.name}" for ${anilistId} (confidence ${best.confidence}; ${best.reason})`);
 
-      // Pull show-level art + season list.
-      let show = null;
-      try {
-        const resp = await fetchWithTimeout(`./api/tmdb/tv?id=${encodeURIComponent(best.c.id)}`, { cache: "no-store" }, 12000);
-        const payload = resp.ok ? await resp.json() : null;
-        show = payload?.show || null;
-      } catch { /* keep going with search-level paths below */ }
-
-      const showPoster = tmdbPosterUrl(show?.poster_path || best.c.poster_path);
-      const showBackdrop = tmdbBackdropUrl(show?.backdrop_path || best.c.backdrop_path);
-
-      // Season-specific art (poster + episode stills) when we can map it.
-      let seasonPoster = "";
-      const episodeStills = {};
-      const episodesByNum = {};
-      if (show) {
-        const { season, reason } = pickTmdbSeason(anime, show);
-        if (season) {
-          seasonPoster = tmdbPosterUrl(season.poster_path);
-          debug(`season mapping for ${anilistId}: TMDB S${season.season_number} (${reason})`);
-          try {
-            const resp = await fetchWithTimeout(
-              `./api/tmdb/season?id=${encodeURIComponent(best.c.id)}&season=${encodeURIComponent(season.season_number)}`,
-              { cache: "no-store" }, 12000
-            );
-            const payload = resp.ok ? await resp.json() : null;
-            const tmdbEpisodes = payload?.season?.episodes || [];
-            
-            // Check if we need to offset episodes (e.g. all seasons grouped under Season 1 on TMDB)
-            let episodeOffset = 0;
-            const animeYear = Number(anime.seasonYear || anime.year || 0);
-            
-            if (tmdbEpisodes.length > 12 && animeYear) {
-              let matchingEp = tmdbEpisodes.find(ep => yearOf(ep.air_date) === animeYear);
-              if (!matchingEp && animeYear) {
-                matchingEp = tmdbEpisodes.find(ep => {
-                  const epYear = yearOf(ep.air_date);
-                  return epYear && Math.abs(epYear - animeYear) <= 1;
-                });
-              }
-              if (matchingEp) {
-                episodeOffset = matchingEp.episode_number - 1;
-                debug(`Grouped season detected. Mapped AniList Season to TMDB S${season.season_number} starting at episode ${matchingEp.episode_number} (offset: ${episodeOffset})`);
-              }
-            }
-
-            for (const ep of tmdbEpisodes) {
-              const still = tmdbStillUrl(ep.still_path);
-              let targetEpisodeNum = ep.episode_number;
-              if (episodeOffset > 0) {
-                targetEpisodeNum = ep.episode_number - episodeOffset;
-              }
-              if (targetEpisodeNum > 0) {
-                if (still) episodeStills[targetEpisodeNum] = still;
-                episodesByNum[targetEpisodeNum] = {
-                  episode: targetEpisodeNum,
-                  title: ep.name || "",
-                  description: ep.overview || "",
-                  aired: ep.air_date || "",
-                  thumbnail: still
-                };
-              }
-            }
-            debug(`fetched ${Object.keys(episodeStills).length} episode stills for ${anilistId}.`);
-          } catch { /* show-level art still applies */ }
-        } else {
-          debug(`season mapping for ${anilistId}: ${reason}`);
-        }
-      }
-
-      const resolved = {
-        tmdbId: best.c.id,
-        confidence: best.confidence,
-        showPoster,
-        showBackdrop,
-        seasonPoster,
-        episodeStills,
-        episodesByNum,
-        seasons: show?.seasons || []
-      };
+      const resolved = await buildResolvedFromTmdbId(anime, best.c.id, best.confidence, best.c);
       applyResolvedMatch(anime, resolved);
       anime._tmdbResolved = true;
       writeMatchCache(anilistId, resolved);
