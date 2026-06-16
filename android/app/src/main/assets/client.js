@@ -10962,8 +10962,18 @@ if (typeof AdultMode !== "undefined" && AdultMode.isEnabled()) {
 restartCarouselTimer();
 
 if (typeof window !== "undefined") {
-  wireAuthEvents();
-  initSupabase();
+  // The auth modal markup (#authOverlay and its close/guest/social/login
+  // buttons) lives AFTER this script tag in index.html, so it has not been
+  // parsed yet when this code runs. Wiring now would call getElementById on
+  // elements that don't exist → null → none of the modal handlers attach
+  // (the modal opens from the topbar button, but ✕ / Continue as Guest /
+  // Google / Facebook / Login all do nothing). Defer until the DOM is parsed.
+  const startAuth = () => { wireAuthEvents(); initSupabase(); };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", startAuth, { once: true });
+  } else {
+    startAuth();
+  }
 }
 
 if (window.UpdateManager) {

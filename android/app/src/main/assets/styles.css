@@ -8523,7 +8523,9 @@ body.is-tv .topbar-auth {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  /* Above every other overlay (toasts 10000, cinema 10050, modal backdrop
+     10060) so the login modal is never covered / click-blocked. */
+  z-index: 10080;
   animation: fadeIn 0.25s ease forwards;
 }
 .auth-overlay[hidden] {
