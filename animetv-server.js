@@ -3714,11 +3714,16 @@ async function handleLanguagePreferences(request, response) {
     } catch (_) {
       body = {};
     }
-    const settings = readServerSettings();
-    settings.languagePrefs = {
+    const languagePrefs = {
       audio: body.audio || body.languagePrefs?.audio || "japanese",
       subtitles: body.subtitles || body.subs || body.languagePrefs?.subtitles || "spanish"
     };
+    if (HOSTED_RUNTIME) {
+      sendJson(response, { ok: true, preferences: languagePrefs });
+      return;
+    }
+    const settings = readServerSettings();
+    settings.languagePrefs = languagePrefs;
     writeServerSettings(settings);
     sendJson(response, { ok: true, preferences: settings.languagePrefs });
   } catch (error) {
