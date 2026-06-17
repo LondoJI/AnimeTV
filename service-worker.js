@@ -1,14 +1,13 @@
-const CACHE_NAME = "zenkaitv-v336";
+const CACHE_NAME = "zenkaitv-v337";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
   "./offline.html",
   "./manifest.webmanifest",
-  "./logo-mark.png",
-  "./logo-mark-192.png",
-  "./logo-mark-512.png",
-  "./logo-mark-transparent.png",
-  "./logo-wordmark.png"
+  "./logo-mark-128.webp",
+  "./logo-round-192.webp",
+  "./logo-wordmark-480.webp",
+  "./hero-backdrop-placeholder.webp"
 ];
 
 self.addEventListener("install", (event) => {

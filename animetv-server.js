@@ -5,6 +5,12 @@ const path = require("path");
 const vm = require("vm");
 const { spawn } = require("child_process");
 const { Readable } = require("stream");
+let sharp = null;
+try {
+  sharp = require("sharp");
+} catch {
+  sharp = null;
+}
 
 const root = path.resolve(__dirname);
 const serverStartedAt = Date.now();
@@ -207,6 +213,9 @@ const IMAGE_PROXY_ALLOWED_HOSTS = new Set([
   "www.themoviedb.org"
 ]);
 const IMAGE_PROXY_MAX_BYTES = 5 * 1024 * 1024;
+const IMAGE_PROXY_MAX_WIDTH = 1920;
+const IMAGE_PROXY_DEFAULT_WIDTH = 640;
+const IMAGE_PROXY_WEBP_QUALITY = 78;
 const STRICT_TRANSPORT_SECURITY = "max-age=31536000; includeSubDomains; preload";
 const SECURITY_HEADERS = {
   "Referrer-Policy": "no-referrer",
@@ -979,19 +988,43 @@ async function handleImageProxy(url, response) {
     return;
   }
 
-  const buffer = Buffer.from(await upstream.arrayBuffer());
-  if (buffer.length > IMAGE_PROXY_MAX_BYTES) {
+  const originalBuffer = Buffer.from(await upstream.arrayBuffer());
+  if (originalBuffer.length > IMAGE_PROXY_MAX_BYTES) {
     sendJson(response, { ok: false, error: "Image is too large" }, 413);
     return;
   }
 
+  const requestedWidth = Math.max(
+    64,
+    Math.min(IMAGE_PROXY_MAX_WIDTH, Number(url.searchParams.get("w") || IMAGE_PROXY_DEFAULT_WIDTH) || IMAGE_PROXY_DEFAULT_WIDTH)
+  );
+  let outputBuffer = originalBuffer;
+  let outputType = contentType;
+  let optimized = false;
+  if (sharp && !/svg|gif/i.test(contentType)) {
+    try {
+      outputBuffer = await sharp(originalBuffer, { animated: false, limitInputPixels: 36_000_000 })
+        .rotate()
+        .resize({ width: requestedWidth, withoutEnlargement: true })
+        .webp({ quality: IMAGE_PROXY_WEBP_QUALITY, effort: 4 })
+        .toBuffer();
+      outputType = "image/webp";
+      optimized = true;
+    } catch (error) {
+      console.warn("Image proxy optimization skipped:", error.message);
+      outputBuffer = originalBuffer;
+      outputType = contentType;
+    }
+  }
+
   response.writeHead(200, {
     ...SECURITY_HEADERS,
-    "Content-Type": contentType,
+    "Content-Type": outputType,
     "Cache-Control": "public, max-age=31536000, immutable",
-    "Content-Length": String(buffer.length)
+    "Content-Length": String(outputBuffer.length),
+    "X-Image-Optimized": optimized ? "1" : "0"
   });
-  response.end(buffer);
+  response.end(outputBuffer);
 }
 
 function handleServerInfo(request, response) {

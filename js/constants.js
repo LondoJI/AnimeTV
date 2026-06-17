@@ -4,7 +4,7 @@ const LOCAL_SOURCE_PROXY_ENDPOINT = "./api/source";
 const JIKAN_TOP_ENDPOINT = "https://api.jikan.moe/v4/top/anime?filter=airing&limit=25";
 const JIKAN_POPULAR_ENDPOINT = "https://api.jikan.moe/v4/top/anime?filter=bypopularity&limit=25";
 const JIKAN_SEASON_ENDPOINT = "https://api.jikan.moe/v4/seasons/now?limit=25";
-const HOME_INITIAL_CARD_LIMIT = 21;
+const HOME_INITIAL_CARD_LIMIT = 14;
 const HOME_CARD_LIMIT = 54;
 const LIBRARY_CARD_LIMIT = 360;
 const SEARCH_CARD_LIMIT = 720;

@@ -1561,18 +1561,6 @@ body:not([data-route="home"]) .section-heading h2 {
   transition: opacity 220ms ease;
 }
 
-.thumb-backdrop {
-  position: absolute;
-  inset: -1.2rem;
-  z-index: 1;
-  width: calc(100% + 2.4rem);
-  height: calc(100% + 2.4rem);
-  object-fit: cover;
-  filter: blur(16px) saturate(1.15);
-  opacity: 0.48;
-  transform: scale(1.04);
-}
-
 .thumb-poster {
   position: relative;
   z-index: 2;
@@ -1584,7 +1572,7 @@ body:not([data-route="home"]) .section-heading h2 {
   transition: transform 320ms ease, filter 320ms ease;
 }
 
-.thumb-backdrop + .thumb-poster + .episode-pill {
+.thumb-poster + .episode-pill {
   z-index: 3;
 }
 

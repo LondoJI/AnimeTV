@@ -11,33 +11,46 @@
     <meta property="og:description" content="Watch anime online in HD. Latest episodes, seasonal simulcasts, and full series — optimized for TV, desktop, and mobile.">
     <meta property="og:type" content="website">
     <meta name="twitter:card" content="summary_large_image">
-    <link rel="icon" type="image/webp" href="logo-round-192.webp?v=336">
-    <link rel="shortcut icon" href="logo-round-192.webp?v=336">
-    <link rel="apple-touch-icon" href="logo-round-192.png?v=279">
-    <link rel="manifest" href="manifest.webmanifest?v=279">
+    <link rel="icon" type="image/webp" href="logo-round-192.webp?v=337">
+    <link rel="shortcut icon" href="logo-round-192.webp?v=337">
+    <link rel="apple-touch-icon" href="logo-round-192.png?v=337">
+    <link rel="manifest" href="manifest.webmanifest?v=337">
     <style>
       :root{color-scheme:dark;--bg:#070914;--panel:#111522;--text:#f7f8ff;--muted:#aeb6c8;--accent:#8a55ff;--cyan:#00d2ff}
       *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:#070914;color:#f7f8ff;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{overflow-x:hidden}.app-loader{position:fixed;inset:0;z-index:9999;display:grid;place-items:center;align-content:center;gap:.8rem;background:#070914}.loader-mark{width:5rem;height:5rem;border-radius:1.45rem;overflow:hidden;background:#0d1b2a;box-shadow:0 0 2rem rgba(0,210,255,.25)}.loader-logo{display:block;width:100%;height:100%;object-fit:cover}.app-shell{display:grid;grid-template-columns:4.4rem minmax(0,1fr);min-height:100vh}.topbar{position:fixed;inset:0 auto 0 0;z-index:80;width:4.4rem;background:rgba(8,11,22,.92);display:flex;flex-direction:column;align-items:center;padding:1.1rem .45rem;gap:1rem}.brand{display:flex;align-items:center;color:inherit;text-decoration:none}.brand-mark{display:grid;place-items:center;width:3.2rem;height:3.2rem;border-radius:1.1rem;overflow:hidden;background:#0d1b2a}.brand-logo{width:100%;height:100%;object-fit:cover}.brand-copy,.nav-link span+*,.search-box,.sidebar-toggle{display:none}main{min-width:0}.hero{min-height:clamp(31rem,66vh,46rem);background:#070914}.carousel-stage{position:relative;min-height:clamp(31rem,66vh,46rem);overflow:hidden;padding:clamp(1rem,2.4vw,2.4rem) clamp(1.6rem,5vw,5.5rem) 6.2rem}.carousel-backdrop,.carousel-backdrop-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:linear-gradient(135deg,#121733,#1b1a3b 38%,#0b2637);filter:saturate(1.12) contrast(1.06) brightness(.82);transform:scale(1.002)}.carousel-info{position:relative;z-index:3;max-width:min(51rem,62vw);padding-top:clamp(6.5rem,15vh,9.5rem)}.carousel-info h2{margin:.4rem 0 .7rem;font-size:clamp(3rem,5.2vw,5.8rem);line-height:.95;letter-spacing:0}.carousel-info p{margin:0;color:#c7cede;font-weight:700}.eyebrow{color:#8a55ff!important;text-transform:uppercase}.play-action{margin-top:1.25rem;min-height:3.4rem;border:0;border-radius:1rem;background:#8a55ff;color:white;font-weight:900;padding:0 1.4rem}.content-band{padding:clamp(1rem,2vw,1.75rem) 0 4rem}.poster-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:clamp(1.2rem,2vw,2rem)}
     </style>
-    <link rel="preload" href="styles.css?v=336" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <noscript><link rel="stylesheet" href="styles.css?v=336"></noscript>
+    <script>
+      (function () {
+        var loadStyles = function () {
+          if (document.getElementById("fullStylesheet")) return;
+          var link = document.createElement("link");
+          link.id = "fullStylesheet";
+          link.rel = "stylesheet";
+          link.href = "styles.css?v=337";
+          document.head.appendChild(link);
+        };
+        if ("requestAnimationFrame" in window) requestAnimationFrame(loadStyles);
+        else setTimeout(loadStyles, 0);
+      })();
+    </script>
+    <noscript><link rel="stylesheet" href="styles.css?v=337"></noscript>
     <!-- Defer all JS — browser discovers them early but executes after DOM parse -->
-    <script defer src="js/constants.js?v=336"></script>
-    <script defer src="js/translations.js?v=336"></script>
-    <script defer src="js/utils.js?v=336"></script>
-    <script defer src="js/season-normalization.js?v=336"></script>
-    <script defer src="js/normalize.js?v=336"></script>
-    <script defer src="js/anilist-metadata.js?v=336"></script>
-    <script defer src="js/smart-source.js?v=336"></script>
-    <script defer src="js/image-resolver.js?v=336"></script>
-    <script defer src="js/adult-source-adapter.js?v=336"></script>
-    <script defer src="js/adult-mode.js?v=336"></script>
-    <script defer src="client.js?v=336"></script>
+    <script defer src="js/constants.js?v=337"></script>
+    <script defer src="js/translations.js?v=337"></script>
+    <script defer src="js/utils.js?v=337"></script>
+    <script defer src="js/season-normalization.js?v=337"></script>
+    <script defer src="js/normalize.js?v=337"></script>
+    <script defer src="js/anilist-metadata.js?v=337"></script>
+    <script defer src="js/smart-source.js?v=337"></script>
+    <script defer src="js/image-resolver.js?v=337"></script>
+    <script defer src="js/adult-source-adapter.js?v=337"></script>
+    <script defer src="js/adult-mode.js?v=337"></script>
+    <script defer src="client.js?v=337"></script>
   </head>
   <body>
     <div class="app-loader" id="appLoader" role="status" aria-live="polite">
       <div class="loader-mark" aria-hidden="true">
-        <img class="loader-logo" src="logo-mark-128.webp?v=336" alt="" width="128" height="128" decoding="async">
+        <img class="loader-logo" src="logo-mark-128.webp?v=337" alt="" width="128" height="128" decoding="async">
       </div>
       <strong>ZenkaiTV</strong>
       <small>Waking the anime lounge...</small>
@@ -47,7 +60,7 @@
       <header class="topbar">
         <a class="brand focusable" href="#home" data-route="home" data-nav-label="Home" aria-label="ZenkaiTV — Home">
           <span class="brand-mark" aria-hidden="true">
-            <img class="brand-logo" src="logo-mark-128.webp?v=336" alt="" width="66" height="66" decoding="async">
+            <img class="brand-logo" src="logo-mark-128.webp?v=337" alt="" width="66" height="66" decoding="async">
             <span class="adult-mode-badge" id="adultModeBadge" hidden>+18</span>
           </span>
           <span class="brand-copy">
@@ -95,7 +108,7 @@
           <div class="today-carousel" aria-label="Today's anime carousel">
             <div class="carousel-stage focusable" id="carouselStage" tabindex="0" aria-label="Open selected carousel anime">
               <div class="carousel-backdrop" id="carouselBackdrop"></div>
-              <img class="carousel-backdrop-image" id="carouselBackdropImage" src="hero-backdrop-placeholder.webp?v=336" alt="" width="960" height="540" fetchpriority="high" decoding="async">
+              <img class="carousel-backdrop-image" id="carouselBackdropImage" src="hero-backdrop-placeholder.webp?v=337" alt="" width="960" height="540" fetchpriority="high" decoding="async">
               <div class="hero-motion" aria-hidden="true">
                 <span></span>
                 <span></span>
@@ -358,7 +371,7 @@
 
       <footer class="bottom-bar" aria-label="ZenkaiTV footer">
         <div class="footer-brand">
-          <img class="footer-wordmark" src="logo-wordmark-480.webp?v=336" alt="ZenkaiTV" width="240" height="74" loading="lazy" decoding="async">
+          <img class="footer-wordmark" src="logo-wordmark-480.webp?v=337" alt="ZenkaiTV" width="240" height="74" loading="lazy" decoding="async">
           <p class="footer-tagline">Your anime universe — organized, ad-free, always on.</p>
           <div class="footer-meta">
             <span class="footer-status">Catalogs refresh daily</span>
