@@ -117,6 +117,15 @@ const KNOWN_SOURCE_SERVERS = [
       (s.id || "").includes("jkanime") ||
       (s.label || "").toLowerCase().includes("jkanime") ||
       (s.externalUrl || s.videoUrl || "").includes("jkanime.net")
+  },
+  {
+    key: "animeonlineninja",
+    label: "AniméOnline",
+    desc: "AniméOnlineNinja Latino dub servers",
+    match: (s) =>
+      (s.id || "").includes("animeonlineninja") ||
+      (s.label || "").toLowerCase().includes("animéonline") ||
+      (s.label || "").toLowerCase().includes("animeonineninja")
   }
 ];
 
@@ -142,6 +151,13 @@ const PLAYBACK_SCRAPERS = [
     desc: "JKAnime.net embed servers — Spanish sub, multiple mirror players.",
     endpoint: "./api/jkanime/sources",
     health: "./api/jkanime/health"
+  },
+  {
+    id: "animeonlineninja",
+    name: "AniméOnline Ninja",
+    desc: "Latino voice (Audio Latino) — AniméOnlineNinja.com multiserver scraper.",
+    endpoint: "./api/animeonlineninja/sources",
+    health: "./api/animeonlineninja/health"
   }
 ];
 
@@ -162,6 +178,7 @@ const state = {
   activeEpisodeUrl: "",
   activeEpisode: null,
   preferredSource: localStorage.getItem("animetv-preferred-playback-source") || "auto",
+  sourcePickerFilter: "all",
   activeDetailTab: "episodes",
   adultGalleryKey: "",
   adultGalleryHidden: false,
@@ -177,15 +194,17 @@ const state = {
   carouselIndex: 0,
   shows: [],
   isLoadingCatalog: true,
+  homeCardLimit: HOME_INITIAL_CARD_LIMIT,
   addonSections: [],
   addonVisible: {},
   externalSourcesLoaded: false,
+  externalSourcesRequested: false,
   anipubLoading: false,
   anipubFallbackCache: readAniPubFallbackCache(),
   localSources: [],
   customSources: JSON.parse(localStorage.getItem("animetv-custom-sources") || "[]"),
   // Built-in playback scrapers the user can toggle on/off (default all on).
-  scraperEnabled: { animeav1: true, tioanime: true, ...JSON.parse(localStorage.getItem("zenkaitv-scrapers") || "{}") },
+  scraperEnabled: { animeav1: true, tioanime: true, animeonlineninja: true, ...JSON.parse(localStorage.getItem("zenkaitv-scrapers") || "{}") },
   // Compact (collapsed) icon rail is the DEFAULT; expand to reveal labels.
   sidebarCollapsed: localStorage.getItem("animetv-sidebar-collapsed") !== "false",
   apiStatus: {
@@ -400,10 +419,7 @@ async function loadAnimeSources() {
     state.carouselIndex = 0;
     setSourceStatus(catalogStatusLabel("Cached ZenkaiTV catalog", cachedCatalog));
     render();
-    warmTioAnimeSlugCatalog(state.shows);
-    warmAnimeAv1SlugCatalog(state.shows);
-    warmJKAnimeSlugCatalog(state.shows);
-    warmVisibleShowMetadata(state.shows);
+    warmVisibleShowMetadata(buildLatestEpisodesList(state.homeCardLimit), state.homeCardLimit);
   }
 
   const serverCatalog = await timedRequest("ZenkaiTV metadata API", () => fetchLocalMetadataCatalog()).catch(() => []);
@@ -416,11 +432,8 @@ async function loadAnimeSources() {
     writeResponseCache("main-catalog", regularCatalogSnapshot());
     setSourceStatus(catalogStatusLabel("ZenkaiTV API", state.shows));
     render();
-    warmTioAnimeSlugCatalog(state.shows);
-    warmAnimeAv1SlugCatalog(state.shows);
-    warmJKAnimeSlugCatalog(state.shows);
-    warmVisibleShowMetadata(state.shows);
-    scheduleExternalSourcesLoad();
+    warmVisibleShowMetadata(buildLatestEpisodesList(state.homeCardLimit), state.homeCardLimit);
+    scheduleHomeRailExpansion();
     return;
   }
 
@@ -460,10 +473,7 @@ async function loadAnimeSources() {
     writeResponseCache("direct-catalog", merged);
     writeResponseCache("main-catalog", merged);
     setSourceStatus(catalogStatusLabel("AniList + Jikan", merged));
-    warmTioAnimeSlugCatalog(state.shows);
-    warmAnimeAv1SlugCatalog(state.shows);
-    warmJKAnimeSlugCatalog(state.shows);
-    warmVisibleShowMetadata(state.shows);
+    warmVisibleShowMetadata(buildLatestEpisodesList(state.homeCardLimit), state.homeCardLimit);
   } else {
     state.apiStatus.direct = "Offline";
     if (!state.shows.length) replaceRegularCatalog(fallbackShows);
@@ -476,7 +486,7 @@ async function loadAnimeSources() {
   // the server catalog — regardless of whether shows came from cache, the live
   // merge, or the offline fallback.
   enrichCatalogAiringData();
-  scheduleExternalSourcesLoad();
+  scheduleHomeRailExpansion();
   // Mirror AnimeAV1's "Últimos Episodios" order in the Home Latest Episodes rail.
   loadAnimeAv1Latest();
 }
@@ -524,7 +534,9 @@ async function enrichCatalogAiringData(attempt = 0) {
   }
 }
 
-function scheduleExternalSourcesLoad() {
+function scheduleExternalSourcesLoad(options = {}) {
+  if (state.externalSourcesRequested && !options.force) return;
+  state.externalSourcesRequested = true;
   const run = () => loadExternalSources();
   const delayMs = state.route === "home" ? 1200 : 700;
   if ("requestIdleCallback" in window) {
@@ -2242,6 +2254,7 @@ function renderCarousel() {
     let lcp = document.getElementById("lcpPreload");
     if (!lcp) { lcp = document.createElement("link"); lcp.id = "lcpPreload"; lcp.rel = "preload"; lcp.as = "image"; lcp.fetchPriority = "high"; document.head.appendChild(lcp); }
     lcp.href = art;
+    lcp.setAttribute("imagesizes", "100vw");
   }
   carouselTitle.textContent = getShowTitle(show);
   carouselText.textContent = simpleCarouselText(show);
@@ -2257,7 +2270,7 @@ function renderCarouselIndicators(items) {
   if (!carouselIndicators) return;
   carouselIndicators.innerHTML = items.slice(0, 8).map((show, index) => `
     <button class="carousel-dot focusable ${index === state.carouselIndex ? "is-selected" : ""}" data-carousel-index="${index}" aria-label="Show ${escapeHtml(getShowTitle(show))}">
-      ${carouselArtworkOrPoster(show) ? `<img referrerpolicy="no-referrer" src="${carouselArtworkOrPoster(show)}" alt="">` : "<span></span>"}
+      ${carouselArtworkOrPoster(show) ? `<img referrerpolicy="no-referrer" src="${carouselArtworkOrPoster(show)}" alt="" width="96" height="54" loading="lazy" decoding="async">` : "<span></span>"}
     </button>
   `).join("");
 
@@ -2770,8 +2783,8 @@ function cardTemplate(show, index = 0) {
     : "";
   const image = posterUrl
     ? `
-        <img referrerpolicy="no-referrer" class="thumb-backdrop" src="${escapeHtml(posterUrl)}" alt="" loading="lazy" decoding="async"${fallbackData}>
-        <img referrerpolicy="no-referrer" class="thumb-poster" src="${escapeHtml(posterUrl)}" alt="" loading="lazy" decoding="async"${fallbackData}>
+        <img referrerpolicy="no-referrer" class="thumb-backdrop" src="${escapeHtml(posterUrl)}" alt="" width="480" height="720" loading="lazy" decoding="async"${fallbackData}>
+        <img referrerpolicy="no-referrer" class="thumb-poster" src="${escapeHtml(posterUrl)}" alt="" width="480" height="720" loading="lazy" decoding="async"${fallbackData}>
       `
     : "";
   return `
@@ -2937,7 +2950,7 @@ function renderSchedule() {
                   const schedImg = show.image || show.images?.poster || show.images?.cover ||
                     show.coverImageLarge || show.cover || show.poster || show.thumbnail || "";
                   return schedImg
-                    ? `<img referrerpolicy="no-referrer" src="${escapeHtml(schedImg)}" alt="" loading="lazy" decoding="async">`
+                    ? `<img referrerpolicy="no-referrer" src="${escapeHtml(schedImg)}" alt="" width="160" height="90" loading="lazy" decoding="async">`
                     : "";
                 })()}
                 <span>${cardEpisodeLabel(show)}</span>
@@ -4040,6 +4053,10 @@ async function attachPlaybackSourceOptions(show, episode, seasonNumber = 1) {
     lookups.push(playbackLookupWithTimeout("JKAnime scraper", attachJKAnimeSources(show, episode), 8000)
       .then(() => updateServerCheck("jkanime", getKnownSourceServer("jkanime").match)));
   } else { episode.jkAnimeSourcesChecked = true; episode.serverChecks.jkanime = "notfound"; }
+  if (isScraperEnabled("animeonlineninja")) {
+    lookups.push(playbackLookupWithTimeout("AniméOnlineNinja scraper", attachAnimeonlineNinjaSources(show, episode), 12000)
+      .then(() => updateServerCheck("animeonlineninja", getKnownSourceServer("animeonlineninja").match)));
+  } else { episode.animeonlineNinjaSourcesChecked = true; episode.serverChecks.animeonlineninja = "notfound"; }
   await Promise.allSettled(lookups);
 
   // Ensure any timed-out servers are marked not-found after every source has had a chance.
@@ -4066,7 +4083,7 @@ function getKnownSourceServer(key) {
 
 function schedulePlaybackSourceOptions(show, episode, seasonNumber = 1, options = {}) {
   const lookupKey = playbackLookupKey(show, episode, seasonNumber);
-  if (!lookupKey || (episode.sourceOptionsChecked === lookupKey && episode.tioAnimeSourcesChecked && episode.animeAv1SourcesChecked && episode.jkAnimeSourcesChecked)) return Promise.resolve(episode);
+  if (!lookupKey || (episode.sourceOptionsChecked === lookupKey && episode.tioAnimeSourcesChecked && episode.animeAv1SourcesChecked && episode.jkAnimeSourcesChecked && episode.animeonlineNinjaSourcesChecked)) return Promise.resolve(episode);
   if (pendingSourceLookups.has(lookupKey)) return pendingSourceLookups.get(lookupKey);
 
   episode.sourceOptionsPending = true;
@@ -4154,7 +4171,7 @@ function renderAddonSections() {
     );
 
   // Show loading skeleton while sources are still being fetched
-  if (!state.externalSourcesLoaded && !loadedSections.length && state.route === "home") {
+  if (state.externalSourcesRequested && !state.externalSourcesLoaded && !loadedSections.length && state.route === "home") {
     addonSections.innerHTML = `<div class="addon-loading-hint">Loading sources…</div>`;
     addonSections.hidden = false;
     return;
@@ -4881,33 +4898,53 @@ function wireSourceButtons(root = document) {
 
 function render() {
   updateFilterButtons();
-  const filtered = visibleShows();
-  if (state.isLoadingCatalog && !filtered.length) {
-    renderSkeletonCards(latestGrid, 14);
-    renderSkeletonCards(libraryGrid, 14);
-    updateLibraryResultCount(0);
+  const isHome = state.route === "home";
+  const isLibrary = state.route === "library";
+  const isAniPub = state.route === "anipub";
+  const isFavorites = state.route === "favorites";
+  const isSchedule = state.route === "schedule";
+  const isSources = state.route === "sources";
+  const isSettings = state.route === "settings";
+  const isProfile = state.route === "profile";
+  const filtered = isFavorites ? visibleShows() : [];
+
+  if (state.isLoadingCatalog && !catalogShows().length) {
+    if (isHome) renderSkeletonCards(latestGrid, HOME_INITIAL_CARD_LIMIT);
+    if (isLibrary) {
+      renderSkeletonCards(libraryGrid, 14);
+      updateLibraryResultCount(0);
+    }
   } else {
-    renderCards(latestGrid, buildLatestEpisodesList(HOME_CARD_LIMIT));
-    const libraryFiltered = sortLibraryShows(
-      catalogShows()
-        .filter(matchesShowSearch)
-        .filter(matchesLibraryAdvancedFilters)
-    );
-    updateLibraryResultCount(libraryFiltered.length);
-    const libraryLimit = typeof AdultMode !== "undefined" && AdultMode.isEnabled()
-      ? libraryFiltered.length
-      : (state.search ? SEARCH_CARD_LIMIT : LIBRARY_CARD_LIMIT);
-    renderCards(libraryGrid, libraryFiltered.slice(0, libraryLimit));
+    if (isHome) renderCards(latestGrid, buildLatestEpisodesList(state.homeCardLimit || HOME_INITIAL_CARD_LIMIT));
+    if (isLibrary) {
+      const libraryFiltered = sortLibraryShows(
+        catalogShows()
+          .filter(matchesShowSearch)
+          .filter(matchesLibraryAdvancedFilters)
+      );
+      updateLibraryResultCount(libraryFiltered.length);
+      const libraryLimit = typeof AdultMode !== "undefined" && AdultMode.isEnabled()
+        ? libraryFiltered.length
+        : (state.search ? SEARCH_CARD_LIMIT : LIBRARY_CARD_LIMIT);
+      renderCards(libraryGrid, libraryFiltered.slice(0, libraryLimit));
+    }
   }
-  renderContinueWatching();
-  renderAniPubCatalog();
-  renderCards(favoritesGrid, filtered.filter((show) => state.favorites.includes(show.id)));
-  const emptyFavorites = document.querySelector("#emptyFavorites");
-  if (emptyFavorites && favoritesGrid) emptyFavorites.hidden = favoritesGrid.children.length > 0;
-  renderSchedule();
-  renderAddonSections();
-  if (state.route === "settings") renderSettings();
-  renderCarousel();
+
+  if (isHome) {
+    renderContinueWatching();
+    renderCarousel();
+    renderAddonSections();
+  }
+  if (isAniPub) renderAniPubCatalog();
+  if (isFavorites) {
+    renderCards(favoritesGrid, filtered.filter((show) => state.favorites.includes(show.id)));
+    const emptyFavorites = document.querySelector("#emptyFavorites");
+    if (emptyFavorites && favoritesGrid) emptyFavorites.hidden = favoritesGrid.children.length > 0;
+  }
+  if (isSchedule) renderSchedule();
+  if (isSources) renderSources();
+  if (isSettings) renderSettings();
+  if (isProfile) renderProfile();
   applyAppLanguage();
   wireOpenButtons();
   wireRailButtons();
@@ -4956,16 +4993,13 @@ function setRoute(route) {
     button.classList.toggle("is-active", button.dataset.route === route);
   });
 
-  if (clearedSearch) render();   // refresh the now-unfiltered Home grids
   syncRouteVisibility();
   if (route === "home") { renderCarousel(); loadAnimeAv1Latest(); }
   if (route === "anipub") ensureAniPubCatalogLoaded();
-  if (route === "settings") renderSettings();
-  if (route === "sources") renderSources();
-  if (route === "profile") renderProfile();
-  if ((route === "sources" || route === "search") && !state.externalSourcesLoaded) {
-    scheduleExternalSourcesLoad();
+  if ((route === "sources" || route === "library") && !state.externalSourcesLoaded) {
+    scheduleExternalSourcesLoad({ force: true });
   }
+  render();
   scrollToRoute(route);
   refreshFocusables();
 }
@@ -6411,7 +6445,7 @@ function renderEpisodeList(show) {
               : rawLabel;
             return `
             <button class="season-card focusable ${selected ? "is-selected" : ""}" data-season-card="${i}">
-              ${seasonPosterUrl ? `<img referrerpolicy="no-referrer" class="season-card-img" src="${escapeHtml(seasonPosterUrl)}" alt="" loading="eager" fetchpriority="high" decoding="async"${seasonFallbackData}>` : ""}
+              ${seasonPosterUrl ? `<img referrerpolicy="no-referrer" class="season-card-img" src="${escapeHtml(seasonPosterUrl)}" alt="" loading="lazy" decoding="async"${seasonFallbackData}>` : ""}
               <strong>${escapeHtml(cardLabel)}</strong>
               <small>${escapeHtml(season.sourceTitle || getSeasonDisplayTitle(show, season))}</small>
               <span>${epLabel}${badge}${yr}</span>
@@ -7027,6 +7061,91 @@ function sourceFilterKey(value) {
     .replace(/^-+|-+$/g, "") || "unknown";
 }
 
+function scheduleHomeRailExpansion() {
+  if (state.homeCardLimit >= HOME_CARD_LIMIT) return;
+  const expand = () => {
+    if (state.homeCardLimit >= HOME_CARD_LIMIT) return;
+    state.homeCardLimit = HOME_CARD_LIMIT;
+    if (state.route === "home") {
+      render();
+      warmVisibleShowMetadata(buildLatestEpisodesList(HOME_INITIAL_CARD_LIMIT), HOME_INITIAL_CARD_LIMIT);
+    }
+  };
+  if ("requestIdleCallback" in window) {
+    window.requestIdleCallback(expand, { timeout: 2500 });
+  } else {
+    window.setTimeout(expand, 1800);
+  }
+}
+
+function setupDeferredHomeAddons() {
+  if (!addonSections || state.externalSourcesRequested) return;
+  const request = () => {
+    if (state.externalSourcesRequested) return;
+    scheduleExternalSourcesLoad({ force: true });
+  };
+  if (!("IntersectionObserver" in window)) {
+    window.setTimeout(request, 5000);
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    if (!entries.some((entry) => entry.isIntersecting)) return;
+    observer.disconnect();
+    request();
+  }, { rootMargin: "900px 0px" });
+  observer.observe(addonSections);
+}
+
+function sourceFilterOption(value, label) {
+  const selected = state.sourcePickerFilter === value ? " selected" : "";
+  return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(label)}</option>`;
+}
+
+function sourceRowMatchesFilter(row, filterValue) {
+  const value = String(filterValue || "all");
+  if (value === "all") return true;
+  if (value.startsWith("provider:")) {
+    return row.getAttribute("data-source-provider-key") === value.slice("provider:".length);
+  }
+  if (value.startsWith("type:")) {
+    const typeKey = value.slice("type:".length);
+    return Boolean(row.getAttribute("data-player-source"))
+      && row.getAttribute("data-source-type-key") === typeKey;
+  }
+  return true;
+}
+
+function applySourcePickerFilter(root, rawValue = "all", select = null) {
+  if (!root) return;
+  let value = String(rawValue || "all");
+  const pickerSelect = select || root.querySelector(".source-filter-select");
+  if (pickerSelect && !Array.from(pickerSelect.options).some((option) => option.value === value)) {
+    value = "all";
+  }
+  state.sourcePickerFilter = value;
+  if (pickerSelect) pickerSelect.value = value;
+
+  let visibleCount = 0;
+  root.querySelectorAll(".source-picker-option").forEach((row) => {
+    const matches = sourceRowMatchesFilter(row, value);
+    row.classList.toggle("is-source-filter-hidden", !matches);
+    row.classList.toggle("focusable", matches && row.classList.contains("source-picker-option-found"));
+    if (!matches) row.classList.remove("is-tv-focused");
+    else visibleCount += 1;
+  });
+
+  const active = document.activeElement;
+  if (active?.classList?.contains("source-picker-option") && active.classList.contains("is-source-filter-hidden")) {
+    const firstVisible = root.querySelector(".source-picker-option-found.focusable:not(.is-source-filter-hidden)");
+    if (firstVisible) firstVisible.focus({ preventScroll: true });
+    else pickerSelect?.focus({ preventScroll: true });
+  }
+
+  const empty = root.querySelector(".source-picker-empty");
+  if (empty) empty.hidden = visibleCount > 0;
+  refreshFocusables();
+}
+
 // Renders the source picker inline inside the #episodeList side-panel so the
 // user sees sources right where the episode list was, without entering cinema mode.
 // The video-frame backdrop is untouched (shows artwork). Clicking a source plays
@@ -7161,15 +7280,15 @@ function renderSourcePickerInSidePanel() {
   });
   let filterSelectHtml = "";
   if ((allSources.length > 0 || isPending) && (uniqueProviders.size > 1 || uniqueTypes.size > 1)) {
-    let optionsHtml = `<option value="all">All sources</option>`;
+    let optionsHtml = sourceFilterOption("all", "All sources");
     if (uniqueProviders.size > 1) {
       optionsHtml += Array.from(uniqueProviders).sort()
-        .map((p) => `<option value="provider:${escapeHtml(sourceFilterKey(p))}">${escapeHtml(p)}</option>`).join("");
+        .map((p) => sourceFilterOption(`provider:${sourceFilterKey(p)}`, p)).join("");
     }
     if (uniqueTypes.size > 1) {
       optionsHtml += Array.from(uniqueTypes).sort().map((t) => {
         const label = t === "direct" ? "Direct video" : t === "resolver" ? "Resolver" : "Embedded player";
-        return `<option value="type:${escapeHtml(sourceFilterKey(t))}">${escapeHtml(label)}</option>`;
+        return sourceFilterOption(`type:${sourceFilterKey(t)}`, label);
       }).join("");
     }
     filterSelectHtml = `<select class="source-filter-select side-source-filter focusable language-select" aria-label="Filter sources">${optionsHtml}</select>`;
@@ -7284,25 +7403,9 @@ function renderSourcePickerInSidePanel() {
   // Filter sources by server or stream type — show/hide the option rows.
   const sideFilter = episodeList.querySelector(".side-source-filter");
   if (sideFilter) {
-    const applySourceFilter = (value) => {
-      const filterValue = String(value || "all");
-      let visibleCount = 0;
-      episodeList.querySelectorAll(".source-picker-option").forEach((opt) => {
-        let matches = filterValue === "all";
-        if (filterValue.startsWith("provider:")) matches = opt.getAttribute("data-source-provider-key") === filterValue.slice(9);
-        else if (filterValue.startsWith("type:")) matches = opt.getAttribute("data-source-type-key") === filterValue.slice(5);
-        opt.style.display = matches ? "" : "none";
-        opt.classList.toggle("focusable", matches && opt.classList.contains("source-picker-option-found"));
-        if (matches) visibleCount += 1;
-      });
-      const empty = episodeList.querySelector(".source-picker-empty");
-      if (empty) empty.hidden = visibleCount > 0;
-      refreshFocusables();
-    };
-    sideFilter.addEventListener("change", (e) => {
-      applySourceFilter(e.target.value);
-    });
-    sideFilter.addEventListener("input", (e) => applySourceFilter(e.target.value));
+    applySourcePickerFilter(episodeList, state.sourcePickerFilter, sideFilter);
+    sideFilter.addEventListener("change", (e) => applySourcePickerFilter(episodeList, e.target.value, sideFilter));
+    sideFilter.addEventListener("input", (e) => applySourcePickerFilter(episodeList, e.target.value, sideFilter));
   }
 
   // Wire source selection
@@ -7595,13 +7698,13 @@ function renderSourcePickerIn(frame) {
 
   let filterSelectHtml = "";
   if (foundCount > 0 || isPending) {
-    let optionsHtml = `<option value="all">All sources</option>`;
+    let optionsHtml = sourceFilterOption("all", "All sources");
 
     // Add providers group/options
     if (uniqueProviders.size > 1) {
       optionsHtml += Array.from(uniqueProviders)
         .sort()
-        .map((p) => `<option value="provider:${escapeHtml(sourceFilterKey(p))}">${escapeHtml(p)}</option>`)
+        .map((p) => sourceFilterOption(`provider:${sourceFilterKey(p)}`, p))
         .join("");
     }
 
@@ -7611,7 +7714,7 @@ function renderSourcePickerIn(frame) {
         .sort()
         .map((t) => {
           const label = t === "direct" ? "Direct video" : t === "resolver" ? "Resolver" : "Embedded player";
-          return `<option value="type:${escapeHtml(sourceFilterKey(t))}">${escapeHtml(label)}</option>`;
+          return sourceFilterOption(`type:${sourceFilterKey(t)}`, label);
         })
         .join("");
     }
@@ -7661,53 +7764,9 @@ function renderSourcePickerIn(frame) {
   // Wire up filter select change handling
   const select = frame.querySelector(".source-filter-select");
   if (select) {
-    const applySourceFilter = (value) => {
-      const val = String(value || "all");
-      const options = frame.querySelectorAll(".source-picker-option");
-      let visibleCount = 0;
-
-      options.forEach((opt) => {
-        let matches = false;
-        if (val === "all") {
-          matches = true;
-        } else if (val.startsWith("provider:")) {
-          const provider = val.substring("provider:".length);
-          matches = opt.getAttribute("data-source-provider-key") === provider;
-        } else if (val.startsWith("type:")) {
-          const type = val.substring("type:".length);
-          matches = opt.getAttribute("data-source-type-key") === type;
-        }
-
-        if (matches) {
-          opt.style.display = "";
-          if (opt.classList.contains("source-picker-option-found")) {
-            opt.classList.add("focusable");
-          }
-          visibleCount++;
-        } else {
-          opt.style.display = "none";
-          opt.classList.remove("focusable");
-          opt.classList.remove("is-tv-focused");
-        }
-      });
-
-      // If active element is hidden, focus select or first visible focusable option
-      const active = document.activeElement;
-      if (active && active.classList.contains("source-picker-option") && active.style.display === "none") {
-        const firstVisible = frame.querySelector(".source-picker-option-found.focusable");
-        if (firstVisible) {
-          firstVisible.focus();
-        } else {
-          select.focus();
-        }
-      }
-
-      const empty = frame.querySelector(".source-picker-empty");
-      if (empty) empty.hidden = visibleCount > 0;
-      refreshFocusables();
-    };
-    select.addEventListener("change", (e) => applySourceFilter(e.target.value));
-    select.addEventListener("input", (e) => applySourceFilter(e.target.value));
+    applySourcePickerFilter(frame, state.sourcePickerFilter, select);
+    select.addEventListener("change", (e) => applySourcePickerFilter(frame, e.target.value, select));
+    select.addEventListener("input", (e) => applySourcePickerFilter(frame, e.target.value, select));
   }
 
   refreshFocusables();
@@ -9254,7 +9313,7 @@ function fetchDeduped(url, init) {
 
 let visibleMetadataWarmGeneration = 0;
 
-function warmVisibleShowMetadata(shows = state.shows, limit = 64) {
+function warmVisibleShowMetadata(shows = state.shows, limit = HOME_INITIAL_CARD_LIMIT) {
   const generation = ++visibleMetadataWarmGeneration;
   const prioritized = [
     ...buildLatestEpisodesList(Math.min(HOME_CARD_LIMIT, limit)),
@@ -10326,7 +10385,12 @@ async function playActiveShow(options = {}) {
       currentEpisodeLabel(),
       "Checking server-side resolver to load in custom player..."
     );
-    const resolved = await attemptResolveEmbed(embedUrl);
+    // Pass the origin site (e.g. jkanime.net) as referer so embed hosts that
+    // whitelist specific referrers allow the server-side fetch to succeed.
+    const embedSiteReferer = source?.siteUrl
+      ? (() => { try { const u = new URL(source.siteUrl); return u.origin + "/"; } catch { return ""; } })()
+      : "";
+    const resolved = await attemptResolveEmbed(embedUrl, embedSiteReferer);
     if (resolved && resolved.url) {
       url = resolved.url;
       source = { ...(source || {}), type: "direct", videoUrl: url, referer: resolved.referer || source?.referer || "" };
@@ -10427,11 +10491,12 @@ function isExternalIframeEpisode(episode) {
   return Boolean(episode?.externalUrl && (episode.externalType || "iframe") === "iframe");
 }
 
-async function attemptResolveEmbed(embedUrl) {
+async function attemptResolveEmbed(embedUrl, siteReferer = "") {
   if (!embedUrl) return null;
   try {
     const api = new URL("./api/resolve", location.href);
     api.searchParams.set("url", embedUrl);
+    if (siteReferer) api.searchParams.set("referer", siteReferer);
     const response = await fetchWithTimeout(api.toString(), {}, 7000);
     if (!response.ok) return null;
     const payload = await response.json();
@@ -11654,7 +11719,11 @@ shareButton?.addEventListener("click", async () => {
   const copied = await copyTextToClipboard(url);
   if (copied) showToast("Anime link copied — paste it to share");
   try {
-    if (navigator.share) {
+    // Only trigger the native share sheet on mobile/touch devices.
+    // On desktop Chrome it opens a black native OS dialog for ~1 second, which
+    // is jarring — the clipboard copy above is already sufficient on desktop.
+    const isMobileDevice = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1;
+    if (navigator.share && isMobileDevice) {
       await navigator.share({ title, text: `Watch ${title} on ZenkaiTV`, url });
     } else if (!copied) {
       showToast("Couldn't copy the link");
@@ -11839,6 +11908,22 @@ document.addEventListener("keydown", (event) => {
     }
     if (!overlay.hidden) {
       event.preventDefault();
+      const frame = document.querySelector("#videoFrame");
+      const epList = document.querySelector("#episodeList");
+      // Source picker open in the video frame → exit to episode list
+      if (frame?.querySelector(".source-picker")) {
+        exitPlayerToSources();
+        return;
+      }
+      // Side source picker open in the episode panel → go back to episode list
+      if (epList?.querySelector(".side-source-picker")) {
+        hideAdultGalleryPanel?.();
+        if (state.activeShow) renderEpisodeList(state.activeShow);
+        else showEpisodeListTab();
+        refreshFocusables();
+        return;
+      }
+      // Default: close the whole overlay
       closeShow();
     }
   }
@@ -11881,6 +11966,7 @@ if (typeof AdultMode !== "undefined") {
 
 // ── Supabase Authentication & Social Logins ──────────────────────────────────
 let supabaseClient = null;
+let supabaseInitPromise = null;
 
 function loadExternalScript(url) {
   return new Promise((resolve, reject) => {
@@ -11905,6 +11991,15 @@ function hasSupabaseSession() {
 }
 
 async function initSupabase() {
+  if (supabaseClient) return supabaseClient;
+  if (supabaseInitPromise) return supabaseInitPromise;
+  supabaseInitPromise = initSupabaseInternal().finally(() => {
+    if (!supabaseClient) supabaseInitPromise = null;
+  });
+  return supabaseInitPromise;
+}
+
+async function initSupabaseInternal() {
   try {
     const res = await fetch("/api/config", { cache: "no-store" });
     const config = await res.json();
@@ -11933,6 +12028,7 @@ async function initSupabase() {
     console.error("Failed to initialize Supabase:", err);
     setupMockAuth();
   }
+  return supabaseClient;
 }
 
 function setupSupabaseAuth() {
@@ -12064,11 +12160,21 @@ function wireAuthEvents() {
   if (fOAuth) fOAuth.onclick = () => handleSocialLogin("facebook");
 }
 
+async function ensureSupabaseForAuth() {
+  if (supabaseClient) return supabaseClient;
+  try {
+    return await initSupabase();
+  } catch {
+    return null;
+  }
+}
+
 function showAuthModal(viewName) {
   const overlay = document.getElementById("authOverlay");
   if (overlay) {
     overlay.hidden = false;
     showAuthView(viewName);
+    ensureSupabaseForAuth();
     const activeView = document.querySelector(`.auth-view:not([hidden])`);
     const firstInput = activeView ? activeView.querySelector("input") : null;
     if (firstInput) focusElement(firstInput);
@@ -12096,6 +12202,7 @@ async function handleLoginSubmit() {
     showAuthError(errorMsg, "Please enter both email and password.");
     return;
   }
+  if (!supabaseClient) await ensureSupabaseForAuth();
   if (!supabaseClient) {
     showAuthError(errorMsg, "Authentication service is not available.");
     return;
@@ -12126,6 +12233,7 @@ async function handleSignupSubmit() {
     showAuthError(errorMsg, "Password must be at least 6 characters.");
     return;
   }
+  if (!supabaseClient) await ensureSupabaseForAuth();
   if (!supabaseClient) {
     showAuthError(errorMsg, "Authentication service is not available.");
     return;
@@ -12152,6 +12260,7 @@ async function handleForgotSubmit() {
     showAuthError(errorMsg, "Please enter your email.");
     return;
   }
+  if (!supabaseClient) await ensureSupabaseForAuth();
   if (!supabaseClient) {
     showAuthError(errorMsg, "Authentication service is not available.");
     return;
@@ -12179,6 +12288,7 @@ async function handleLogout() {
 }
 
 async function handleSocialLogin(provider) {
+  if (!supabaseClient) await ensureSupabaseForAuth();
   if (!supabaseClient) {
     alert("Authentication is not configured.");
     return;
@@ -12368,6 +12478,7 @@ applySidebarState();
 applyUiPreferences();
 setupTvTextInputs();
 renderSources();
+setupDeferredHomeAddons();
 loadAnimeSources();
 if (typeof AdultMode !== "undefined" && AdultMode.isEnabled()) {
   loadAdultCatalog();
@@ -12381,7 +12492,15 @@ if (typeof window !== "undefined") {
   // elements that don't exist → null → none of the modal handlers attach
   // (the modal opens from the topbar button, but ✕ / Continue as Guest /
   // Google / Facebook / Login all do nothing). Defer until the DOM is parsed.
-  const startAuth = () => { wireAuthEvents(); initSupabase(); };
+  const startAuth = () => {
+    wireAuthEvents();
+    updateAuthUi();
+    if (hasSupabaseSession()) {
+      const run = () => initSupabase();
+      if ("requestIdleCallback" in window) window.requestIdleCallback(run, { timeout: 3000 });
+      else window.setTimeout(run, 1600);
+    }
+  };
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", startAuth, { once: true });
   } else {
@@ -12389,10 +12508,20 @@ if (typeof window !== "undefined") {
   }
 }
 
-if (window.UpdateManager) {
-  window.animeTVUpdater = new window.UpdateManager({ currentVersion: "1.3.0" });
-  window.animeTVUpdater.start();
+function startUpdateManagerWhenIdle() {
+  const start = async () => {
+    try {
+      if (!window.UpdateManager) await loadExternalScript("update-manager.js?v=335");
+      if (window.UpdateManager && !window.animeTVUpdater) {
+        window.animeTVUpdater = new window.UpdateManager({ currentVersion: "1.3.0" });
+        window.animeTVUpdater.start();
+      }
+    } catch { /* Update checks are non-critical for first paint. */ }
+  };
+  if ("requestIdleCallback" in window) window.requestIdleCallback(start, { timeout: 5000 });
+  else window.setTimeout(start, 3500);
 }
+startUpdateManagerWhenIdle();
 window.setTimeout(hideAppLoader, 850);
 // Best-effort background refresh of stale full-site crawls (if a crawler is wired).
 window.setTimeout(() => { try { checkSourceRefreshes(); } catch { /* ignore */ } }, 9000);
@@ -12475,3 +12604,99 @@ window.runZenkaiDebugReport = window.runDevelopmentDebugReport = function() {
 - Shows with Duplicate Episodes: ${showsWithDupEpisodes}
 `);
 };
+
+// ── AniméOnlineNinja source integration (Latino dub) ─────────────────────────
+const _animeonlineNinjaSlugCache = new Map();
+const _animeonlineMissCache = new Set();
+const _animeonlineSourceCache = new Map();
+const ANIMEONLINE_SEARCH_TIMEOUT_MS = 5000;
+const ANIMEONLINE_SOURCE_TIMEOUT_MS = 12000;
+
+async function hydrateAnimeonlineNinjaSlug(show, options = {}) {
+  if (!show || (show.animeonlineNinjaSlugChecked && !options.force)) return show;
+  const missKey = show.anilistId || normalizeTitle(show.title || "");
+  if (_animeonlineMissCache.has(missKey)) { show.animeonlineNinjaSlugChecked = true; return show; }
+  try {
+    const candidates = tioAnimeSearchCandidates(show); // reuse existing title-candidate generator
+    for (const title of candidates) {
+      const key = `t:${normalizeTitle(title)}`;
+      if (_animeonlineNinjaSlugCache.has(key)) {
+        show.animeonlineNinjaSlug = _animeonlineNinjaSlugCache.get(key);
+        show.animeonlineNinjaSlugChecked = true;
+        return show;
+      }
+      const res = await fetchWithTimeout(
+        `./api/animeonlineninja/search?title=${encodeURIComponent(title)}`,
+        { cache: "no-store" }, ANIMEONLINE_SEARCH_TIMEOUT_MS
+      ).catch(() => null);
+      if (res?.ok) {
+        const data = await res.json().catch(() => null);
+        if (data?.ok && data.slug) {
+          _animeonlineNinjaSlugCache.set(key, data.slug);
+          show.animeonlineNinjaSlug = data.slug;
+          show.animeonlineNinjaSlugChecked = true;
+          return show;
+        }
+      }
+    }
+  } catch (error) {
+    console.warn("AniméOnlineNinja slug search failed:", error);
+  }
+  _animeonlineMissCache.add(missKey);
+  show.animeonlineNinjaSlugChecked = true;
+  return show;
+}
+
+async function attachAnimeonlineNinjaSources(show, episode) {
+  if (!show || !episode) return;
+  if (!show.animeonlineNinjaSlug) await hydrateAnimeonlineNinjaSlug(show, { force: true });
+  const slug = show.animeonlineNinjaSlug;
+  if (!slug) { episode.animeonlineNinjaSourcesChecked = true; return; }
+  const epNum = episode.episode || episode.number;
+  if (!epNum) { episode.animeonlineNinjaSourcesChecked = true; return; }
+  const cacheKey = `${slug}:${epNum}:LAT`;
+  const cached = _animeonlineSourceCache.get(cacheKey);
+  if (cached) {
+    mergeAnimeonlineNinjaSources(episode, cached, slug, epNum);
+    episode.animeonlineNinjaSourcesChecked = true;
+    return;
+  }
+  try {
+    const res = await fetchWithTimeout(
+      `./api/animeonlineninja/sources?slug=${encodeURIComponent(slug)}&episode=${encodeURIComponent(epNum)}&lang=LAT`,
+      { cache: "no-store" }, ANIMEONLINE_SOURCE_TIMEOUT_MS
+    );
+    if (!res.ok) { episode.animeonlineNinjaSourcesChecked = true; return; }
+    const data = await res.json();
+    if (!data.ok || !Array.isArray(data.sources)) { episode.animeonlineNinjaSourcesChecked = true; return; }
+    _animeonlineSourceCache.set(cacheKey, data);
+    mergeAnimeonlineNinjaSources(episode, data, slug, epNum);
+  } catch (error) {
+    console.warn("AniméOnlineNinja sources unavailable:", error);
+  }
+  episode.animeonlineNinjaSourcesChecked = true;
+}
+
+function mergeAnimeonlineNinjaSources(episode, data, slug, epNum) {
+  if (!episode || !Array.isArray(data?.sources)) return;
+  const existing = new Set((episode.sourceOptions || []).map((s) => s.externalUrl || s.videoUrl));
+  const newOptions = data.sources
+    .filter((s) => s.externalUrl && !existing.has(s.externalUrl))
+    .map((s, i) => ({
+      id:          `animeonlineninja-${normalizeTitle(s.provider || "source")}-${simpleHash(`${slug}:${epNum}:${s.provider || i}:${s.externalUrl}`)}`,
+      label:       `AniméOnline LAT — ${s.provider || `Server ${i + 1}`}`,
+      type:        "iframe",
+      externalUrl: s.externalUrl,
+      videoUrl:    "",
+      downloadUrl: "",
+      streamResolver: null,
+      sourceRank:  embedProviderRank(s.provider),
+      adWalled:    embedProviderRank(s.provider) === 2,
+      language:    "es-419"
+    }));
+  if (newOptions.length > 0) {
+    episode.sourceOptions = [...(episode.sourceOptions || []), ...newOptions];
+    episode.locked = false;
+    episode.server = episode.server || "AniméOnline";
+  }
+}

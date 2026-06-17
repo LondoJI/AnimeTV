@@ -1,34 +1,18 @@
-const CACHE_NAME = "zenkaitv-v329";
-const ASSETS = [
+const CACHE_NAME = "zenkaitv-v335";
+const SHELL_ASSETS = [
   "./",
   "./index.html",
   "./offline.html",
-  "./styles.css",
-  "./client.js",
-  "./update-manager.js",
   "./manifest.webmanifest",
-  "./sources.json",
   "./logo-mark.png",
   "./logo-mark-192.png",
   "./logo-mark-512.png",
   "./logo-mark-transparent.png",
-  "./logo-wordmark.png",
-  "./player/player.html",
-  "./player/video.min.js",
-  "./js/constants.js",
-  "./js/translations.js",
-  "./js/utils.js",
-  "./js/season-normalization.js",
-  "./js/normalize.js",
-  "./js/anilist-metadata.js",
-  "./js/smart-source.js",
-  "./js/image-resolver.js",
-  "./js/adult-source-adapter.js",
-  "./js/adult-mode.js"
+  "./logo-wordmark.png"
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_ASSETS)));
   self.skipWaiting();
 });
 
@@ -43,14 +27,61 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+
+  const url = new URL(event.request.url);
+
+  // Navigation requests: network-first, offline fallback
   if (event.request.mode === "navigate") {
     event.respondWith(
       fetch(event.request).catch(() => caches.match("./offline.html"))
     );
     return;
   }
+
+  // API calls: network-only (always fresh)
+  if (url.pathname.startsWith("/api/")) {
+    event.respondWith(fetch(event.request).catch(() => new Response("", { status: 503 })));
+    return;
+  }
+
+  // Versioned static assets (?v=NNN): cache-first (they are immutable by URL)
+  if (url.search.includes("v=")) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => {
+        if (cached) return cached;
+        return fetch(event.request).then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        }).catch(() => caches.match("./offline.html"));
+      })
+    );
+    return;
+  }
+
+  // External images and CDN resources: stale-while-revalidate
+  if (url.origin !== self.location.origin) {
+    event.respondWith(
+      caches.open(CACHE_NAME).then((cache) =>
+        cache.match(event.request).then((cached) => {
+          const networkFetch = fetch(event.request).then((response) => {
+            if (response.ok) cache.put(event.request, response.clone());
+            return response;
+          }).catch(() => cached);
+          return cached || networkFetch;
+        })
+      )
+    );
+    return;
+  }
+
+  // Everything else: network-first with cache fallback
   event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request).then((cached) => cached || caches.match("./offline.html")))
+    fetch(event.request).catch(() =>
+      caches.match(event.request).then((cached) => cached || caches.match("./offline.html"))
+    )
   );
 });
 

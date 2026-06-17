@@ -2717,39 +2717,39 @@ body.reduce-motion *::after {
   transition-duration: 0.001ms !important;
 }
 
-body.soft-focus .focusable:focus,
+body.soft-focus .focusable:focus-visible,
 body.soft-focus .is-tv-focused {
   box-shadow: none;
 }
 
-.focusable:focus,
+.focusable:focus-visible,
 .is-tv-focused {
   outline: 0.14rem solid rgba(255, 255, 255, 0.82);
   outline-offset: 0.18rem;
   box-shadow: 0 0 0 0.28rem rgba(0, 210, 255, 0.13);
 }
 
-.primary-action.focusable:focus,
-.secondary-action.focusable:focus,
-.play-action.focusable:focus,
-.episode-play-inline.focusable:focus,
-.episode-button.focusable:focus,
-.detail-tab.focusable:focus,
-.season-tab.focusable:focus,
-.season-card.focusable:focus {
+.primary-action.focusable:focus-visible,
+.secondary-action.focusable:focus-visible,
+.play-action.focusable:focus-visible,
+.episode-play-inline.focusable:focus-visible,
+.episode-button.focusable:focus-visible,
+.detail-tab.focusable:focus-visible,
+.season-tab.focusable:focus-visible,
+.season-card.focusable:focus-visible {
   outline: 0;
 }
 
-.primary-action.focusable:focus,
-.secondary-action.focusable:focus,
-.episode-play-inline.focusable:focus {
+.primary-action.focusable:focus-visible,
+.secondary-action.focusable:focus-visible,
+.episode-play-inline.focusable:focus-visible {
   box-shadow:
     inset 0 0 0 0.08rem rgba(255, 255, 255, 0.12),
     0 0 0 0.18rem rgba(0, 210, 255, 0.08),
     0 0.5rem 1.1rem rgba(0, 0, 0, 0.22);
 }
 
-.play-action.focusable:focus {
+.play-action.focusable:focus-visible {
   box-shadow:
     inset 0 0 0 0.08rem rgba(255, 255, 255, 0.1),
     0 0 0 0.2rem rgba(0, 210, 255, 0.08),
@@ -8447,33 +8447,23 @@ body.adult-mode .app-shell {
 /* "18+ — Hentai Mode" badge — fixed to the top-center so it never crowds the
    narrow icon sidebar (where it used to overflow into the carousel). */
 .adult-mode-badge {
-  position: fixed;
-  top: 0.7rem;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 60;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.34rem 0.85rem;
-  border-radius: 999rem;
-  background: linear-gradient(135deg, #e11d48, #7a2bd6);
+  position: absolute;
+  bottom: 0.28rem;
+  right: 0.25rem;
+  z-index: 3;
+  display: inline-block;
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.22rem;
+  background: #e11d48;
   color: #fff;
-  font-size: 0.74rem;
-  font-weight: 800;
-  letter-spacing: 0.05em;
-  white-space: nowrap;
-  box-shadow: 0 0.3rem 1rem rgba(225, 29, 72, 0.4);
+  font-size: 0.6rem;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  line-height: 1.3;
   pointer-events: none;
+  box-shadow: 0 0.08rem 0.4rem rgba(225, 29, 72, 0.8), inset 0 0 0 0.04rem rgba(255,255,255,0.18);
 }
-.adult-mode-badge::before {
-  content: "";
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 999rem;
-  background: #fff;
-  box-shadow: 0 0 0.5rem rgba(255, 255, 255, 0.8);
-}
+.adult-mode-badge::before { display: none; }
 .adult-mode-badge[hidden] { display: none; }
 
 /* Make the ZenkaiTV logo read red in 18+ mode: recolor the PNG glyph via filter
@@ -9200,6 +9190,10 @@ body.is-tv .topbar-auth {
   border-left: 0.25rem solid transparent !important;
   box-shadow: none !important;
   transform: none !important;
+}
+
+.source-picker-option.is-source-filter-hidden {
+  display: none !important;
 }
 
 .source-picker-option-found {

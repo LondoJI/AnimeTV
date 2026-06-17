@@ -9192,6 +9192,10 @@ body.is-tv .topbar-auth {
   transform: none !important;
 }
 
+.source-picker-option.is-source-filter-hidden {
+  display: none !important;
+}
+
 .source-picker-option-found {
   cursor: pointer;
 }

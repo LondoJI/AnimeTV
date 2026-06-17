@@ -33,6 +33,24 @@
       ]
     },
     {
+      "source": "/api/catalog",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=300, s-maxage=900, stale-while-revalidate=3600" }
+      ]
+    },
+    {
+      "source": "/api/(anilist|jikan)/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=300, s-maxage=1800, stale-while-revalidate=86400" }
+      ]
+    },
+    {
+      "source": "/api/(animeav1|tioanime|jkanime|animeonlineninja)/slugs",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400" }
+      ]
+    },
+    {
       "source": "/(.*)\\.(js|css|svg|webmanifest|ico|png|webp|jpg|jpeg|woff2?|ttf|eot)",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
