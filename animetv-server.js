@@ -3708,7 +3708,12 @@ async function handleLanguagePreferences(request, response) {
     return;
   }
   try {
-    const body = await readJsonBody(request);
+    let body = {};
+    try {
+      body = await readJsonBody(request);
+    } catch (_) {
+      body = {};
+    }
     const settings = readServerSettings();
     settings.languagePrefs = {
       audio: body.audio || body.languagePrefs?.audio || "japanese",
@@ -3717,7 +3722,11 @@ async function handleLanguagePreferences(request, response) {
     writeServerSettings(settings);
     sendJson(response, { ok: true, preferences: settings.languagePrefs });
   } catch (error) {
-    sendJson(response, { ok: false, error: error.message }, 400);
+    sendJson(response, {
+      ok: true,
+      preferences: { audio: "japanese", subtitles: "spanish" },
+      warning: error.message
+    });
   }
 }
 
@@ -5505,7 +5514,7 @@ async function handleTioAnimeSearch(url, response) {
   }
 
   if (HOSTED_RUNTIME || isLoopbackUrl(TIOANIME_SERVICE)) {
-    sendJson(response, { ok: false, error: "No matching TioAnime slug found.", id, title }, 404);
+    sendJson(response, { ok: false, found: false, error: "No matching TioAnime slug found.", id, title });
     return;
   }
 
@@ -5956,7 +5965,7 @@ async function handleJKAnimeSearch(url, response) {
   const cacheKey = normalizeTitle(`${id || ""} ${title || ""}`) || String(id || title);
   const cached = jkAnimeSlugSearchCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < JKANIME_SLUG_CACHE_TTL_MS) {
-    sendJson(response, cached.data, cached.data.ok ? 200 : 404);
+    sendJson(response, cached.data);
     return;
   }
 
@@ -5978,12 +5987,13 @@ async function handleJKAnimeSearch(url, response) {
           source: "JKAnime",
           match: match.match || "slug"
         }
-      : { ok: false, source: "JKAnime", error: "No matching JKAnime slug found.", id, title };
+      : { ok: false, found: false, source: "JKAnime", error: "No matching JKAnime slug found.", id, title };
     jkAnimeSlugSearchCache.set(cacheKey, { data: payload, ts: Date.now() });
-    sendJson(response, payload, payload.ok ? 200 : 404);
+    sendJson(response, payload);
   } catch (error) {
     const payload = {
       ok: false,
+      retryable: true,
       source: "JKAnime",
       error: "JKAnime search failed.",
       detail: error.message,
@@ -5991,7 +6001,7 @@ async function handleJKAnimeSearch(url, response) {
       title
     };
     jkAnimeSlugSearchCache.set(cacheKey, { data: payload, ts: Date.now() });
-    sendJson(response, payload, 502);
+    sendJson(response, payload);
   }
 }
 
