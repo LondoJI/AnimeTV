@@ -357,6 +357,18 @@ const ImageResolver = (function () {
   // title spellings we may receive from AniList or the scraper. ids verified on
   // themoviedb.org.
   const TMDB_ID_OVERRIDES = [
+    // Bleach TYBW: the dedicated TMDB show (#308329) carries NO episode stills,
+    // so every episode fell back to the show backdrop. Pin to the main Bleach
+    // entry (#30984) whose "Thousand-Year Blood War" season DOES have stills;
+    // pickTmdbSeason() already maps the Sennen Kessen-hen title to that season.
+    { tmdb: 30984, names: ["Bleach: Sennen Kessen-hen", "Bleach Sennen Kessen-hen", "Bleach: Sennen Kessen-hen - Soukoku-tan", "Bleach: Sennen Kessen-hen - Ketsubetsu-tan", "Bleach: Sennen Kessen-hen - Soukatsu-tan", "Bleach: Thousand-Year Blood War"] },
+    // Dr. STONE Science Future (TMDB S4). The base show's 2019 first-air year is
+    // far from the 2025/2026 sequel year, so the fuzzy match was rejected; pin it
+    // and let the "Science Future" season-name mapping select TMDB S4.
+    { tmdb: 86031, names: ["Dr. Stone: Science Future", "Dr. STONE: SCIENCE FUTURE", "Dr. STONE Science Future", "Dr.Stone Science Future", "Dr. STONE 4th Season"] },
+    // Daikenja Riddle no Jikan Gyakkou — TMDB English title is too different for
+    // the fuzzy search ("The Regression of Great Sage Riddle").
+    { tmdb: 313395, names: ["Daikenja Riddle no Jikan Gyakkou", "Daikenja no Jikan Gyakkou", "The Regression of Great Sage Riddle", "大賢者リドルの時間逆行"] },
     { tmdb: 290019, names: ["Class de 2-banme ni Kawaii Onnanoko to Tomodachi ni Natta", "I Made Friends with the Second Prettiest Girl in My Class", "I Became Friends with the Second Cutest Girl in the Class"] },
     { tmdb: 301944, names: ["Marriagetoxin", "Marriage Toxin"] },
     { tmdb: 300126, names: ["Liar Game"] },
@@ -635,10 +647,20 @@ const ImageResolver = (function () {
   }
 
   // ── Per-surface resolution (the documented priority chains) ─────────────────
-  function getEpisodeStill(anime, episode) {
-    if (!anime || !anime.tmdbEpisodeStills) return "";
+  function getEpisodeStill(anime, episode, appSeasonNumber) {
+    if (!anime) return "";
     const num = Number(episode?.episode || episode?.episodeNumber || 0);
-    return num ? (anime.tmdbEpisodeStills[num] || "") : "";
+    if (!num) return "";
+    // Season-aware first: multi-season shows keyed by a single flat episode number
+    // would make every season reuse Season 1's stills (ep 1 collides with ep 1).
+    // When a per-season map has been loaded for this app season it is authoritative
+    // — return its still or "" (never bleed in another season's art).
+    const sNum = Number(appSeasonNumber || 0);
+    if (sNum && anime.tmdbStillsBySeason && anime.tmdbStillsBySeason[sNum]) {
+      return anime.tmdbStillsBySeason[sNum][num] || "";
+    }
+    if (!anime.tmdbEpisodeStills) return "";
+    return anime.tmdbEpisodeStills[num] || "";
   }
 
   function resolveEpisodeThumbnail(episode, anime, tmdbData) {
@@ -749,12 +771,110 @@ const ImageResolver = (function () {
     }
   }
 
+  // ── Season-aware episode stills (multi-season shows) ────────────────────────
+  // A show that is presented as ONE catalog entry with several seasons (each
+  // numbered 1..N) cannot use the flat tmdbEpisodeStills map: Season 2 episode 1
+  // would collide with Season 1 episode 1. For these we resolve the TMDB season
+  // that matches the *active* app season and store its stills under that season
+  // number, rebased to local 1..N so they line up with the displayed list.
+  function mapAppSeasonToTmdb(anime, appSeasonNumber, appSeasonMeta) {
+    const seasons = anime.tmdbSeasons || [];
+    if (!seasons.length) return null;
+    const meta = appSeasonMeta || {};
+    const pseudo = {
+      title: meta.sourceTitle || meta.title || anime.title,
+      romajiTitle: anime.romajiTitle,
+      englishTitle: anime.englishTitle,
+      nativeTitle: anime.nativeTitle,
+      synonyms: anime.synonyms,
+      seasonNumber: appSeasonNumber,
+      seasonYear: meta.year || meta.startYear || (meta.startDate && meta.startDate.year) ||
+                  anime.seasonYear || anime.year
+    };
+    const { season } = pickTmdbSeason(pseudo, { seasons });
+    return season ? Number(season.season_number) : null;
+  }
+
+  const _seasonStillsFetching = new Set();
+  async function ensureSeasonStills(anime, appSeasonNumber, appSeasonMeta) {
+    if (!anime || !anime.tmdbId) return;
+    const sNum = Number(appSeasonNumber || 0);
+    if (!sNum) return;
+    // Already resolved (or tried) — don't re-fetch on every repaint.
+    if (anime.tmdbStillsBySeason && anime.tmdbStillsBySeason[sNum]) return;
+    if (anime._seasonStillsTried && anime._seasonStillsTried.has(sNum)) return;
+    const tmdbSeasonNumber = mapAppSeasonToTmdb(anime, sNum, appSeasonMeta);
+    if (!tmdbSeasonNumber) return;
+    const key = `${anime.anilistId || anime.id}:app${sNum}`;
+    if (_seasonStillsFetching.has(key)) return;
+    _seasonStillsFetching.add(key);
+    try {
+      const url = `./api/tmdb/season?id=${encodeURIComponent(anime.tmdbId)}&season=${encodeURIComponent(tmdbSeasonNumber)}`;
+      const resp = typeof fetchWithTimeout === "function"
+        ? await fetchWithTimeout(url, { cache: "no-store" }, 12000)
+        : await fetch(url);
+      const payload = resp.ok ? await resp.json() : null;
+      const eps = payload?.season?.episodes || [];
+      if (!eps.length) return;
+      // TMDB seasons sometimes number episodes absolutely (e.g. Naruto S5 = 89..),
+      // so rebase to 1..N against the season's lowest episode number.
+      const nums = eps.map((e) => Number(e.episode_number || 0)).filter((n) => n > 0);
+      const minEp = nums.length ? Math.min(...nums) : 1;
+      const offset = minEp > 0 ? minEp - 1 : 0;
+      const stills = {};
+      const metas = {};
+      for (const ep of eps) {
+        const local = Number(ep.episode_number) - offset;
+        if (local <= 0) continue;
+        const still = tmdbStillUrl(ep.still_path);
+        if (still) stills[local] = still;
+        metas[local] = {
+          episode: local,
+          title: ep.name || "",
+          description: ep.overview || "",
+          aired: ep.air_date || "",
+          thumbnail: still
+        };
+      }
+      if (!anime.tmdbStillsBySeason) anime.tmdbStillsBySeason = {};
+      if (!anime.tmdbEpisodesBySeasonNum) anime.tmdbEpisodesBySeasonNum = {};
+      anime.tmdbStillsBySeason[sNum] = stills;
+      anime.tmdbEpisodesBySeasonNum[sNum] = metas;
+      debug(`season-aware: app S${sNum} -> TMDB S${tmdbSeasonNumber} (${Object.keys(stills).length} stills)`);
+      if (typeof renderEpisodeList === "function" && typeof state !== "undefined" &&
+          state.activeShow && state.activeShow.id === anime.id) {
+        renderEpisodeList(state.activeShow);
+      }
+    } catch (err) {
+      debug(`season-aware fetch failed: ${err && err.message}`);
+    } finally {
+      if (!anime._seasonStillsTried) anime._seasonStillsTried = new Set();
+      anime._seasonStillsTried.add(sNum);
+      _seasonStillsFetching.delete(key);
+    }
+  }
+
+  // Per-season episode metadata (title/aired/still), preferring the season-aware
+  // map when present, falling back to the flat one. Returns null when unknown.
+  function getSeasonEpisodeMeta(anime, appSeasonNumber, episodeNumber) {
+    if (!anime) return null;
+    const sNum = Number(appSeasonNumber || 0);
+    const num = Number(episodeNumber || 0);
+    if (!num) return null;
+    if (sNum && anime.tmdbEpisodesBySeasonNum && anime.tmdbEpisodesBySeasonNum[sNum]) {
+      return anime.tmdbEpisodesBySeasonNum[sNum][num] || null;
+    }
+    return anime.tmdbEpisodesByNum ? (anime.tmdbEpisodesByNum[num] || null) : null;
+  }
+
   return {
     firstValidImage,
     markImageFailed,
     isImageFailed,
     hydrateTmdbImages,
     getEpisodeStill,
+    ensureSeasonStills,
+    getSeasonEpisodeMeta,
     resolveEpisodeThumbnail,
     resolvePrePlayerBackground,
     resolvePrePlayerPoster,

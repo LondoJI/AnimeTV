@@ -1293,6 +1293,51 @@ function visibleShows() {
 // content; default mode shows ONLY non-adult content — they never mix. Every
 // content surface (rails, library, search, favorites, continue watching) draws
 // from this so the two catalogs stay mutually exclusive.
+// ── Adult catalog sort helpers ────────────────────────────────────────────────
+// Parse the latest date mentioned in an aired string like:
+//   "29 May 2026 → Ongoing"   →  Date(2026-05-29).getTime()
+//   "24 Oct 2025 → 12 Mar 2026"  →  the later date (Mar 2026)
+function parseAdultAiredDate(aired = "") {
+  const monthMap = {
+    jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+    jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+  };
+  // Find all "DD Mon YYYY" patterns and return the most recent timestamp
+  const matches = String(aired).matchAll(/(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})/g);
+  let best = -Infinity;
+  for (const m of matches) {
+    const day = Number(m[1]);
+    const mon = monthMap[m[2].toLowerCase()];
+    const yr  = Number(m[3]);
+    if (mon !== undefined) {
+      const ts = new Date(yr, mon, day).getTime();
+      if (ts > best) best = ts;
+    }
+  }
+  return best;
+}
+
+// Rank for the Latest Episodes rail / library grid in adult mode.
+// Primary:   sourceOrder ascending (position on the source website = newest first).
+// Secondary: most recent date parsed from the "aired" string (descending).
+function adultShowRank(show) {
+  return {
+    order:    Number(show.sourceOrder ?? Number.MAX_SAFE_INTEGER),
+    airedMs:  parseAdultAiredDate(show.aired || show.status || ""),
+    ep:       Number(show.episode || show.totalEpisodes || show.latestAiredEp || 0)
+  };
+}
+function compareAdultShows(a, b) {
+  const ra = adultShowRank(a);
+  const rb = adultShowRank(b);
+  // 1. sourceOrder (ascending — 0 = top of the source website = newest)
+  if (ra.order !== rb.order) return ra.order - rb.order;
+  // 2. most recent aired date (descending)
+  if (ra.airedMs !== rb.airedMs) return rb.airedMs - ra.airedMs;
+  // 3. episode count (descending) as last tiebreak
+  return rb.ep - ra.ep;
+}
+
 function catalogShows() {
   if (typeof AdultMode === "undefined") return state.shows;
   const filtered = AdultMode.filterCatalog(state.shows);
@@ -1300,7 +1345,7 @@ function catalogShows() {
   const sourced = filtered.filter((show) => Boolean(show?.adultSource));
   return (sourced.length ? sourced : filtered)
     .slice()
-    .sort((a, b) => Number(a.sourceOrder ?? Number.MAX_SAFE_INTEGER) - Number(b.sourceOrder ?? Number.MAX_SAFE_INTEGER));
+    .sort(compareAdultShows);
 }
 
 function isolateAdultSourceMetadata(show) {
@@ -1697,7 +1742,7 @@ function latestEpisodeReleases(limit = HOME_CARD_LIMIT) {
 function adultSourceOrderedShows(limit = HOME_CARD_LIMIT) {
   return visibleShows()
     .slice()
-    .sort((a, b) => Number(a.sourceOrder ?? Number.MAX_SAFE_INTEGER) - Number(b.sourceOrder ?? Number.MAX_SAFE_INTEGER))
+    .sort(compareAdultShows)
     .slice(0, limit);
 }
 
@@ -2380,7 +2425,7 @@ async function hydrateCanonicalAnimeMetadata(show) {
     const endpoint = show.anilistId
       ? `./api/anilist/media?id=${encodeURIComponent(show.anilistId)}`
       : `./api/anilist/search?q=${encodeURIComponent(show.romajiTitle || show.title || "")}`;
-    const response = await fetchWithTimeout(endpoint, { cache: "no-store" }, 12000);
+    const response = await fetchDeduped(endpoint);
     const payload = response.ok ? await response.json() : null;
     media = payload?.media || null;
     if (media && !show.anilistId) {
@@ -2420,7 +2465,7 @@ async function hydrateCanonicalAnimeMetadata(show) {
   if (malId) {
     show.malId = malId;
     try {
-      const response = await fetchWithTimeout(`./api/jikan/full?id=${encodeURIComponent(malId)}`, { cache: "no-store" }, 15000);
+      const response = await fetchDeduped(`./api/jikan/full?id=${encodeURIComponent(malId)}`);
       const payload = response.ok ? await response.json() : null;
       jikan = payload?.data || null;
     } catch { /* Keep AniList metadata when Jikan is rate-limited. */ }
@@ -5787,8 +5832,13 @@ function comparableImageUrl(value = "") {
   }
 }
 
-function episodeMetadataForNumber(show = {}, number = 0) {
-  const tmdb = show.tmdbEpisodesByNum?.[number] || null;
+function episodeMetadataForNumber(show = {}, number = 0, seasonNumber = 0) {
+  const sNum = Number(seasonNumber || 0);
+  // Multi-season shows store per-season TMDB metadata so Season 2's titles/stills
+  // don't collide with Season 1's on the same local episode number.
+  const tmdb = (sNum && show.tmdbEpisodesBySeasonNum && show.tmdbEpisodesBySeasonNum[sNum])
+    ? (show.tmdbEpisodesBySeasonNum[sNum][number] || null)
+    : (show.tmdbEpisodesByNum?.[number] || null);
   const streamed = show.streamingEpisodesByNum?.[number] || null;
   if (!tmdb) return streamed;
   if (!streamed) return tmdb;
@@ -5803,25 +5853,26 @@ function episodeMetadataForNumber(show = {}, number = 0) {
   };
 }
 
-function episodeCandidateImage(episode = {}, number = 0, show = {}) {
-  const metadata = episodeMetadataForNumber(show, number);
+function episodeCandidateImage(episode = {}, number = 0, show = {}, seasonNumber = 0) {
+  const metadata = episodeMetadataForNumber(show, number, seasonNumber);
   return hqImage(
     metadata?.thumbnail ||
     episode.image || episode.thumbnail || episode.still || episode.snapshot || ""
   );
 }
 
-function repeatedEpisodeArtwork(episodes = [], show = {}) {
+function repeatedEpisodeArtwork(episodes = [], show = {}, seasonNumber = 0) {
   const counts = new Map();
   episodes.forEach((episode, index) => {
     const number = Number(episode.episode || index + 1);
-    const key = comparableImageUrl(episodeCandidateImage(episode, number, show));
+    const key = comparableImageUrl(episodeCandidateImage(episode, number, show, seasonNumber));
     if (key) counts.set(key, (counts.get(key) || 0) + 1);
   });
   return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([url]) => url));
 }
 
 function episodeThumb(episode = {}, season = {}, show = {}, repeatedImages = new Set()) {
+  const seasonNum = Number(season?.season) || 0;
   let ownImage = hqImage(episode.image || episode.thumbnail || episode.still || episode.snapshot || "");
   const isAdultShow = show.adultSource || (typeof AdultMode !== "undefined" && AdultMode.isAdultContent(show));
   if (!isAdultShow && isAdultImageUrl(ownImage)) ownImage = "";
@@ -5832,10 +5883,14 @@ function episodeThumb(episode = {}, season = {}, show = {}, repeatedImages = new
   ].map(comparableImageUrl).filter(Boolean));
   if (!isAdultShow && comparable && (repeatedImages.has(comparable) || showLevelArt.has(comparable))) ownImage = "";
   if (typeof ImageResolver !== "undefined") {
-    let tmdbStill = ImageResolver.getEpisodeStill(show, episode);
+    let tmdbStill = ImageResolver.getEpisodeStill(show, episode, seasonNum);
     if (!isAdultShow && isAdultImageUrl(tmdbStill)) tmdbStill = "";
     const num = Number(episode?.episode || episode?.episodeNumber || 0);
-    if (show.tmdbId && num && !tmdbStill) {
+    // When this season has its own TMDB-season map loaded, that map is
+    // authoritative — don't fire the flat (absolute-numbered) lazy fetch, which
+    // would mis-key stills for a season that restarts numbering at 1.
+    const seasonScoped = seasonNum && show.tmdbStillsBySeason && show.tmdbStillsBySeason[seasonNum];
+    if (show.tmdbId && num && !tmdbStill && !seasonScoped) {
       ImageResolver.lazyFetchEpisodeStill(show, num);
     }
     const tmdbComparable = comparableImageUrl(tmdbStill);
@@ -5913,7 +5968,16 @@ function renderEpisodeList(show) {
   const multiSeason = seasonNav.length > 1;
 
   const episodes = activeSeason?.episodes || [];
-  const repeatedImages = repeatedEpisodeArtwork(episodes, show);
+  const activeSeasonNum = Number(activeSeason?.season) || state.activeSeasonIndex + 1;
+  // For shows presented as one entry with several seasons (each numbered 1..N),
+  // load the TMDB stills for THIS season so they don't collide with Season 1's.
+  // Gated to genuinely multi-season shows so single-list absolute shows
+  // (Naruto/Bleach) keep using the proven flat/lazy path untouched.
+  if (seasons.length > 1 && show.tmdbId &&
+      typeof ImageResolver !== "undefined" && ImageResolver.ensureSeasonStills) {
+    ImageResolver.ensureSeasonStills(show, activeSeasonNum, activeSeason);
+  }
+  const repeatedImages = repeatedEpisodeArtwork(episodes, show, activeSeasonNum);
   const tab = state.activeDetailTab === "seasons" ? "seasons" : "episodes";
   const franchiseList = getFranchiseSeasonList(show) || [];
   const cardSeasons = franchiseList.length ? franchiseList : seasons;
@@ -6005,7 +6069,7 @@ function renderEpisodeList(show) {
           const num = episode.episode || episodeIndex + 1;
           // Prefer AniList per-episode metadata (real title + still), matched by
           // episode number.
-          const epMeta = episodeMetadataForNumber(show, num);
+          const epMeta = episodeMetadataForNumber(show, num, activeSeasonNum);
           const title = (epMeta && epMeta.title)
             ? cleanEpisodeTitle(epMeta.title, num)
             : episodeEntryTitle(episode, episodeIndex, show);
@@ -6023,7 +6087,7 @@ function renderEpisodeList(show) {
             show,
             repeatedImages
           );
-          const tmdbStill = (typeof ImageResolver !== "undefined") ? ImageResolver.getEpisodeStill(show, { episode: num }) : "";
+          const tmdbStill = (typeof ImageResolver !== "undefined") ? ImageResolver.getEpisodeStill(show, { episode: num }, activeSeasonNum) : "";
           const epOwnImage = episode.image || episode.thumbnail || episode.still || episode.snapshot || epMeta?.thumbnail || "";
           const epBackdrop = show.images?.backdrop || show.images?.banner || show.tmdbBackdrop || show.banner || show.bannerImage || "";
           const isAdultShow = show.adultSource || (typeof AdultMode !== "undefined" && AdultMode.isAdultContent(show));
@@ -6788,20 +6852,36 @@ function renderSourcePickerInSidePanel() {
     filterSelectHtml = `<select class="source-filter-select side-source-filter focusable language-select" aria-label="Filter sources">${optionsHtml}</select>`;
   }
 
-  // Build screenshot gallery for adult episodes
+  // ── External adult episode gallery (rendered into #adultGalleryPanel) ──────
+  const galleryPanel = document.getElementById("adultGalleryPanel");
   const isAdultShow = typeof AdultMode !== "undefined" && AdultMode.isAdultContent(show);
   const screenshots = Array.isArray(episode.screenshots) ? episode.screenshots.filter(Boolean) : [];
-  const galleryHtml = (isAdultShow && screenshots.length > 0) ? `
-    <div class="ep-gallery" role="region" aria-label="Episode preview images">
-      ${screenshots.map((src, i) => `
-        <button class="ep-gallery-thumb focusable" type="button"
-          data-gallery-index="${i}"
-          aria-label="Preview image ${i + 1} of ${screenshots.length}">
-          <img referrerpolicy="no-referrer" src="${escapeHtml(src)}" alt="" loading="eager" decoding="async">
-        </button>
-      `).join("")}
-    </div>
-  ` : "";
+  const hasGallery = isAdultShow && screenshots.length > 0;
+
+  if (galleryPanel) {
+    if (hasGallery) {
+      galleryPanel.innerHTML = `
+        <div class="agp-header">
+          <span class="agp-label">Episode&nbsp;${episodeNumber} &mdash; Preview</span>
+          <span class="agp-count">${screenshots.length} image${screenshots.length !== 1 ? "s" : ""}</span>
+        </div>
+        <div class="agp-grid">
+          ${screenshots.map((src, i) => `
+            <button class="agp-thumb focusable" type="button"
+              data-gallery-index="${i}"
+              aria-label="Preview image ${i + 1} of ${screenshots.length}">
+              <img referrerpolicy="no-referrer" src="${escapeHtml(src)}" alt="" loading="eager" decoding="async">
+              <span class="agp-thumb-num">${i + 1}</span>
+            </button>
+          `).join("")}
+        </div>
+      `;
+      galleryPanel.hidden = false;
+    } else {
+      galleryPanel.innerHTML = "";
+      galleryPanel.hidden = true;
+    }
+  }
 
   episodeList.hidden = false;
   episodeList.innerHTML = `
@@ -6815,17 +6895,20 @@ function renderSourcePickerInSidePanel() {
         <strong class="side-source-picker-title">${escapeHtml(epLabel || currentEpisodeLabel())}</strong>
         ${filterSelectHtml}
       </div>
-      ${galleryHtml}
+      <div class="side-source-picker-body">
       <div class="source-picker-options side-source-picker-list">
         ${serverCards}
         ${extraCards}
       </div>
     </div>
+  </div>
   `;
 
-  // Back = return the side panel to the episode list (works even if a server
-  // scan is still in flight; the scan's refresh no-ops once the picker is gone).
+  // Back = return the side panel to the episode list and hide gallery.
   episodeList.querySelector(".side-source-picker-back")?.addEventListener("click", () => {
+    // Hide the external gallery panel
+    const gp = document.getElementById("adultGalleryPanel");
+    if (gp) { gp.innerHTML = ""; gp.hidden = true; }
     if (state.activeShow) renderEpisodeList(state.activeShow);
     else showEpisodeListTab();
     refreshFocusables();
@@ -6861,8 +6944,8 @@ function renderSourcePickerInSidePanel() {
     });
   });
 
-  // Wire gallery thumbnails → lightbox
-  if (screenshots.length > 0) {
+  // Wire gallery thumbnails in external panel → lightbox
+  if (hasGallery && galleryPanel) {
     const openLightbox = (startIndex) => {
       document.querySelector(".ep-gallery-lightbox")?.remove();
       let currentIdx = startIndex;
@@ -6884,8 +6967,8 @@ function renderSourcePickerInSidePanel() {
         lb.querySelector(".ep-gallery-lightbox-close")?.addEventListener("click", () => lb.remove());
         lb.querySelector(".ep-gallery-lightbox-nav.prev")?.addEventListener("click", (e) => { e.stopPropagation(); currentIdx = (currentIdx - 1 + screenshots.length) % screenshots.length; render(); });
         lb.querySelector(".ep-gallery-lightbox-nav.next")?.addEventListener("click", (e) => { e.stopPropagation(); currentIdx = (currentIdx + 1) % screenshots.length; render(); });
-        // Highlight the matching thumbnail strip item
-        episodeList.querySelectorAll(".ep-gallery-thumb").forEach((t, i) => t.classList.toggle("is-active", i === currentIdx));
+        // Highlight the matching thumbnail in the external gallery panel
+        galleryPanel.querySelectorAll(".agp-thumb").forEach((t, i) => t.classList.toggle("is-active", i === currentIdx));
       };
       render();
       lb.addEventListener("click", (e) => { if (e.target === lb) lb.remove(); });
@@ -6898,9 +6981,14 @@ function renderSourcePickerInSidePanel() {
       lb.setAttribute("tabindex", "-1");
       lb.focus();
     };
-    episodeList.querySelectorAll(".ep-gallery-thumb").forEach((thumb) => {
+    galleryPanel.querySelectorAll(".agp-thumb").forEach((thumb) => {
       thumb.addEventListener("click", () => openLightbox(Number(thumb.dataset.galleryIndex)));
     });
+  }
+
+  // Legacy: also wire any ep-gallery-thumb that may still be in episode list
+  if (!hasGallery) {
+    episodeList.querySelectorAll(".ep-gallery-thumb").forEach(() => {});
   }
 
   refreshFocusables();
@@ -8735,6 +8823,18 @@ async function resolveTioAnimeSlugFromCatalog(show) {
   return applyTioAnimeSlugFromMap(show, slugMap);
 }
 
+// ── In-flight fetch deduplication ────────────────────────────────────────────
+// Prevents duplicate parallel requests for the same URL.
+// E.g. anilist/media?id=169580 called 4× simultaneously becomes 1 network hit.
+const _inflightFetch = new Map();
+function fetchDeduped(url, init) {
+  const key = String(url);
+  if (_inflightFetch.has(key)) return _inflightFetch.get(key);
+  const p = fetch(url, init).finally(() => _inflightFetch.delete(key));
+  _inflightFetch.set(key, p);
+  return p;
+}
+
 let visibleMetadataWarmGeneration = 0;
 
 function warmVisibleShowMetadata(shows = state.shows, limit = 64) {
@@ -8743,6 +8843,8 @@ function warmVisibleShowMetadata(shows = state.shows, limit = 64) {
     ...buildLatestEpisodesList(Math.min(HOME_CARD_LIMIT, limit)),
     ...(Array.isArray(shows) ? shows : [])
   ];
+  // Deduplicate by stable ID and cap at limit. Prioritise the first 20 on page
+  // load so we don't fire 64× parallel hydrations at startup.
   const queue = [...new Map(
     prioritized
       .filter((show) => show)
@@ -8786,7 +8888,9 @@ function warmVisibleShowMetadata(shows = state.shows, limit = 64) {
     }
   };
 
-  Promise.allSettled([worker(), worker(), worker()]).then(() => {
+  // 2 concurrent workers — enough to keep the pipeline busy without
+  // hammering external APIs (jikan 429s, anilist 502s seen in production).
+  Promise.allSettled([worker(), worker()]).then(() => {
     if (changed && generation === visibleMetadataWarmGeneration) render();
   }).catch(() => {});
 }
@@ -10646,17 +10750,18 @@ document.querySelectorAll(".search-box").forEach((box) => {
   const input = box.querySelector("input");
   if (!input) return;
 
+  // The icon span is aria-hidden (decorative). Do NOT give it role/tabindex —
+  // the wrapping <label> already activates the input on click.
+  // We keep the click shortcut so keyboard-only users can use the label itself.
   if (icon) {
-    icon.setAttribute("role", "button");
-    icon.setAttribute("aria-label", "Search");
-    icon.setAttribute("tabindex", "0");
-    const runSearch = () => {
+    // Remove any residual focusable attributes that may have been set
+    icon.removeAttribute("role");
+    icon.removeAttribute("aria-label");
+    icon.removeAttribute("tabindex");
+    icon.addEventListener("click", (event) => {
+      event.preventDefault();
       input.focus();
       if (input.value.trim()) handleSearchInput({ target: input });
-    };
-    icon.addEventListener("click", (event) => { event.preventDefault(); runSearch(); });
-    icon.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); runSearch(); }
     });
   }
 
