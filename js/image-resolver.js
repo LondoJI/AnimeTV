@@ -389,7 +389,11 @@ const ImageResolver = (function () {
     { tmdb: 46261, names: ["NARUTO: Shippuuden", "Naruto: Shippuuden", "Naruto Shippuden", "Naruto Shippuuden", "Naruto: Shippuden"] },
     // [Oshi no Ko] 2nd Season — brackets confuse the TMDB fuzzy search; pin to the
     // main entry (#130392) whose Season 2 carries 2024 episode stills.
-    { tmdb: 130392, names: ["[Oshi no Ko] 2nd Season", "Oshi no Ko 2nd Season", "[Oshi no Ko] Season 2", "Oshi no Ko Season 2", "[Oshi no Ko]", "Oshi no Ko"] }
+    { tmdb: 130392, names: ["[Oshi no Ko] 2nd Season", "Oshi no Ko 2nd Season", "[Oshi no Ko] Season 2", "Oshi no Ko Season 2", "[Oshi no Ko]", "Oshi no Ko"] },
+    // Tsue to Tsurugi no Wistoria — TMDB #245842 carries both S1 (2024) and S2 (2026).
+    // The romaji title is long and the fuzzy search sometimes rejects it; pin so
+    // pickTmdbSeason() can correctly map "2nd Season" to TMDB Season 2 stills.
+    { tmdb: 245842, names: ["Tsue to Tsurugi no Wistoria", "Wistoria: Wand and Sword", "Wistoria Wand and Sword", "Tsue to Tsurugi no Wistoria 2nd Season", "Wistoria: Wand and Sword Season 2"] }
   ];
 
   // Compact key for override matching: lowercase, NFD-decompose, then drop every
