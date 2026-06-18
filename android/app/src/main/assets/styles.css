@@ -1230,6 +1230,16 @@ body:not([data-route="home"]) .content-band {
   display: none;
 }
 
+/* ── Continue-watching height stability (home only) ───────────────────────────
+   Reserve a stable min-height ONLY while the section is actually shown (not
+   .is-hidden). A hidden/empty section stays display:none so it never leaves a
+   blank gap — important because the adult rail is empty for most users and the
+   rails render empty until the catalog resolves the resume positions. */
+:root[data-has-history] body[data-route="home"] #continueWatching:not(.is-hidden),
+:root[data-has-history] body[data-route="home"] #continueWatchingAdult:not(.is-hidden) {
+  min-height: 17rem;
+}
+
 .section-heading {
   display: flex;
   align-items: center;
@@ -1455,6 +1465,10 @@ body:not([data-route="home"]) .section-heading h2 {
 
 .rail-shell:has(.poster-grid:empty) .rail-arrow {
   display: none;
+}
+
+.poster-grid:empty {
+  min-height: 13rem;
 }
 
 .poster-grid::-webkit-scrollbar {
@@ -6111,6 +6125,7 @@ body.player-cinema-open .close-button {
 .carousel-info {
   position: relative;
   z-index: 2;
+  min-height: 14rem;
 }
 
 .carousel-poster-wrap {
@@ -6809,41 +6824,55 @@ body.reduce-motion .watch-overlay.is-closing .watch-panel {
 
 #library .library-filter-panel {
   display: grid;
-  gap: 0.85rem;
+  gap: 1rem;
   max-width: min(74rem, calc(100vw - 10rem));
   margin: 0.15rem 0 1.45rem;
+  padding: 1.1rem 1.2rem;
+  border-radius: 1.1rem;
+  background: linear-gradient(180deg, rgba(20, 25, 42, 0.82), rgba(13, 17, 30, 0.82));
+  box-shadow: inset 0 0 0 0.06rem rgba(255, 255, 255, 0.06), 0 1rem 2.4rem rgba(4, 7, 18, 0.45);
 }
 
 .library-letter-row {
   display: flex;
   flex-wrap: wrap;
   gap: 0.42rem;
+  padding-bottom: 0.95rem;
+  border-bottom: 0.06rem solid rgba(255, 255, 255, 0.07);
 }
 
 .library-letter {
   min-width: 2.18rem;
   height: 2rem;
-  border-radius: 0.42rem;
+  border-radius: 0.5rem;
   border: 0;
-  color: rgba(229, 233, 255, 0.86);
-  background: rgba(91, 105, 158, 0.42);
+  color: rgba(229, 233, 255, 0.82);
+  background: rgba(91, 105, 158, 0.26);
   font-size: 0.78rem;
   font-weight: 900;
   cursor: pointer;
-  box-shadow: inset 0 0 0 0.06rem rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 0.06rem rgba(255, 255, 255, 0.06);
+  transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
 }
 
-.library-letter.is-selected,
 .library-letter:is(:hover, :focus-visible, .is-tv-focused) {
+  color: #fff;
+  background: rgba(138, 85, 255, 0.42);
+  outline: none;
+  transform: translateY(-0.05rem);
+}
+
+.library-letter.is-selected {
   color: #06121a;
-  background: linear-gradient(135deg, rgba(63, 224, 202, 0.98), rgba(71, 157, 255, 0.92));
+  background: linear-gradient(135deg, var(--cyan), #6b8bff);
+  box-shadow: 0 0.4rem 1rem rgba(0, 210, 255, 0.28);
   outline: none;
 }
 
 .library-filter-controls {
   display: grid;
-  grid-template-columns: repeat(4, minmax(11rem, 1fr)) minmax(10rem, 0.95fr);
-  gap: 1rem;
+  grid-template-columns: repeat(4, minmax(11rem, 1fr)) auto;
+  gap: 0.8rem;
   align-items: center;
 }
 
@@ -6853,12 +6882,33 @@ body.reduce-motion .watch-overlay.is-closing .watch-panel {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  min-height: 2.45rem;
-  padding: 0 0.75rem;
-  border-radius: 0.42rem;
+  min-height: 2.55rem;
+  padding: 0 0.85rem;
+  border-radius: 0.6rem;
   color: rgba(174, 184, 226, 0.9);
-  background: rgba(43, 48, 72, 0.8);
-  box-shadow: inset 0 0 0 0.06rem rgba(255, 255, 255, 0.045);
+  background: rgba(43, 48, 72, 0.6);
+  box-shadow: inset 0 0 0 0.06rem rgba(255, 255, 255, 0.05);
+  transition: box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.library-select-wrap:focus-within {
+  background: rgba(43, 48, 72, 0.85);
+  box-shadow: inset 0 0 0 0.09rem rgba(138, 85, 255, 0.55);
+}
+
+/* Custom chevron — replaces the inconsistent native one across browsers/OS. */
+.library-select-wrap::after,
+.library-sort-wrap::after {
+  content: "";
+  position: absolute;
+  right: 0.85rem;
+  top: 50%;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-right: 0.13rem solid rgba(174, 184, 226, 0.75);
+  border-bottom: 0.13rem solid rgba(174, 184, 226, 0.75);
+  transform: translateY(-65%) rotate(45deg);
+  pointer-events: none;
 }
 
 .library-select-wrap span,
@@ -6872,7 +6922,8 @@ body.reduce-motion .watch-overlay.is-closing .watch-panel {
 .library-sort-wrap select {
   flex: 1;
   min-width: 0;
-  height: 2.3rem;
+  height: 2.4rem;
+  padding-right: 1.1rem;
   border: 0;
   color: #f6f3ff;
   background: transparent;
@@ -6881,6 +6932,9 @@ body.reduce-motion .watch-overlay.is-closing .watch-panel {
   font-weight: 900;
   outline: none;
   cursor: pointer;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
 }
 
 .library-select-wrap select option,
@@ -6889,22 +6943,34 @@ body.reduce-motion .watch-overlay.is-closing .watch-panel {
   background: #202338;
 }
 
-.library-filter-apply {
-  min-height: 2.45rem;
-  border: 0;
-  border-radius: 0.42rem;
-  color: #05141a;
-  background: linear-gradient(135deg, #43e6cf, #35d7cb);
+.library-filter-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 2.55rem;
+  padding: 0 1.15rem;
+  border: 0.08rem solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.6rem;
+  color: rgba(229, 233, 255, 0.92);
+  background: rgba(91, 105, 158, 0.16);
   font-size: 0.82rem;
-  font-weight: 950;
+  font-weight: 900;
   cursor: pointer;
-  box-shadow: 0 0.75rem 1.6rem rgba(67, 230, 207, 0.18);
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.12s ease;
 }
 
-.library-filter-apply:is(:hover, :focus-visible, .is-tv-focused) {
+.library-filter-reset .reset-icon {
+  font-size: 1.02rem;
+  line-height: 1;
+}
+
+.library-filter-reset:is(:hover, :focus-visible, .is-tv-focused) {
+  color: #fff;
+  background: rgba(138, 85, 255, 0.24);
+  border-color: rgba(138, 85, 255, 0.6);
   transform: translateY(-0.05rem);
   outline: none;
-  box-shadow: 0 0 0 0.14rem rgba(67, 230, 207, 0.22), 0 0.9rem 1.8rem rgba(67, 230, 207, 0.22);
 }
 
 .library-filter-meta {
@@ -6912,6 +6978,7 @@ body.reduce-motion .watch-overlay.is-closing .watch-panel {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  padding-top: 0.2rem;
   color: rgba(166, 184, 255, 0.96);
   font-size: 0.82rem;
   font-weight: 850;
@@ -6919,6 +6986,11 @@ body.reduce-motion .watch-overlay.is-closing .watch-panel {
 
 .library-sort-wrap {
   min-width: min(17rem, 100%);
+  background: transparent;
+  box-shadow: none;
+}
+
+.library-sort-wrap:focus-within {
   background: transparent;
   box-shadow: none;
 }

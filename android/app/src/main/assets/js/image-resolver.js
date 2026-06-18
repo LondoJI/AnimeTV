@@ -20,7 +20,7 @@ const ImageResolver = (function () {
   "use strict";
 
   const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
-  const MATCH_CACHE_PREFIX = "zenkaitv:tmdb-match:v10:";
+  const MATCH_CACHE_PREFIX = "zenkaitv:tmdb-match:v11:";
   const MATCH_CACHE_TTL_MS = 1000 * 60 * 60 * 24; // Refresh airing episode stills daily.
   const FAILED_CACHE_KEY = "zenkaitv:img-failed:v1";
   const FAILED_CACHE_MAX = 400;
@@ -379,7 +379,21 @@ const ImageResolver = (function () {
     { tmdb: 273467, names: ["Himekishi wa Barbaroi no Yome", "Hime Kishi wa Barbaroi no Yome", "The Warrior Princess and the Barbaric King"] },
     { tmdb: 283905, names: ["Kamiina Botan, Yoeru Sugata wa Yuri no Hana", "Botan Kamiina Fully Blossoms When Drunk"] },
     { tmdb: 304820, names: ["Nigashita Sakana wa Ookikatta ga Tsuriageta Sakana ga Ookisugita Ken", "Always a Catch!"] },
-    { tmdb: 96316,  names: ["Kanojo, Okarishimasu 5th Season", "Kanojo, Okarishimasu", "Kanojo Okarishimasu", "Rent-a-Girlfriend"] }
+    { tmdb: 96316,  names: ["Kanojo, Okarishimasu 5th Season", "Kanojo, Okarishimasu", "Kanojo Okarishimasu", "Rent-a-Girlfriend"] },
+    // Original Bleach (2004, 366 eps) — fuzzy search may drift to wrong entries;
+    // pin to the same TMDB show (#30984) that already carries seasons 1-16 plus TYBW.
+    // Multi-season stills logic then maps global episode numbers across all TMDB seasons.
+    { tmdb: 30984, names: ["Bleach"] },
+    // NARUTO: Shippuuden — TMDB title is "Naruto: Shippuden" (21 seasons, 500 eps).
+    // Without a pin the fuzzy search sometimes attaches the wrong Naruto entry.
+    { tmdb: 46261, names: ["NARUTO: Shippuuden", "Naruto: Shippuuden", "Naruto Shippuden", "Naruto Shippuuden", "Naruto: Shippuden"] },
+    // [Oshi no Ko] 2nd Season — brackets confuse the TMDB fuzzy search; pin to the
+    // main entry (#130392) whose Season 2 carries 2024 episode stills.
+    { tmdb: 130392, names: ["[Oshi no Ko] 2nd Season", "Oshi no Ko 2nd Season", "[Oshi no Ko] Season 2", "Oshi no Ko Season 2", "[Oshi no Ko]", "Oshi no Ko"] },
+    // Tsue to Tsurugi no Wistoria — TMDB #245842 carries both S1 (2024) and S2 (2026).
+    // The romaji title is long and the fuzzy search sometimes rejects it; pin so
+    // pickTmdbSeason() can correctly map "2nd Season" to TMDB Season 2 stills.
+    { tmdb: 245842, names: ["Tsue to Tsurugi no Wistoria", "Wistoria: Wand and Sword", "Wistoria Wand and Sword", "Tsue to Tsurugi no Wistoria 2nd Season", "Wistoria: Wand and Sword Season 2"] }
   ];
 
   // Compact key for override matching: lowercase, NFD-decompose, then drop every
@@ -496,6 +510,51 @@ const ImageResolver = (function () {
       } else {
         debug(`season mapping for ${idLabel}: ${reason}`);
       }
+    }
+
+    // ── Multi-season stills for long-running shows (Bleach, Naruto Shippuden, etc.)
+    // For shows with >100 episodes split across multiple TMDB seasons, the single-
+    // season fetch above only covers one arc. Here we fetch ALL seasons in parallel
+    // and rebuild the stills map keyed by GLOBAL episode number (cumulative offset
+    // across seasons), so episode 101 maps correctly to S3 ep 38, etc.
+    const totalEps = Number(anime.totalEpisodes || anime.episodeCount || anime.episodes || 0);
+    if (show && totalEps > 100 && real.length > 2) {
+      // Wipe local-numbered stills from the single-season pass; rebuild globally.
+      for (const k of Object.keys(episodeStills)) delete episodeStills[k];
+      for (const k of Object.keys(episodesByNum)) delete episodesByNum[k];
+
+      let _globalOffset = 0;
+      // Compute per-season global offsets synchronously (before any await),
+      // then fire all season fetches in parallel.
+      const seasonJobs = real.map((s) => {
+        const offset = _globalOffset;
+        _globalOffset += Number(s.episode_count || 0);
+        return { s, offset };
+      });
+      const fetchSeasonJob = async ({ s, offset }) => {
+        try {
+          const r = await fetchWithTimeout(
+            `./api/tmdb/season?id=${encodeURIComponent(tmdbId)}&season=${encodeURIComponent(s.season_number)}`,
+            { cache: "no-store" }, 10000
+          );
+          const payload = r.ok ? await r.json() : null;
+          for (const ep of (payload?.season?.episodes || [])) {
+            const globalNum = offset + Number(ep.episode_number);
+            const still = tmdbStillUrl(ep.still_path);
+            if (still && !episodeStills[globalNum]) episodeStills[globalNum] = still;
+            if (!episodesByNum[globalNum]) {
+              episodesByNum[globalNum] = {
+                episode: globalNum, title: ep.name || "",
+                description: ep.overview || "", aired: ep.air_date || "", thumbnail: still
+              };
+            }
+          }
+        } catch { /* season unavailable — skip */ }
+      };
+      for (let i = 0; i < seasonJobs.length; i += 4) {
+        await Promise.allSettled(seasonJobs.slice(i, i + 4).map(fetchSeasonJob));
+      }
+      debug(`multi-season: ${Object.keys(episodeStills).length} global stills for ${idLabel} (${real.length} seasons)`);
     }
 
     return {

@@ -857,6 +857,25 @@ function handleRequest(request, response) {
 
   fs.readFile(filePath, (error, data) => {
     if (error) {
+      const acceptsHtml = String(request.headers.accept || "").includes("text/html");
+      const looksLikeAsset = path.extname(pathname) !== "";
+      if (request.method === "GET" && acceptsHtml && !looksLikeAsset) {
+        const indexPath = path.join(root, "index.html");
+        fs.readFile(indexPath, (indexError, indexData) => {
+          if (indexError) {
+            response.writeHead(404);
+            response.end("Not found");
+            return;
+          }
+          response.writeHead(200, {
+            ...SECURITY_HEADERS,
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store, max-age=0"
+          });
+          response.end(indexData);
+        });
+        return;
+      }
       response.writeHead(404);
       response.end("Not found");
       return;
@@ -1000,7 +1019,7 @@ async function handleImageProxy(url, response) {
   );
   const requestedQuality = Math.max(
     45,
-    Math.min(86, Number(url.searchParams.get("q") || IMAGE_PROXY_WEBP_QUALITY) || IMAGE_PROXY_WEBP_QUALITY)
+    Math.min(92, Number(url.searchParams.get("q") || IMAGE_PROXY_WEBP_QUALITY) || IMAGE_PROXY_WEBP_QUALITY)
   );
   let outputBuffer = originalBuffer;
   let outputType = contentType;

@@ -216,7 +216,11 @@ const state = {
   favorites: JSON.parse(localStorage.getItem("anime-tv-favorites") || "[]"),
   appLanguage: localStorage.getItem(APP_LANGUAGE_KEY) || "en",
   theme: localStorage.getItem(APP_THEME_KEY) || "dark",
-  uiPreferences: readUiPreferences()
+  uiPreferences: readUiPreferences(),
+  currentRouteInfo: null,
+  pendingRouteFocus: "",
+  pendingDeepLinkShowId: null,
+  pendingDeepLinkTarget: null
 };
 
 const TITLE_LANGUAGE_ROMAJI_MIGRATION_KEY = "animetv-title-language-romaji-v1";
@@ -2065,6 +2069,24 @@ function imageDeliveryUrl(url, width = 360, quality = 70) {
   }
 }
 
+// Builds a responsive srcset string so each device downloads an image sized for
+// its own viewport/DPR instead of one giant width for everyone. This keeps full
+// per-device sharpness while cutting bytes (and LCP) on smaller screens — the
+// proxy clamps width at 1920 and never upscales (withoutEnlargement).
+function imageDeliverySrcSet(url, widths, quality = 80) {
+  const raw = String(url || "").trim();
+  if (!raw) return "";
+  // Only same proxy-eligible hosts produce resized variants; otherwise srcset is
+  // pointless (imageDeliveryUrl returns the raw URL unchanged for every width).
+  const probe = imageDeliveryUrl(raw, widths[0], quality);
+  if (!probe.startsWith("./api/image") && !probe.startsWith("/api/image") && !probe.includes("/api/image")) {
+    return "";
+  }
+  return widths
+    .map((w) => `${imageDeliveryUrl(raw, w, quality)} ${w}w`)
+    .join(", ");
+}
+
 function getCarouselArtwork(show = {}) {
   const poster = String(show.image || show.poster || show.cover || "").trim();
   const candidates = [
@@ -2277,12 +2299,24 @@ function renderCarousel() {
   _carouselPaintedId = String(show.id || "");
 
   const art = carouselArtworkOrPoster(show);
-  const deliveredArt = imageDeliveryUrl(art, 960, 68);
+  // Full-bleed hero: serve a per-device width via srcset (mobile pulls ~768px,
+  // desktop up to 1920px) at the proxy's MAX quality (q92) so the showcase image
+  // is as crisp as the source allows, while still right-sized per device.
+  const HERO_WIDTHS = [768, 1024, 1280, 1600, 1920];
+  const HERO_QUALITY = 92;
+  const deliveredArt = imageDeliveryUrl(art, 1600, HERO_QUALITY);
+  const heroSrcSet = art ? imageDeliverySrcSet(art, HERO_WIDTHS, HERO_QUALITY) : "";
   carouselBackdrop.classList.toggle("has-banner", Boolean(art));
   carouselBackdrop.style.backgroundImage = "linear-gradient(135deg, #121733 0%, #1b1a3b 38%, #0b2637 100%)";
   if (carouselBackdropImage) {
     carouselBackdropImage.classList.toggle("has-banner", Boolean(art));
     if (art && carouselBackdropImage.getAttribute("src") !== deliveredArt) {
+      if (heroSrcSet) {
+        carouselBackdropImage.setAttribute("srcset", heroSrcSet);
+        carouselBackdropImage.setAttribute("sizes", "100vw");
+      } else {
+        carouselBackdropImage.removeAttribute("srcset");
+      }
       carouselBackdropImage.src = deliveredArt;
     } else if (!art) {
       carouselBackdropImage.src = "hero-backdrop-placeholder.webp?v=338";
@@ -2292,8 +2326,16 @@ function renderCarousel() {
   if (art) {
     let lcp = document.getElementById("lcpPreload");
     if (!lcp) { lcp = document.createElement("link"); lcp.id = "lcpPreload"; lcp.rel = "preload"; lcp.as = "image"; lcp.fetchPriority = "high"; document.head.appendChild(lcp); }
-    lcp.href = deliveredArt;
-    lcp.setAttribute("imagesizes", "100vw");
+    // Preload the SAME responsive candidates so the preloader fetches the exact
+    // file the <img> will use (no double download on mobile).
+    if (heroSrcSet) {
+      lcp.setAttribute("imagesrcset", heroSrcSet);
+      lcp.setAttribute("imagesizes", "100vw");
+      lcp.removeAttribute("href");
+    } else {
+      lcp.href = deliveredArt;
+      lcp.setAttribute("imagesizes", "100vw");
+    }
   }
   carouselTitle.textContent = getShowTitle(show);
   carouselText.textContent = simpleCarouselText(show);
@@ -2359,6 +2401,10 @@ document.addEventListener("error", (event) => {
         if (typeof ImageResolver !== "undefined" && ImageResolver.isImageFailed(next)) continue;
       } catch { /* resolver optional */ }
       img.dataset.imageFallbackIndex = String(index - 1);
+      // Drop srcset/sizes so the browser actually honours the fallback src
+      // (otherwise it keeps resolving the failed host from the responsive set).
+      img.removeAttribute("srcset");
+      img.removeAttribute("sizes");
       img.src = next;
       return;
     }
@@ -2806,6 +2852,162 @@ function trailerEmbedUrl(trailer) {
   return `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&mute=1&controls=0&loop=1&playlist=${id}&modestbranding=1&playsinline=1&rel=0&iv_load_policy=3&disablekb=1&fs=0&enablejsapi=1`;
 }
 
+const APP_ROUTES = ["home", "library", "schedule", "favorites", "settings", "anipub", "sources", "profile", "not-found"];
+const ROUTE_SLUG_ALIASES = {
+  "demon-slayer": ["kimetsu-no-yaiba", "kimetsu-no-yaiba-yuukaku-hen", "kimetsu-no-yaiba-katanakaji-no-sato-hen"],
+  "naruto": ["naruto", "naruto-shippuuden", "naruto-shippuden"],
+  "naruto-shippuden": ["naruto-shippuuden", "naruto-shippuden"],
+  "one-piece": ["one-piece"],
+  "bleach": ["bleach", "bleach-sennen-kessen-hen"]
+};
+
+function appRouter() {
+  return typeof window !== "undefined" ? window.ZenkaiRouter : null;
+}
+
+function routePathFor(route) {
+  return ({
+    home: "/",
+    library: "/browse",
+    schedule: "/schedule",
+    favorites: "/favorites",
+    settings: "/settings",
+    sources: "/sources",
+    profile: "/profile",
+    anipub: "/sources",
+    "not-found": "/404"
+  })[route] || "/";
+}
+
+function getShowSlug(show = {}) {
+  const router = appRouter();
+  const base = show.slug || show.routeSlug || show.romajiTitle || show.title?.romaji || show.title || show.englishTitle || show.id;
+  return router?.slugify ? router.slugify(base) : String(base || "anime").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function animePathForShow(show = {}) {
+  return `/anime/${encodeURIComponent(getShowSlug(show))}`;
+}
+
+function episodePathForShow(show = {}, seasonNumber = 1, episodeNumber = 1, seasonPart = "") {
+  const router = appRouter();
+  const ep = router?.episodeSlug
+    ? router.episodeSlug(seasonNumber, episodeNumber, seasonPart)
+    : `s${seasonNumber || 1}-e${episodeNumber || 1}`;
+  return `/watch/${encodeURIComponent(getShowSlug(show))}/${encodeURIComponent(ep)}`;
+}
+
+function findShowBySlugOrId(value) {
+  const wanted = String(value || "");
+  const wantedSlug = getShowSlug({ title: wanted, slug: wanted });
+  const acceptedSlugs = new Set([wanted, wantedSlug, ...(ROUTE_SLUG_ALIASES[wantedSlug] || [])].filter(Boolean));
+  const matches = (entry) => {
+    if (!entry) return false;
+    const entrySlug = getShowSlug(entry);
+    return String(entry.id) === wanted ||
+      getShowKey(entry) === wanted ||
+      acceptedSlugs.has(entrySlug) ||
+      (wantedSlug && entrySlug.startsWith(`${wantedSlug}-`));
+  };
+  let show = state.shows.find(matches);
+  if (show) return show;
+  show = (state.addonSections || []).flatMap((section) => section.items || []).find(matches);
+  if (show) return show;
+  if (state.av1Shows?.has(wanted)) return state.av1Shows.get(wanted);
+  for (const entry of state.av1Shows?.values?.() || []) {
+    if (matches(entry)) return entry;
+  }
+  return null;
+}
+
+function ensureNotFoundSection() {
+  let section = document.getElementById("not-found");
+  if (section) return section;
+  section = document.createElement("section");
+  section.id = "not-found";
+  section.className = "content-band is-hidden";
+  section.dataset.section = "not-found";
+  section.setAttribute("aria-hidden", "true");
+  section.innerHTML = `
+    <div class="section-heading">
+      <span></span>
+      <h2>Page Not Found</h2>
+    </div>
+    <p class="empty-state">This ZenkaiTV page does not exist yet.</p>
+  `;
+  document.querySelector("main")?.appendChild(section);
+  return section;
+}
+
+function updateRouteMeta(routeInfo = {}, show = null, target = {}) {
+  let title = routeInfo.title || "ZenkaiTV - Watch Anime Online";
+  let description = routeInfo.description || "Watch anime online in HD on ZenkaiTV.";
+  if (show) {
+    const showTitle = getShowTitle(show);
+    const ep = Number(target.episodeNumber || state.activeEpisode?.episode?.episode || 0);
+    if (routeInfo.name === "watch" && ep) {
+      title = `${showTitle} Episode ${ep} - ZenkaiTV`;
+      description = `Watch ${showTitle} episode ${ep} on ZenkaiTV.`;
+    } else {
+      title = `Watch ${showTitle} - ZenkaiTV`;
+      description = (show.description || `Watch ${showTitle} on ZenkaiTV.`).replace(/<[^>]+>/g, "").slice(0, 155);
+    }
+  }
+  document.title = title;
+  document.querySelector('meta[name="description"]')?.setAttribute("content", description);
+  document.querySelector('meta[property="og:title"]')?.setAttribute("content", title);
+  document.querySelector('meta[property="og:description"]')?.setAttribute("content", description);
+}
+
+function applyDiscoveryRoute(routeInfo = {}) {
+  if (routeInfo.name === "genre" && routeInfo.params?.genreName) state.libraryGenre = routeInfo.params.genreName;
+  if (routeInfo.name === "year" && routeInfo.params?.year) state.libraryYear = routeInfo.params.year;
+  if (routeInfo.name === "studio" && routeInfo.params?.studioName) state.search = routeInfo.params.studioName;
+  if (routeInfo.name === "seasonal" && routeInfo.params?.seasonName) {
+    state.libraryYear = routeInfo.params.year || "all";
+    state.search = routeInfo.params.seasonName || "";
+  }
+}
+
+function handleCleanRoute(routeInfo = appRouter()?.current?.()) {
+  if (!routeInfo) routeInfo = { name: "home", appRoute: "home", path: "/", params: {} };
+  state.currentRouteInfo = routeInfo;
+  state.pendingRouteFocus = routeInfo.focus || "";
+  updateRouteMeta(routeInfo);
+
+  if (routeInfo.name === "not-found") {
+    ensureNotFoundSection();
+    setRoute("not-found", { skipHistory: true });
+    return;
+  }
+
+  if (routeInfo.name === "login") {
+    setRoute("profile", { skipHistory: true });
+    document.querySelector("[data-auth-open]")?.click?.();
+    return;
+  }
+
+  if (["anime", "anime-seasons", "anime-season", "anime-episode", "watch"].includes(routeInfo.name)) {
+    const showId = routeInfo.params?.animeId || "";
+    const target = { ...(routeInfo.target || {}), skipHistory: true };
+    const show = findShowBySlugOrId(showId);
+    setRoute(routeInfo.appRoute || "home", { skipHistory: true });
+    if (show) {
+      state.pendingDeepLinkShowId = null;
+      state.pendingDeepLinkTarget = null;
+      updateRouteMeta(routeInfo, show, target);
+      openShow(show.id, target);
+    } else {
+      state.pendingDeepLinkShowId = showId;
+      state.pendingDeepLinkTarget = target;
+    }
+    return;
+  }
+
+  applyDiscoveryRoute(routeInfo);
+  setRoute(routeInfo.appRoute || "home", { skipHistory: true });
+}
+
 
 
 function cardTemplate(show, index = 0) {
@@ -2816,18 +3018,34 @@ function cardTemplate(show, index = 0) {
   const meta = cardMeta(show, isFavorite);
   const target = getCardTarget(show);
   const posterCandidates = getCardPosterCandidates(show);
-  const deliveredCandidates = posterCandidates.map((url) => imageDeliveryUrl(url, 180, 80));
+  const deliveredCandidates = posterCandidates.map((url) => imageDeliveryUrl(url, 400, 90));
   const posterUrl = deliveredCandidates[0] || "";
+  // Per-device poster sizing: a small card needs ~200px on a phone but ~400px on
+  // a retina desktop. srcset lets the browser pick, keeping cards crisp on every
+  // screen while mobile downloads far fewer bytes.
+  const posterSrcSet = posterCandidates.length
+    ? imageDeliverySrcSet(posterCandidates[0], [200, 280, 360, 400, 480], 90)
+    : "";
+  const srcsetAttr = posterSrcSet
+    ? ` srcset="${escapeHtml(posterSrcSet)}" sizes="(max-width: 760px) 30vw, 14vw"`
+    : "";
   const fallbackData = deliveredCandidates.length
     ? ` data-image-fallbacks="${escapeHtml(encodeURIComponent(JSON.stringify(deliveredCandidates)))}" data-image-fallback-index="0"`
     : "";
+  // Above-the-fold posters (first row or two of a rail) load eagerly with high
+  // priority so they appear immediately on first load instead of trickling in;
+  // the rest stay lazy to avoid hammering the image proxy.
+  const eager = Number(index) < 12;
+  const loadingAttrs = eager
+    ? `loading="eager" fetchpriority="high"`
+    : `loading="lazy" fetchpriority="low"`;
   const image = posterUrl
     ? `
-        <img referrerpolicy="no-referrer" class="thumb-poster" src="${escapeHtml(posterUrl)}" alt="" width="240" height="360" loading="lazy" decoding="async"${fallbackData}>
+        <img referrerpolicy="no-referrer" class="thumb-poster" src="${escapeHtml(posterUrl)}" alt="" width="240" height="360" ${loadingAttrs} decoding="async"${srcsetAttr}${fallbackData}>
       `
     : "";
   return `
-    <a class="show-card focusable" href="#anime/${encodeURIComponent(String(show.id))}" style="--card-index: ${index}" data-open-show="${escapeHtml(show.id)}" data-open-season="${target.seasonNumber}" data-open-episode="${target.episodeNumber}" aria-label="Open ${title}">
+    <a class="show-card focusable" href="${escapeHtml(animePathForShow(show))}" style="--card-index: ${index}" data-open-show="${escapeHtml(show.id)}" data-open-season="${target.seasonNumber}" data-open-episode="${target.episodeNumber}" aria-label="Open ${title}">
       <span class="thumb-art" style="${artStyle}">
         ${image}
         <span class="episode-pill">${cardEpisodeLabel(show)}</span>
@@ -2983,13 +3201,13 @@ function renderSchedule() {
         <h3>${fullDayName(day)}${isToday ? '<span class="schedule-today-badge">Today</span>' : ""}</h3>
         <div class="schedule-day-rail">
           ${shows.length ? shows.map((show) => `
-            <a class="schedule-item focusable" href="#anime/${encodeURIComponent(String(show.id))}" data-open-show="${escapeHtml(show.id)}" data-open-season="${getCardTarget(show).seasonNumber}" data-open-episode="${getCardTarget(show).episodeNumber}">
+            <a class="schedule-item focusable" href="${escapeHtml(animePathForShow(show))}" data-open-show="${escapeHtml(show.id)}" data-open-season="${getCardTarget(show).seasonNumber}" data-open-episode="${getCardTarget(show).episodeNumber}">
               <span class="schedule-thumb">
                 ${(() => {
                   const schedImg = show.image || show.images?.poster || show.images?.cover ||
                     show.coverImageLarge || show.cover || show.poster || show.thumbnail || "";
                   return schedImg
-                    ? `<img referrerpolicy="no-referrer" src="${escapeHtml(imageDeliveryUrl(schedImg, 240))}" alt="" width="160" height="90" loading="lazy" decoding="async">`
+                    ? `<img referrerpolicy="no-referrer" src="${escapeHtml(imageDeliveryUrl(schedImg, 360, 86))}" alt="" width="160" height="90" loading="lazy" decoding="async">`
                     : "";
                 })()}
                 <span>${cardEpisodeLabel(show)}</span>
@@ -4989,12 +5207,17 @@ function render() {
   wireRailButtons();
   syncRouteVisibility();
   refreshFocusables();
-  // A #anime/<id> deep link (opened in a fresh tab) waits here until the
-  // catalog has loaded that show, then opens its detail automatically.
+  // A clean /anime/<slug> or /watch/<slug>/<episode> deep link may arrive before
+  // the catalog has loaded. Wait here until that show exists, then open it.
   if (state.pendingDeepLinkShowId && deepLinkShowExists(state.pendingDeepLinkShowId)) {
-    const id = state.pendingDeepLinkShowId;
+    const show = findShowBySlugOrId(state.pendingDeepLinkShowId);
+    const target = state.pendingDeepLinkTarget || { skipHistory: true };
     state.pendingDeepLinkShowId = null;
-    openShow(id);
+    state.pendingDeepLinkTarget = null;
+    if (show) {
+      updateRouteMeta(state.currentRouteInfo || {}, show, target);
+      openShow(show.id, { ...target, skipHistory: true });
+    }
   }
 }
 
@@ -5011,13 +5234,27 @@ function wireRailButtons() {
   });
 }
 
-function setRoute(route) {
+let _routeHistoryInit = false;
+function setRoute(route, options = {}) {
   // Weekly Schedule is hidden in 18+ mode — send those navigations Home instead.
   if (route === "schedule" && typeof AdultMode !== "undefined" && AdultMode.isEnabled()) {
     route = "home";
   }
+  if (!APP_ROUTES.includes(route)) route = "not-found";
   state.route = route;
   document.body.dataset.route = route;
+  if (!options.skipHistory) {
+    const path = routePathFor(route);
+    const router = appRouter();
+    if (router?.navigate) {
+      router.navigate(path, { replace: !_routeHistoryInit, silent: true });
+    } else if (location.pathname !== path) {
+      history[_routeHistoryInit ? "pushState" : "replaceState"](null, "", path);
+    }
+    state.currentRouteInfo = router?.parsePath ? router.parsePath(location.pathname) : state.currentRouteInfo;
+    updateRouteMeta(state.currentRouteInfo || { name: route, title: document.title });
+  }
+  _routeHistoryInit = true;
   // Returning Home starts fresh: clear any active search so Home shows the full
   // Latest Episodes instead of a filtered leftover from the Search tab.
   const clearedSearch = route === "home" && Boolean(state.search);
@@ -5029,7 +5266,7 @@ function setRoute(route) {
     document.querySelectorAll(".search-box .search-clear").forEach((c) => { c.hidden = true; });
   }
   document.querySelectorAll(".nav-link").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.route === route);
+    button.classList.toggle("is-active", button.dataset.route === route || (route === "not-found" && button.dataset.route === "home"));
   });
 
   syncRouteVisibility();
@@ -5044,7 +5281,7 @@ function setRoute(route) {
 }
 
 function syncRouteVisibility() {
-  sections.forEach((section) => {
+  document.querySelectorAll("[data-section]").forEach((section) => {
     if (section.id === "continueWatching" || section.id === "continueWatchingAdult") {
       const isHome = state.route === "home";
       if (!isHome) {
@@ -5068,6 +5305,12 @@ function syncRouteVisibility() {
 
 function scrollToRoute(route) {
   window.requestAnimationFrame(() => {
+    const target = state.pendingRouteFocus ? document.getElementById(state.pendingRouteFocus) : null;
+    if (target && !target.classList.contains("is-hidden")) {
+      target.scrollIntoView({ block: "start", behavior: "smooth" });
+      state.pendingRouteFocus = "";
+      return;
+    }
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
 }
@@ -5091,17 +5334,25 @@ async function openShow(id, target = {}) {
     if (!state.shows.some((entry) => entry.id === show.id)) state.shows = [...state.shows, show];
   }
   if (!show) return;
+  if (!target.skipHistory) {
+    const path = target.playIntent && target.episodeNumber
+      ? episodePathForShow(show, target.seasonNumber || extractSeasonNumber(show.title, 1), target.episodeNumber, target.seasonPart || "")
+      : animePathForShow(show);
+    appRouter()?.navigate?.(path, { silent: true });
+    state.currentRouteInfo = appRouter()?.parsePath?.(location.pathname) || state.currentRouteInfo;
+  }
   state.activeShow = show;
   state.activeEpisodeUrl = "";
   state.activeEpisode = null;
   // Metadata now lives on the cinematic left column, so the right panel opens
   // straight to the episode list (matches the reference composition).
-  state.activeDetailTab = "episodes";
+  state.activeDetailTab = target.tab === "seasons" ? "seasons" : "episodes";
   state.activeSeasonIndex = 0;
   state.activeEpisodeChunkIndex = 0;
   state.detailTabSwitched = true;
   const openToken = `${show.id || getShowKey(show)}:${Date.now()}`;
   state.activeOpenToken = openToken;
+  updateRouteMeta(state.currentRouteInfo || {}, show, target);
 
   // ── Kick off image prefetches NOW so poster/backdrop are in the browser cache
   //    by the time the overlay DOM is ready (avoids the blank-poster delay).
@@ -5573,13 +5824,21 @@ async function hydrateAniPubEpisodes(show) {
 
 function applyOpenTarget(show, target = {}) {
   const seasonNumber = Number(target.seasonNumber || extractSeasonNumber(show.title, 1));
+  const seasonPart = target.seasonPart ? Number(target.seasonPart) : "";
   const episodeNumber = Number(target.episodeNumber || show.episode);
   const hasEpisodeTarget = Number.isFinite(episodeNumber) && episodeNumber > 0;
   const hasSeasonTarget = Number.isFinite(seasonNumber) && seasonNumber > 1;
   if (!hasEpisodeTarget && !hasSeasonTarget) return;
 
   const seasons = getDetailSeasons(show);
-  const seasonIndex = Math.max(0, seasons.findIndex((season) => Number(season.season) === seasonNumber));
+  let seasonIndex = seasons.findIndex((season) => {
+    if (Number(season.season) !== seasonNumber) return false;
+    if (!seasonPart) return true;
+    const partText = `${season.part || ""} ${season.formatBadge || ""} ${season.title || ""}`.toLowerCase();
+    return Number(season.part) === seasonPart || partText.includes(`part ${seasonPart}`) || partText.includes(`part-${seasonPart}`);
+  });
+  if (seasonIndex < 0) seasonIndex = seasons.findIndex((season) => Number(season.season) === seasonNumber);
+  seasonIndex = Math.max(0, seasonIndex);
   const activeSeason = seasons[seasonIndex] || seasons[0];
   state.activeSeasonIndex = seasonIndex;
   state.activeDetailTab = "episodes";
@@ -5598,6 +5857,11 @@ function applyOpenTarget(show, target = {}) {
 
 function closeShow() {
   if (overlay.classList.contains("is-closing")) return;
+  if (/^\/(?:anime|watch)\//.test(location.pathname)) {
+    appRouter()?.replace?.(routePathFor(state.route === "not-found" ? "home" : state.route), { silent: true });
+    state.currentRouteInfo = appRouter()?.parsePath?.(location.pathname) || state.currentRouteInfo;
+    updateRouteMeta(state.currentRouteInfo || {});
+  }
   stopActivePlayback();
   document.body.classList.remove("player-cinema-open");
   document.body.classList.remove("has-embedded-player");
@@ -6390,6 +6654,7 @@ function renderEpisodeList(show) {
             repeatedImages.has(compSrc) ||
             showLevelArt.has(compSrc)
           );
+          const finalEpImgSrc = isFallback ? "" : epImgSrc;
 
           const epFallbackData = epFallbacks.length
             ? ` data-image-fallbacks="${escapeHtml(encodeURIComponent(JSON.stringify(epFallbacks)))}" data-image-fallback-index="0"`
@@ -6415,8 +6680,8 @@ function renderEpisodeList(show) {
           <button class="ep-row focusable ${locked ? "is-locked" : ""} ${selected ? "is-selected" : ""} ${watchCls}"
                   data-season-index="${state.activeSeasonIndex}" data-episode-index="${episodeIndex}"
                   data-ep-search="${escapeHtml(search)}">
-            <span class="ep-thumb ${epImgSrc ? "has-image" : "is-placeholder"}${isFallback ? " is-fallback" : ""}" style="--episode-hue:${fallbackHue}">
-              ${epImgSrc ? `<img referrerpolicy="no-referrer" class="ep-thumb-img" src="${escapeHtml(epImgSrc)}" alt="" loading="lazy" decoding="async"${epFallbackData}>` : ""}
+            <span class="ep-thumb ${finalEpImgSrc ? "has-image" : "is-placeholder"}${isFallback ? " is-fallback" : ""}" style="--episode-hue:${fallbackHue}">
+              ${finalEpImgSrc ? `<img referrerpolicy="no-referrer" class="ep-thumb-img" src="${escapeHtml(finalEpImgSrc)}" alt="" loading="lazy" decoding="async"${epFallbackData}>` : ""}
               <span class="ep-thumb-num">${escapeHtml(String(num))}</span>
               <span class="ep-thumb-play" aria-hidden="true">▶</span>
               ${progressBar}
@@ -7021,13 +7286,50 @@ function setPlayerCinema(container, enabled, options = {}) {
   if (!options.silent) showToast(enabled ? "Cinema mode" : "Normal player");
 }
 
-function toggleNativeFullscreen(el) {
-  const isFs = Boolean(
+// True when the Fullscreen API put us in fullscreen (in-app button / player).
+function isApiFullscreen() {
+  return Boolean(
     document.fullscreenElement ||
     document.webkitFullscreenElement ||
     document.mozFullScreenElement ||
     document.msFullscreenElement
   );
+}
+
+// True when the *browser* is fullscreen via F11 (separate from the Fullscreen
+// API — it never sets document.fullscreenElement and never fires
+// fullscreenchange). Modern browsers expose F11 through the display-mode media
+// query; we keep a viewport≈screen size check as a fallback for the rest.
+function isBrowserNativeFullscreen() {
+  if (isApiFullscreen()) return false;
+  try {
+    if (window.matchMedia && window.matchMedia("(display-mode: fullscreen)").matches) return true;
+  } catch (e) {}
+  // Fallback heuristic: the window covers (almost) the whole screen and there is
+  // no browser chrome height. Tolerance covers rounding / sub-pixel differences.
+  try {
+    const noChrome = (window.outerHeight - window.innerHeight) <= 1;
+    const fillsScreen = Math.abs(window.innerHeight - screen.height) <= 2;
+    return noChrome && fillsScreen;
+  } catch (e) {}
+  return false;
+}
+
+// True for either kind of fullscreen — used to drive the toggle button state.
+function isAnyFullscreen() {
+  return isApiFullscreen() || isBrowserNativeFullscreen();
+}
+
+function toggleNativeFullscreen(el) {
+  const isFs = isApiFullscreen();
+
+  // F11 browser fullscreen can't be exited from JS (only the user can, via
+  // F11 / Esc). Detect it so the button gives a useful hint instead of trying
+  // to re-enter fullscreen on top of it.
+  if (!isFs && isBrowserNativeFullscreen()) {
+    showToast("Press F11 or Esc to exit fullscreen.");
+    return;
+  }
 
   if (isFs) {
     const exitFs = (
@@ -8673,6 +8975,13 @@ function selectEpisodeByPosition(seasonIndex, episodeIndex, shouldPlay = true) {
   state.activeEpisode = { season, episode, seasonIndex, episodeIndex };
   state.activeEpisodeUrl = getEpisodeUrl(episode);
   state.activeEpisodeChunkIndex = Math.floor(episodeIndex / 100);
+  if (state.activeShow) {
+    const seasonNumber = season?.season || seasonIndex + 1 || 1;
+    const episodeNumber = episode?.episode || episodeIndex + 1 || 1;
+    appRouter()?.navigate?.(episodePathForShow(state.activeShow, seasonNumber, episodeNumber, season.part || ""), { silent: true });
+    state.currentRouteInfo = appRouter()?.parsePath?.(location.pathname) || state.currentRouteInfo;
+    updateRouteMeta(state.currentRouteInfo || {}, state.activeShow, { seasonNumber, episodeNumber });
+  }
   if (episode._failedSourceIds) {
     episode._failedSourceIds.clear();
   }
@@ -11336,7 +11645,7 @@ function wireOpenButtons() {
     button.addEventListener("pointerenter", preload, { once: true, passive: true });
     button.addEventListener("focus", preload, { once: true, passive: true });
     button.onclick = (e) => {
-      // The card is now an <a href="#anime/<id>">. Modified clicks (Ctrl/Cmd/
+      // The card is now an <a href="/anime/<slug>">. Modified clicks (Ctrl/Cmd/
       // Shift) and middle-click let the browser open that link in a NEW TAB
       // natively — don't hijack those. Plain left-click = in-app navigation.
       if (e && (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) return;
@@ -11535,7 +11844,26 @@ document.querySelectorAll("[data-library-letter]").forEach((button) => {
   });
 });
 
-document.querySelector("#libraryApplyFilters")?.addEventListener("click", () => {
+document.querySelector("#libraryResetFilters")?.addEventListener("click", () => {
+  // Clear every library filter back to its default and re-render. Filtering is
+  // already live on each control's change, so there is no separate "apply".
+  state.libraryLetter = "all";
+  state.libraryType = "all";
+  state.libraryGenre = "all";
+  state.libraryYear = "all";
+  state.libraryStatus = "all";
+  state.librarySort = "default";
+  // Reset the letter row selection back to "#".
+  document.querySelectorAll("[data-library-letter]").forEach((letter) => {
+    letter.classList.toggle("is-selected", letter.dataset.libraryLetter === "all");
+  });
+  // Reset every dropdown to its first option.
+  ["#libraryTypeFilter", "#libraryGenreFilter", "#libraryYearFilter", "#libraryStatusFilter"].forEach((sel) => {
+    const el = document.querySelector(sel);
+    if (el) el.value = "all";
+  });
+  const sortEl = document.querySelector("#librarySortFilter");
+  if (sortEl) sortEl.value = "default";
   render();
 });
 
@@ -11728,14 +12056,13 @@ trailerButton?.addEventListener("click", () => {
 });
 
 // Build a shareable deep link to a specific anime, e.g.
-// https://zenkaitv.com/#anime/<id> — opened by parseAnimeDeepLink on load.
+// https://zenkaitv.com/anime/naruto.
 function buildAnimeShareUrl(show) {
-  const id = encodeURIComponent(String(show?.id || ""));
-  if (!id) return "https://zenkaitv.com";
+  if (!show) return "https://zenkaitv.com";
   const base = /^https?:\/\/(localhost|127\.|192\.168\.|\[?::1)/i.test(location.origin)
     ? "https://zenkaitv.com"   // never share a localhost link
     : location.origin;
-  return `${base}/#anime/${id}`;
+  return `${base}${animePathForShow(show)}`;
 }
 
 // Copy text to the clipboard, with a legacy execCommand fallback for browsers
@@ -11790,20 +12117,44 @@ shareButton?.addEventListener("click", async () => {
 // document-level fullscreen helper; the icon swaps via the body class below.
 const fullscreenToggle = document.querySelector("#fullscreenToggle");
 fullscreenToggle?.addEventListener("click", toggleNativeFullscreen);
-["fullscreenchange", "webkitfullscreenchange"].forEach((evt) =>
-  document.addEventListener(evt, () => {
-    const active = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
-    document.body.classList.toggle("is-fullscreen", active);
-    if (fullscreenToggle) {
-      fullscreenToggle.setAttribute("aria-label", active ? "Exit fullscreen" : "Toggle fullscreen");
-      fullscreenToggle.dataset.tip = active ? "Exit fullscreen" : "Fullscreen";
-      // Replay the pulse animation on each toggle.
+
+let _lastFullscreenActive = null;
+function syncFullscreenToggleState() {
+  // Reflects EITHER Fullscreen-API fullscreen (in-app button / player) OR
+  // browser-native F11 fullscreen, so the button icon + label stay correct.
+  const active = isAnyFullscreen();
+  document.body.classList.toggle("is-fullscreen", active);
+  if (fullscreenToggle) {
+    fullscreenToggle.setAttribute("aria-label", active ? "Exit fullscreen" : "Toggle fullscreen");
+    fullscreenToggle.dataset.tip = active ? "Exit fullscreen" : "Fullscreen";
+    // Only replay the pulse when the state actually flips (avoid spurious
+    // pulses from resize events that don't change fullscreen state).
+    if (active !== _lastFullscreenActive) {
       fullscreenToggle.classList.remove("fs-pulse");
       requestAnimationFrame(() => fullscreenToggle.classList.add("fs-pulse"));
       window.setTimeout(() => fullscreenToggle.classList.remove("fs-pulse"), 480);
     }
-  })
+  }
+  _lastFullscreenActive = active;
+}
+["fullscreenchange", "webkitfullscreenchange", "mozfullscreenchange", "MSFullscreenChange"].forEach((evt) =>
+  document.addEventListener(evt, syncFullscreenToggleState)
 );
+// F11 browser fullscreen never fires fullscreenchange. Modern browsers surface
+// it through the display-mode media query; resize is the cross-browser fallback.
+try {
+  const _fsMedia = window.matchMedia("(display-mode: fullscreen)");
+  (_fsMedia.addEventListener
+    ? _fsMedia.addEventListener.bind(_fsMedia, "change")
+    : _fsMedia.addListener.bind(_fsMedia))(syncFullscreenToggleState);
+} catch (e) {}
+let _fsResizeRaf = 0;
+window.addEventListener("resize", () => {
+  if (_fsResizeRaf) cancelAnimationFrame(_fsResizeRaf);
+  _fsResizeRaf = requestAnimationFrame(syncFullscreenToggleState);
+});
+// Initial sync in case the app loads while already in F11 fullscreen.
+syncFullscreenToggleState();
 
 // Flush the current playback position when the tab is hidden or the app closes,
 // so an abrupt exit (TV home button, tab close) still records where you were.
@@ -12486,46 +12837,24 @@ async function syncFavoritesFromDatabase() {
 }
 
 render();
-// Deep-link support: open the route named in the URL hash (e.g. #settings).
-const VALID_ROUTES = ["home", "library", "schedule", "favorites", "settings", "anipub", "sources", "profile"];
-
-// #anime/<id> opens that anime's detail directly. Used by right-click →
-// "Open in new tab" / middle-click / Ctrl-click on cards, so each anime can
-// live in its own browser tab. A fresh tab may load before the catalog has
-// that show, so remember the id and let render() open it once it's available.
-function parseAnimeDeepLink(hash) {
-  const m = (hash || "").replace(/^#/, "").match(/^anime\/(.+)$/);
-  return m ? decodeURIComponent(m[1]) : "";
-}
 function deepLinkShowExists(id) {
-  const wanted = String(id || "");
-  if (!wanted) return false;
-  if (state.shows.some((s) => String(s.id) === wanted || getShowKey(s) === wanted)) return true;
-  if (state.av1Shows && state.av1Shows.has(wanted)) return true;
-  return (state.addonSections || []).some((sec) =>
-    (sec.items || []).some((s) => String(s.id) === wanted || getShowKey(s) === wanted));
+  return Boolean(findShowBySlugOrId(id));
 }
 function openAnimeDeepLink(id) {
-  const wanted = String(id || "");
-  if (!wanted) return;
-  if (deepLinkShowExists(wanted)) {
+  const show = findShowBySlugOrId(id);
+  if (show) {
     state.pendingDeepLinkShowId = null;
-    openShow(wanted);
+    state.pendingDeepLinkTarget = null;
+    openShow(show.id, { skipHistory: true });
   } else {
-    state.pendingDeepLinkShowId = wanted;
+    state.pendingDeepLinkShowId = String(id || "");
+    state.pendingDeepLinkTarget = { skipHistory: true };
   }
 }
 
-const _hashRoute = (location.hash || "").replace(/^#/, "");
-const _deepLinkId = parseAnimeDeepLink(location.hash);
-setRoute(VALID_ROUTES.includes(_hashRoute) ? _hashRoute : "home");
-if (_deepLinkId) state.pendingDeepLinkShowId = _deepLinkId;
-window.addEventListener("hashchange", () => {
-  const dl = parseAnimeDeepLink(location.hash);
-  if (dl) { openAnimeDeepLink(dl); return; }
-  const r = (location.hash || "").replace(/^#/, "");
-  if (VALID_ROUTES.includes(r) && r !== state.route) setRoute(r);
-});
+window.addEventListener("zenkaitv:route", (event) => handleCleanRoute(event.detail));
+const migratedRoute = appRouter()?.migrateHashRoute?.();
+handleCleanRoute(migratedRoute || appRouter()?.current?.() || { name: "home", appRoute: "home", path: "/", params: {} });
 applySidebarState();
 applyUiPreferences();
 setupTvTextInputs();

@@ -20,7 +20,7 @@ const ImageResolver = (function () {
   "use strict";
 
   const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
-  const MATCH_CACHE_PREFIX = "zenkaitv:tmdb-match:v10:";
+  const MATCH_CACHE_PREFIX = "zenkaitv:tmdb-match:v11:";
   const MATCH_CACHE_TTL_MS = 1000 * 60 * 60 * 24; // Refresh airing episode stills daily.
   const FAILED_CACHE_KEY = "zenkaitv:img-failed:v1";
   const FAILED_CACHE_MAX = 400;
@@ -531,11 +531,11 @@ const ImageResolver = (function () {
         _globalOffset += Number(s.episode_count || 0);
         return { s, offset };
       });
-      await Promise.allSettled(seasonJobs.map(async ({ s, offset }) => {
+      const fetchSeasonJob = async ({ s, offset }) => {
         try {
           const r = await fetchWithTimeout(
             `./api/tmdb/season?id=${encodeURIComponent(tmdbId)}&season=${encodeURIComponent(s.season_number)}`,
-            { cache: "no-store" }, 8000
+            { cache: "no-store" }, 10000
           );
           const payload = r.ok ? await r.json() : null;
           for (const ep of (payload?.season?.episodes || [])) {
@@ -550,7 +550,10 @@ const ImageResolver = (function () {
             }
           }
         } catch { /* season unavailable — skip */ }
-      }));
+      };
+      for (let i = 0; i < seasonJobs.length; i += 4) {
+        await Promise.allSettled(seasonJobs.slice(i, i + 4).map(fetchSeasonJob));
+      }
       debug(`multi-season: ${Object.keys(episodeStills).length} global stills for ${idLabel} (${real.length} seasons)`);
     }
 
