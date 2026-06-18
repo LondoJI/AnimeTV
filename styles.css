@@ -7032,18 +7032,28 @@ body.reduce-motion .watch-overlay.is-closing .watch-panel {
 
 @media (max-width: 760px) {
   .rail-shell {
-    grid-template-columns: 2.4rem minmax(0, 1fr) 2.4rem;
+    grid-template-columns: 1fr;
     gap: 0.45rem;
   }
 
+  /* Phones: show ~3 reasonably-sized cards per view and scroll the rest with
+     smooth scroll-snap, instead of cramming 7 tiny cards across the screen. */
   .rail-shell .poster-grid {
-    grid-auto-columns: calc((100% - (6 * var(--rail-gap))) / 7);
+    grid-auto-columns: clamp(7.5rem, 31vw, 9.5rem);
+    grid-column: 1;
+    scroll-snap-type: x proximity;
+    scroll-padding-left: 0.2rem;
+    -webkit-overflow-scrolling: touch;
   }
 
+  .rail-shell .poster-grid > .show-card {
+    scroll-snap-align: start;
+  }
+
+  /* The floating prev/next arrows are pointless on touch — hide them and let the
+     rail scroll naturally so cards use the full width. */
   .rail-arrow {
-    width: 2rem;
-    height: 4rem;
-    margin-top: 0;
+    display: none;
   }
 }
 
@@ -9874,3 +9884,96 @@ body.is-tv .topbar-auth {
   pointer-events: none;
 }
 
+
+/* ============================================================================
+   PHONE BOTTOM NAVIGATION  (<= 760px)
+   The left sidebar (.topbar) is repositioned into a fixed bottom navigation bar
+   so phones get the full screen width. The HTML is unchanged — these are the
+   same .nav-link route buttons, just laid out horizontally. Selectors also list
+   the body.sidebar-collapsed variants (matched specificity, later in source
+   order) so the bottom bar wins regardless of the persisted sidebar state.
+   ========================================================================== */
+@media (max-width: 760px) {
+  .app-shell,
+  body.sidebar-collapsed .app-shell {
+    padding: 0 0 calc(4.9rem + env(safe-area-inset-bottom, 0px)) 0;
+  }
+
+  .topbar,
+  body.sidebar-collapsed .topbar {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    min-height: 0;
+    height: auto;
+    display: block;
+    padding: 0.3rem 0.35rem calc(0.3rem + env(safe-area-inset-bottom, 0px));
+    background: linear-gradient(0deg, rgba(7, 9, 18, 0.99), rgba(9, 12, 23, 0.95));
+    border-top: 0.08rem solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 -0.5rem 1.6rem rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(18px) saturate(1.1);
+  }
+
+  /* Only the route links belong in the bottom bar. */
+  .topbar .brand,
+  .topbar .sidebar-toggle,
+  .topbar .search-box {
+    display: none;
+  }
+
+  .main-nav,
+  body.sidebar-collapsed .main-nav {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    justify-content: space-around;
+    width: 100%;
+    margin: 0;
+    gap: 0.15rem;
+    overflow: visible;
+  }
+
+  .nav-link,
+  body.sidebar-collapsed .nav-link {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 3.4rem;          /* >= 44px touch target */
+    gap: 0.16rem;
+    padding: 0.3rem 0.1rem;
+    font-size: 0.6rem;
+    border-radius: 0.85rem;
+  }
+
+  .nav-link span,
+  body.sidebar-collapsed .nav-link span {
+    font-size: 1.34rem;
+  }
+
+  /* Footer no longer needs the old sidebar offset once the bar is at the bottom. */
+  body.sidebar-collapsed .bottom-bar {
+    margin-left: 0;
+    padding-left: clamp(1rem, 4vw, 1.5rem);
+  }
+}
+
+/* Hero full-bleed must stop exactly at the screen edges on phones. The desktop
+   negative margins bleed ~10px past the viewport and caused a tiny horizontal
+   scroll; the 100vw break-out is exact regardless of main's side padding. */
+@media (max-width: 760px) {
+  .hero {
+    width: 100vw;
+    max-width: 100vw;
+    margin-left: calc(50% - 50vw);
+    margin-right: calc(50% - 50vw);
+  }
+}
+
+/* Tablets (761–1024px): roomier rails — ~5 cards per view instead of the
+   desktop 7, so posters stay legible without feeling cramped. */
+@media (min-width: 761px) and (max-width: 1024px) {
+  .rail-shell .poster-grid {
+    grid-auto-columns: calc((100% - (4 * var(--rail-gap))) / 5);
+  }
+}
