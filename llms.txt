@@ -1,0 +1,27 @@
+# ZenkaiTV
+
+ZenkaiTV is an anime streaming discovery interface. Browse, search, and stream anime episodes in HD across multiple sources.
+
+## Main Pages
+
+- [Home](https://zenkaitv.com/)
+- [Anime Catalog / Search](https://zenkaitv.com/#library)
+- [Weekly Schedule](https://zenkaitv.com/#schedule)
+- [Favorites](https://zenkaitv.com/#favorites)
+- [Settings](https://zenkaitv.com/#settings)
+
+## Features
+
+- Multi-source anime streaming with automatic quality selection
+- HD streaming with subtitle support
+- Weekly airing schedule
+- Continue watching progress tracking
+- Favorites and watchlist management
+- Dark mode optimized UI for TV, desktop, and mobile
+
+## Notes for AI Agents
+
+- Public pages (home, catalog, schedule) may be crawled.
+- API routes (`/api/*`) should **not** be crawled or indexed.
+- The site is a single-page application; all routes resolve to `index.html`.
+- Content is loaded dynamically from AniList and Jikan APIs.

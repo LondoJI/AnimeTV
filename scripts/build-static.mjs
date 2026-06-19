@@ -22,7 +22,12 @@ const files = [
   "logo-round-192.webp",
   "hero-backdrop-placeholder.webp",
   "favicon-32.png",
-  "service-worker.js"
+  "service-worker.js",
+  // Crawler / SEO files — must be copied into the build output (dist) or Vercel's
+  // SPA rewrite (/(.*) -> /index.html) serves index.html for them instead.
+  "robots.txt",
+  "llms.txt",
+  "sitemap.xml"
 ];
 
 const outDirs = ["dist", "public"];

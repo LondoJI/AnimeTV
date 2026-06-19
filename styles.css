@@ -1509,9 +1509,23 @@ body:not([data-route="home"]) .section-heading h2 {
 .skeleton-card .show-meta {
   position: relative;
   overflow: hidden;
-  background: linear-gradient(100deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.06));
-  background-size: 220% 100%;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* Composited shimmer: sweep a gradient overlay with transform (GPU) instead of
+   animating background-position, which forced a full repaint every frame on
+   every skeleton card during catalog load. */
+.skeleton-card .thumb-art::after,
+.carousel-poster-skeleton::after,
+.skeleton-card .show-title::after,
+.skeleton-card .show-meta::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 25%, rgba(255, 255, 255, 0.14) 50%, transparent 75%);
+  transform: translateX(-100%);
   animation: skeleton-sheen 1150ms ease-in-out infinite;
+  will-change: transform;
 }
 
 .skeleton-card .show-title,
@@ -1573,6 +1587,42 @@ body:not([data-route="home"]) .section-heading h2 {
 
 .thumb-art::after {
   transition: opacity 220ms ease;
+}
+
+/* Branded placeholder when poster image fails to load — shows a subtle "Z"
+   centered over the card's gradient background (defined on .thumb-art). */
+.thumb-fallback-mark {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.thumb-fallback-mark::before {
+  content: "Z";
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 2.4rem;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.12);
+  text-shadow: 0 0.15rem 0.8rem rgba(0, 210, 255, 0.08);
+}
+
+/* Episode thumbnail placeholder (no image available) */
+.ep-thumb.is-placeholder {
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, rgba(13, 27, 42, 0.9), rgba(18, 23, 51, 0.8));
+  border: 0.06rem solid rgba(255, 255, 255, 0.06);
+}
+.ep-thumb.is-placeholder::before {
+  content: "Z";
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.1rem;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.08);
 }
 
 .thumb-poster {
@@ -5852,6 +5902,22 @@ body.player-cinema-open .close-button {
     overflow-x: hidden;
   }
 
+  /* On mobile the panel stacks vertically (player then episodes/sources).
+     Desktop fixed-height + top-margin would clip the side panel off-screen. */
+  .watch-side {
+    margin: 0;
+    height: auto;
+    max-height: none;
+    border-radius: 0.8rem;
+    overflow-y: visible;
+  }
+
+  .watch-side .episode-list {
+    height: auto;
+    max-height: 22rem;
+    overflow-y: auto;
+  }
+
   .watch-info {
     overflow-y: visible;
     padding: 0.5rem 0.5rem 1rem 0.5rem;
@@ -6325,13 +6391,13 @@ body.player-cinema-open .close-button {
   position: absolute;
   left: clamp(2rem, 5vw, 5.2rem);
   right: clamp(2rem, 5vw, 5.2rem);
-  bottom: 1.45rem;
+  bottom: 1.2rem;
   z-index: 4;
   display: flex;
-  gap: 0.65rem;
+  gap: 0.55rem;
   align-items: center;
   overflow-x: auto;
-  padding: 0.25rem 0;
+  padding: 0.35rem 0;
   scrollbar-width: none;
   mask-image: linear-gradient(90deg, transparent 0, #000 1rem, #000 calc(100% - 1rem), transparent 100%);
 }
@@ -6342,16 +6408,16 @@ body.player-cinema-open .close-button {
 
 .carousel-dot {
   flex: 0 0 auto;
-  width: 4rem;
-  height: 2.55rem;
+  width: 7.2rem;
+  height: 4.05rem;
   padding: 0;
   overflow: hidden;
-  border: 0.1rem solid rgba(255, 255, 255, 0.16);
-  border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.08);
+  border: 0.12rem solid rgba(255, 255, 255, 0.14);
+  border-radius: 0.55rem;
+  background: rgba(255, 255, 255, 0.06);
   cursor: pointer;
-  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
-  opacity: 0.72;
+  transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease, opacity 200ms ease;
+  opacity: 0.7;
 }
 
 .carousel-dot img,
@@ -6367,9 +6433,9 @@ body.player-cinema-open .close-button {
 }
 
 .carousel-dot:is(:hover, :focus-visible, .is-tv-focused, .is-selected) {
-  transform: translateY(-0.06rem);
-  border-color: rgba(255, 255, 255, 0.82);
-  box-shadow: 0 0.55rem 1.1rem rgba(0, 0, 0, 0.28), 0 0 0 0.14rem rgba(0, 210, 255, 0.16);
+  transform: translateY(-0.1rem) scale(1.04);
+  border-color: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 0.5rem 1.4rem rgba(0, 0, 0, 0.35), 0 0 0 0.15rem rgba(0, 210, 255, 0.22);
   opacity: 1;
 }
 
@@ -6529,11 +6595,11 @@ body.player-cinema-open .close-button {
   0%,
   100% {
     transform: scale(1);
-    filter: brightness(1);
+    opacity: 0.82;
   }
   50% {
     transform: scale(1.04);
-    filter: brightness(1.12);
+    opacity: 1;
   }
 }
 
@@ -6550,10 +6616,10 @@ body.player-cinema-open .close-button {
 
 @keyframes skeleton-sheen {
   0% {
-    background-position: 120% 0;
+    transform: translateX(-100%);
   }
   100% {
-    background-position: -120% 0;
+    transform: translateX(100%);
   }
 }
 
@@ -6683,14 +6749,19 @@ body.reduce-motion .watch-overlay.is-closing .watch-panel {
   }
 
   .carousel-stage {
-    height: 30rem;
+    height: 31rem;
+    min-height: 31rem;
   }
 }
 
 @media (max-width: 760px) {
   .carousel-stage {
     grid-template-columns: 1fr;
-    height: 30rem;
+    /* Fixed height (matches the inline critical CSS exactly) so the
+       is-loading -> loaded transition and slide changes never resize the hero
+       and shove the rails below it. height == min-height == 31rem keeps CLS ~0. */
+    height: 31rem;
+    min-height: 31rem;
   }
 
   .carousel-info {
@@ -9958,15 +10029,16 @@ body.is-tv .topbar-auth {
   }
 }
 
-/* Hero full-bleed must stop exactly at the screen edges on phones. The desktop
-   negative margins bleed ~10px past the viewport and caused a tiny horizontal
-   scroll; the 100vw break-out is exact regardless of main's side padding. */
+/* Hero full-bleed on phones: bleed exactly to main's 1rem side padding (edge to
+   edge of the content column). Using negative margins instead of 100vw avoids a
+   scrollbar-width horizontal overflow on viewports that render a classic
+   scrollbar (100vw includes the scrollbar gutter; the content box does not). */
 @media (max-width: 760px) {
   .hero {
-    width: 100vw;
-    max-width: 100vw;
-    margin-left: calc(50% - 50vw);
-    margin-right: calc(50% - 50vw);
+    width: auto;
+    max-width: none;
+    margin-left: -1rem;
+    margin-right: -1rem;
   }
 }
 

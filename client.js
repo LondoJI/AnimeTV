@@ -2351,7 +2351,7 @@ function renderCarouselIndicators(items) {
   if (!carouselIndicators) return;
   carouselIndicators.innerHTML = items.slice(0, 8).map((show, index) => `
     <button class="carousel-dot focusable ${index === state.carouselIndex ? "is-selected" : ""}" data-carousel-index="${index}" aria-label="Show ${escapeHtml(getShowTitle(show))}">
-      ${carouselArtworkOrPoster(show) ? `<img referrerpolicy="no-referrer" src="${escapeHtml(imageDeliveryUrl(carouselArtworkOrPoster(show), 96, 58))}" alt="" width="96" height="54" loading="lazy" decoding="async">` : "<span></span>"}
+      ${carouselArtworkOrPoster(show) ? `<img referrerpolicy="no-referrer" src="${escapeHtml(imageDeliveryUrl(carouselArtworkOrPoster(show), 240, 75))}" alt="" width="240" height="135" loading="lazy" decoding="async">` : "<span></span>"}
     </button>
   `).join("");
 
@@ -2431,7 +2431,19 @@ document.addEventListener("error", (event) => {
   } else if (img.classList.contains("season-card-img")) {
     img.style.display = "none";
   } else if (img.classList.contains("thumb-poster") || img.classList.contains("thumb-backdrop") || img.closest(".carousel-dot")) {
-    img.style.visibility = "hidden";   // reveal the card's gradient placeholder
+    // Set a transparent 1x1 gif to clear the broken image icon, then fade out
+    // so the card's brand gradient (.thumb-art background) shows through.
+    img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+    img.removeAttribute("srcset");
+    img.style.opacity = "0";
+    // Add the branded "Z" fallback logo to the card
+    const card = img.closest(".thumb-art") || img.closest(".carousel-dot");
+    if (card && !card.querySelector(".thumb-fallback-mark")) {
+      const mark = document.createElement("div");
+      mark.className = "thumb-fallback-mark";
+      mark.setAttribute("aria-hidden", "true");
+      card.appendChild(mark);
+    }
   }
 }, true);
 
@@ -4299,19 +4311,19 @@ async function attachPlaybackSourceOptions(show, episode, seasonNumber = 1) {
       .then(() => refreshPicker())
   ];
   if (isScraperEnabled("tioanime")) {
-    lookups.push(playbackLookupWithTimeout("TioAnime scraper", attachTioAnimeSources(show, episode), 6500)
+    lookups.push(playbackLookupWithTimeout("TioAnime scraper", attachTioAnimeSources(show, episode), 10000)
       .then(() => updateServerCheck("tioanime", getKnownSourceServer("tioanime").match)));
   } else { episode.tioAnimeSourcesChecked = true; episode.serverChecks.tioanime = "notfound"; }
   if (isScraperEnabled("animeav1")) {
-    lookups.push(playbackLookupWithTimeout("AnimeAV1 scraper", attachAnimeAv1Sources(show, episode), 6500)
+    lookups.push(playbackLookupWithTimeout("AnimeAV1 scraper", attachAnimeAv1Sources(show, episode), 10000)
       .then(() => updateServerCheck("animeav1", getKnownSourceServer("animeav1").match)));
   } else { episode.animeAv1SourcesChecked = true; episode.serverChecks.animeav1 = "notfound"; }
   if (isScraperEnabled("jkanime")) {
-    lookups.push(playbackLookupWithTimeout("JKAnime scraper", attachJKAnimeSources(show, episode), 8000)
+    lookups.push(playbackLookupWithTimeout("JKAnime scraper", attachJKAnimeSources(show, episode), 12000)
       .then(() => updateServerCheck("jkanime", getKnownSourceServer("jkanime").match)));
   } else { episode.jkAnimeSourcesChecked = true; episode.serverChecks.jkanime = "notfound"; }
   if (isScraperEnabled("animeonlineninja")) {
-    lookups.push(playbackLookupWithTimeout("AniméOnlineNinja scraper", attachAnimeonlineNinjaSources(show, episode), 12000)
+    lookups.push(playbackLookupWithTimeout("AniméOnlineNinja scraper", attachAnimeonlineNinjaSources(show, episode), 15000)
       .then(() => updateServerCheck("animeonlineninja", getKnownSourceServer("animeonlineninja").match)));
   } else { episode.animeonlineNinjaSourcesChecked = true; episode.serverChecks.animeonlineninja = "notfound"; }
   await Promise.allSettled(lookups);
@@ -5153,7 +5165,27 @@ function wireSourceButtons(root = document) {
   });
 }
 
+// Debounced render — avoids UI freezes when multiple background enrichments
+// trigger render() in rapid succession. The first call executes immediately;
+// subsequent calls within 80ms are coalesced into a single trailing call.
+let _renderTimer = 0;
+let _renderImmediate = true;
+const _renderCore = _render;
 function render() {
+  if (_renderImmediate) {
+    _renderImmediate = false;
+    _renderCore();
+    _renderTimer = window.setTimeout(() => { _renderImmediate = true; }, 80);
+    return;
+  }
+  window.clearTimeout(_renderTimer);
+  _renderTimer = window.setTimeout(() => {
+    _renderImmediate = true;
+    _renderCore();
+  }, 80);
+}
+
+function _render() {
   updateFilterButtons();
   const isHome = state.route === "home";
   const isLibrary = state.route === "library";
@@ -11807,6 +11839,11 @@ document.addEventListener("pointermove", () => {
 });
 
 document.querySelectorAll("[data-route]").forEach((element) => {
+  // <body> now carries a data-route attribute (set by the path-based router), so
+  // it must NOT get this nav handler — otherwise EVERY click bubbles to body and
+  // re-runs setRoute()/render(), which wipes open modals (e.g. the 18+ gate) and
+  // wastes a full re-render on every interaction. Only real nav controls qualify.
+  if (element === document.body || element === document.documentElement) return;
   element.addEventListener("click", (event) => {
     event.preventDefault();
     setRoute(element.dataset.route);

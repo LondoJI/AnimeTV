@@ -200,7 +200,15 @@ const types = {
   ".avif": "image/avif",
   ".ico": "image/x-icon",
   ".json": "application/json; charset=utf-8",
-  ".webmanifest": "application/manifest+json"
+  ".webmanifest": "application/manifest+json",
+  ".txt": "text/plain; charset=utf-8",
+  ".xml": "application/xml; charset=utf-8",
+  ".md": "text/plain; charset=utf-8",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
+  ".ttf": "font/ttf",
+  ".mp4": "video/mp4",
+  ".m3u8": "application/vnd.apple.mpegurl"
 };
 const IMAGE_PROXY_ALLOWED_HOSTS = new Set([
   "s4.anilist.co",
@@ -228,16 +236,17 @@ const SECURITY_HEADERS = {
     "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
-    "img-src 'self' data: blob: http: https:",
-    "media-src 'self' blob: http: https:",
-    "connect-src 'self' http: https: ws: wss:",
-    "frame-src 'self' http: https: blob:",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' blob: https:",
+    "connect-src 'self' https://graphql.anilist.co https://api.jikan.moe https://s4.anilist.co https:",
+    "frame-src 'self' https:",
     "worker-src 'self' blob:",
     "manifest-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
-    "frame-ancestors 'self'"
+    "frame-ancestors 'none'",
+    "upgrade-insecure-requests"
   ].join("; "),
   ...(HOSTED_RUNTIME ? { "Strict-Transport-Security": STRICT_TRANSPORT_SECURITY } : {})
 };
@@ -870,7 +879,7 @@ function handleRequest(request, response) {
           response.writeHead(200, {
             ...SECURITY_HEADERS,
             "Content-Type": "text/html; charset=utf-8",
-            "Cache-Control": "no-store, max-age=0"
+            "Cache-Control": "no-cache"
           });
           response.end(indexData);
         });
@@ -881,13 +890,16 @@ function handleRequest(request, response) {
       return;
     }
 
-    // Versioned assets (?v=NNN) are content-addressed — safe to cache for 1 year.
-    // index.html is never versioned and must always be fresh.
+    // Versioned assets (?v=NNN) are content-addressed - safe to cache for 1 year.
+    // index.html must always be fresh (no-cache allows 304 Not Modified).
+    // Non-versioned static files (robots.txt, llms.txt) get 1h cache + SWR.
     const isVersioned = url.searchParams.has("v") || /[?&]v=\d+/.test(url.search);
     const isHtml = path.extname(filePath) === ".html" || pathname === "/index.html";
-    const cacheControl = (!isHtml && isVersioned)
-      ? "public, max-age=31536000, immutable"
-      : "no-store, max-age=0";
+    const cacheControl = isHtml
+      ? "no-cache"
+      : isVersioned
+        ? "public, max-age=31536000, immutable"
+        : "public, max-age=3600, stale-while-revalidate=86400";
 
     response.writeHead(200, {
       ...SECURITY_HEADERS,
@@ -5741,12 +5753,19 @@ function decodeTioAnimeEmbedUrl(value = "") {
 // ── AnimeAV1 direct scraper ──────────────────────────────────────────────────
 
 async function handleAnimeAv1Health(response) {
+  // Actually test connectivity to AnimeAV1 instead of blindly returning ok:true.
+  let reachable = false;
+  try {
+    const probe = await fetchWithTimeout(ANIMEAV1_BASE, { method: "HEAD", headers: ANIMEAV1_HEADERS }, 5000);
+    reachable = probe.ok;
+  } catch { /* unreachable */ }
   sendJson(response, {
-    ok: true,
+    ok: reachable,
     source: "AnimeAV1 direct scraper",
     hosted: HOSTED_RUNTIME,
     baseUrl: ANIMEAV1_BASE,
-    catalogCached: Boolean(animeAv1SlugCatalogMemory)
+    catalogCached: Boolean(animeAv1SlugCatalogMemory),
+    catalogSize: animeAv1SlugCatalogMemory?.count || 0
   });
 }
 
@@ -5957,8 +5976,14 @@ function parseJkUrl(rawUrl) {
 }
 
 async function handleJKAnimeHealth(response) {
+  // Actually test connectivity to JKAnime instead of blindly returning ok:true.
+  let reachable = false;
+  try {
+    const probe = await fetchWithTimeout(JK_BASE, { method: "HEAD", headers: JK_HEADERS }, 5000);
+    reachable = probe.ok;
+  } catch { /* unreachable */ }
   sendJson(response, {
-    ok: true,
+    ok: reachable,
     source: "JKAnime direct scraper",
     baseUrl: JK_BASE,
     hosted: HOSTED_RUNTIME,
