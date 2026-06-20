@@ -422,7 +422,7 @@ function regularCatalogSnapshot() {
 
 async function fetchHomepageBootstrapCatalog() {
   if (location.protocol === "file:") return [];
-  const response = await fetchWithTimeout(`${HOMEPAGE_BOOTSTRAP_ENDPOINT}?v=379`, { cache: "force-cache" }, 2500);
+  const response = await fetchWithTimeout(`${HOMEPAGE_BOOTSTRAP_ENDPOINT}?v=380`, { cache: "force-cache" }, 2500);
   if (!response.ok) throw new Error("Homepage bootstrap unavailable");
   const payload = await response.json();
   const rawItems = Array.isArray(payload)
@@ -432,7 +432,7 @@ async function fetchHomepageBootstrapCatalog() {
   return rawItems.map((item, index) => normalizeExternalShow(item, source, index)).filter(Boolean);
 }
 
-function scheduleAnimeAv1LatestLoad(delayMs = 18000) {
+function scheduleAnimeAv1LatestLoad(delayMs = 45000) {
   const loadLatest = () => loadAnimeAv1Latest();
   const run = () => {
     if ("requestIdleCallback" in window) window.requestIdleCallback(loadLatest, { timeout: 3000 });
@@ -456,15 +456,23 @@ function applyServerCatalog(serverCatalog = [], label = "ZenkaiTV API") {
   return true;
 }
 
-function scheduleDeferredServerCatalogRefresh(delayMs = 12000) {
-  window.setTimeout(() => {
-    const refresh = async () => {
-      const serverCatalog = await timedRequest("ZenkaiTV metadata API", () => fetchLocalMetadataCatalog()).catch(() => []);
-      if (serverCatalog.length) applyServerCatalog(serverCatalog);
-    };
+function scheduleDeferredServerCatalogRefresh(delayMs = 45000) {
+  let started = false;
+  const events = ["pointerdown", "keydown", "wheel", "touchstart"];
+  const cleanup = () => events.forEach((event) => window.removeEventListener(event, startRefresh, true));
+  const refresh = async () => {
+    const serverCatalog = await timedRequest("ZenkaiTV metadata API", () => fetchLocalMetadataCatalog()).catch(() => []);
+    if (serverCatalog.length) applyServerCatalog(serverCatalog);
+  };
+  function startRefresh() {
+    if (started) return;
+    started = true;
+    cleanup();
     if ("requestIdleCallback" in window) window.requestIdleCallback(refresh, { timeout: 5000 });
     else refresh();
-  }, delayMs);
+  }
+  events.forEach((event) => window.addEventListener(event, startRefresh, { capture: true, once: true, passive: true }));
+  window.setTimeout(startRefresh, delayMs);
 }
 
 async function loadAnimeSources() {
@@ -2522,6 +2530,7 @@ function scheduleCarouselIndicatorHydration() {
   if (_carouselIndicatorHydrationQueued || _carouselIndicatorImagesReady) return;
   _carouselIndicatorHydrationQueued = true;
   const hydrate = () => {
+    if (_carouselIndicatorImagesReady) return;
     _carouselIndicatorImagesReady = true;
     _carouselIndicatorHydrationQueued = false;
     if (state.route === "home") renderCarousel();
@@ -2533,7 +2542,10 @@ function scheduleCarouselIndicatorHydration() {
       window.setTimeout(hydrate, 900);
     }
   };
-  window.setTimeout(afterFirstPaint, 4200);
+  const revealOnInteraction = () => afterFirstPaint();
+  const events = ["pointerdown", "keydown", "wheel", "touchstart"];
+  events.forEach((event) => window.addEventListener(event, revealOnInteraction, { capture: true, once: true, passive: true }));
+  window.setTimeout(afterFirstPaint, 45000);
 }
 
 function simpleCarouselText(show) {
@@ -10055,7 +10067,7 @@ function scheduleVisibleMetadataWarm(shows = state.shows, limit = HOME_INITIAL_C
   // scheduling the idle warm, so the ~80-request hydration burst lands AFTER the
   // visual-complete window instead of competing inside it. Immediate clicks are
   // still covered by the per-card pointerenter preload in wireOpenButtons.
-  const defer = () => window.setTimeout(idle, 18000);
+  const defer = () => window.setTimeout(idle, 45000);
   if (document.readyState === "complete") defer();
   else window.addEventListener("load", defer, { once: true });
 }
