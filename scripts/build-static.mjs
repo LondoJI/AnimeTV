@@ -9,6 +9,7 @@ const files = [
   "styles.css",
   "update-manager.js",
   "manifest.webmanifest",
+  "homepage-bootstrap.json",
   "sources.json",
   "logo-mark.png",
   "logo-mark-192.png",

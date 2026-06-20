@@ -420,11 +420,33 @@ function regularCatalogSnapshot() {
   );
 }
 
+async function fetchHomepageBootstrapCatalog() {
+  if (location.protocol === "file:") return [];
+  const response = await fetchWithTimeout(`${HOMEPAGE_BOOTSTRAP_ENDPOINT}?v=378`, { cache: "force-cache" }, 2500);
+  if (!response.ok) throw new Error("Homepage bootstrap unavailable");
+  const payload = await response.json();
+  const rawItems = Array.isArray(payload)
+    ? payload
+    : payload.items || payload.results || payload.anime || payload.catalog || payload.data || [];
+  const source = { id: "homepage-bootstrap", name: payload.source || "ZenkaiTV Bootstrap" };
+  return rawItems.map((item, index) => normalizeExternalShow(item, source, index)).filter(Boolean);
+}
+
+function scheduleAnimeAv1LatestLoad(delayMs = 8000) {
+  const loadLatest = () => loadAnimeAv1Latest();
+  const run = () => {
+    if ("requestIdleCallback" in window) window.requestIdleCallback(loadLatest, { timeout: 3000 });
+    else window.setTimeout(loadLatest, 300);
+  };
+  window.setTimeout(run, delayMs);
+}
+
 async function loadAnimeSources() {
   setSourceStatus("Loading ZenkaiTV metadata API...");
   render();
   hideAppLoader();
 
+  let hasInitialCatalog = false;
   const cachedCatalog = readResponseCache("main-catalog");
   if (cachedCatalog?.length) {
     replaceRegularCatalog(cachedCatalog);
@@ -432,7 +454,21 @@ async function loadAnimeSources() {
     state.carouselIndex = 0;
     setSourceStatus(catalogStatusLabel("Cached ZenkaiTV catalog", cachedCatalog));
     render();
+    hasInitialCatalog = true;
     scheduleVisibleMetadataWarm(buildLatestEpisodesList(HOME_INITIAL_CARD_LIMIT), HOME_INITIAL_CARD_LIMIT);
+  }
+
+  if (!hasInitialCatalog) {
+    const bootstrapCatalog = await fetchHomepageBootstrapCatalog().catch(() => []);
+    if (bootstrapCatalog.length) {
+      replaceRegularCatalog(bootstrapCatalog);
+      state.isLoadingCatalog = false;
+      state.carouselIndex = 0;
+      setSourceStatus(catalogStatusLabel("ZenkaiTV bootstrap", bootstrapCatalog));
+      render();
+      hasInitialCatalog = true;
+      scheduleVisibleMetadataWarm(buildLatestEpisodesList(HOME_INITIAL_CARD_LIMIT), HOME_INITIAL_CARD_LIMIT);
+    }
   }
 
   const serverCatalog = await timedRequest("ZenkaiTV metadata API", () => fetchLocalMetadataCatalog()).catch(() => []);
@@ -451,8 +487,8 @@ async function loadAnimeSources() {
   }
 
   state.apiStatus.metadata = "Unavailable";
-  state.apiStatus.direct = "Loading";
-  setSourceStatus("Loading AniList and Jikan directly...");
+  state.apiStatus.direct = hasInitialCatalog ? "Deferred" : "Loading";
+  setSourceStatus(hasInitialCatalog ? "Using cached ZenkaiTV catalog" : "Loading AniList and Jikan directly...");
 
   const cachedDirect = readResponseCache("direct-catalog");
   if (!state.shows.length && cachedDirect?.length) {
@@ -461,8 +497,25 @@ async function loadAnimeSources() {
     state.carouselIndex = 0;
     setSourceStatus(catalogStatusLabel("Cached AniList + Jikan", cachedDirect));
     render();
+    hasInitialCatalog = true;
   }
 
+  if (hasInitialCatalog) {
+    render();
+    window.setTimeout(() => loadDirectCatalogFallback(), 14000);
+    scheduleHomeRailExpansion();
+    scheduleAnimeAv1LatestLoad();
+    return;
+  }
+
+  await loadDirectCatalogFallback();
+  scheduleHomeRailExpansion();
+  scheduleAnimeAv1LatestLoad();
+}
+
+async function loadDirectCatalogFallback() {
+  if (state.apiStatus.direct === "Online") return;
+  state.apiStatus.direct = "Loading";
   const [anilist, jikanTop, jikanSeason, jikanPopular] = await Promise.allSettled([
     timedRequest("AniList", () => fetchAniListTrending()),
     timedRequest("Jikan Airing", () => fetchJikanPages(JIKAN_TOP_ENDPOINT, "Jikan Airing", 3)),
@@ -499,9 +552,6 @@ async function loadAnimeSources() {
   // the server catalog — regardless of whether shows came from cache, the live
   // merge, or the offline fallback.
   window.setTimeout(() => enrichCatalogAiringData(), 7000);
-  scheduleHomeRailExpansion();
-  // Mirror AnimeAV1's "Últimos Episodios" order in the Home Latest Episodes rail.
-  loadAnimeAv1Latest();
 }
 
 // The client builds its catalog from AniList trending + Jikan directly, but some
@@ -5447,7 +5497,10 @@ function setRoute(route, options = {}) {
   });
 
   syncRouteVisibility();
-  if (route === "home") { renderCarousel(); loadAnimeAv1Latest(); }
+  if (route === "home") {
+    renderCarousel();
+    scheduleAnimeAv1LatestLoad();
+  }
   if (route === "anipub") ensureAniPubCatalogLoaded();
   if ((route === "sources" || route === "library") && !state.externalSourcesLoaded) {
     scheduleExternalSourcesLoad({ force: true });

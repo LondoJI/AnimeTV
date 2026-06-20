@@ -1,5 +1,6 @@
 const ANILIST_ENDPOINT = "https://graphql.anilist.co";
 const LOCAL_METADATA_ENDPOINT = "/api/catalog";
+const HOMEPAGE_BOOTSTRAP_ENDPOINT = "/homepage-bootstrap.json";
 const LOCAL_SOURCE_PROXY_ENDPOINT = "/api/source";
 const JIKAN_TOP_ENDPOINT = "https://api.jikan.moe/v4/top/anime?filter=airing&limit=25";
 const JIKAN_POPULAR_ENDPOINT = "https://api.jikan.moe/v4/top/anime?filter=bypopularity&limit=25";
