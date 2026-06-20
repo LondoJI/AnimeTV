@@ -384,12 +384,15 @@ const ImageResolver = (function () {
     // pin to the same TMDB show (#30984) that already carries seasons 1-16 plus TYBW.
     // Multi-season stills logic then maps global episode numbers across all TMDB seasons.
     { tmdb: 30984, names: ["Bleach"] },
-    // NARUTO: Shippuuden — TMDB title is "Naruto: Shippuden" (21 seasons, 500 eps).
+    // NARUTO: Shippuuden — TMDB #31910 "Naruto Shippūden" (2007, 20 seasons, 500 eps).
     // Without a pin the fuzzy search sometimes attaches the wrong Naruto entry.
-    { tmdb: 46261, names: ["NARUTO: Shippuuden", "Naruto: Shippuuden", "Naruto Shippuden", "Naruto Shippuuden", "Naruto: Shippuden"] },
+    // (Was wrongly pinned to #46261, which is "Fairy Tail" (2009) — that forced
+    //  Naruto Shippuden to display Fairy Tail's poster/backdrop/stills.)
+    { tmdb: 31910, names: ["NARUTO: Shippuuden", "Naruto: Shippuuden", "Naruto Shippuden", "Naruto Shippuuden", "Naruto: Shippuden"] },
     // [Oshi no Ko] 2nd Season — brackets confuse the TMDB fuzzy search; pin to the
-    // main entry (#130392) whose Season 2 carries 2024 episode stills.
-    { tmdb: 130392, names: ["[Oshi no Ko] 2nd Season", "Oshi no Ko 2nd Season", "[Oshi no Ko] Season 2", "Oshi no Ko Season 2", "[Oshi no Ko]", "Oshi no Ko"] },
+    // main entry (#203737) whose Season 2 carries 2024 episode stills.
+    // (Was wrongly pinned to #130392, which is "The D'Amelio Show".)
+    { tmdb: 203737, names: ["[Oshi no Ko] 2nd Season", "Oshi no Ko 2nd Season", "[Oshi no Ko] Season 2", "Oshi no Ko Season 2", "[Oshi no Ko]", "Oshi no Ko"] },
     // Tsue to Tsurugi no Wistoria — TMDB #245842 carries both S1 (2024) and S2 (2026).
     // The romaji title is long and the fuzzy search sometimes rejects it; pin so
     // pickTmdbSeason() can correctly map "2nd Season" to TMDB Season 2 stills.
