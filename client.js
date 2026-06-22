@@ -2489,28 +2489,30 @@ function renderCarousel() {
   if (String(show.id || "") === _carouselPaintedId) return;
   _carouselPaintedId = String(show.id || "");
 
-  const art = carouselArtworkOrPoster(show);
-  // Upgrade the hero to the sharp TMDB backdrop the moment it resolves. The
-  // carousel pool is catalog shows that may not be TMDB-resolved yet (they'd show
-  // the softer AniList banner); resolve the one on screen, then repaint so it
-  // swaps up to the high-res backdrop. Bounded: once per show (_tmdbResolved), and
-  // only the currently-displayed item.
-  if (show && !show._tmdbResolved && typeof enrichTmdbImages === "function") {
+  // Load ONLY the high-resolution TMDB backdrop for the hero — never the lower-res
+  // AniList banner first and then swap to TMDB (that read as "two different images
+  // loading"). While the backdrop is still resolving, show just the dark gradient
+  // (no image), then load the one high-res file. A show with no TMDB match
+  // (_tmdbResolved flips true on every resolve outcome) falls back to its banner as
+  // the single image. Bounded: resolve once per show, current item only.
+  const hiResArt = hqImage(String(show.tmdbBackdrop || show.highQualityBackground || "").trim());
+  const resolving = !hiResArt && !show._tmdbResolved && typeof enrichTmdbImages === "function";
+  if (resolving) {
     enrichTmdbImages(show).then(() => {
-      if (state.route === "home" && String(items[state.carouselIndex]?.id || "") === String(show.id)
-          && carouselArtworkOrPoster(show) !== art) {
-        _carouselPaintedId = null; // force a repaint with the upgraded backdrop
+      if (state.route === "home" && String(items[state.carouselIndex]?.id || "") === String(show.id)) {
+        _carouselPaintedId = null; // force a repaint now that the backdrop resolved
         renderCarousel();
       }
     }).catch(() => {});
   }
+  const art = hiResArt || (resolving ? "" : carouselArtworkOrPoster(show));
   // Full-bleed hero. srcset spans small→large so the browser fetches a right-sized
   // file per viewport/DPR: phones still get ~640-960 (fast LCP), while large and
   // retina desktops get a crisp 1600/1920 — "best quality" where the screen can
   // show it, without bloating the common case.
   const HERO_WIDTHS = [640, 960, 1280, 1600, 1920];
   const HERO_QUALITY = 90;
-  const deliveredArt = imageDeliveryUrl(art, 1600, HERO_QUALITY);
+  const deliveredArt = art ? imageDeliveryUrl(art, 1600, HERO_QUALITY) : "";
   const heroSrcSet = art ? imageDeliverySrcSet(art, HERO_WIDTHS, HERO_QUALITY) : "";
   carouselBackdrop.classList.toggle("has-banner", Boolean(art));
   carouselBackdrop.style.backgroundImage = "linear-gradient(135deg, #121733 0%, #1b1a3b 38%, #0b2637 100%)";
@@ -2525,7 +2527,9 @@ function renderCarousel() {
       }
       carouselBackdropImage.src = deliveredArt;
     } else if (!art) {
-      carouselBackdropImage.src = "hero-backdrop-placeholder.webp?v=338";
+      // Resolving (or genuinely no art): show only the dark gradient behind a
+      // transparent image, so we never load a second placeholder/banner picture.
+      carouselBackdropImage.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
       carouselBackdropImage.removeAttribute("srcset");
     }
   }
