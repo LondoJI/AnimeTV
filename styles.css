@@ -7612,6 +7612,13 @@ body.reduce-motion .watch-backdrop-blur { transform: scale(1.08); }
   background-repeat: no-repeat;
   animation: none;
 }
+/* Holding for the high-res (TMDB) backdrop: keep the sharp layer transparent so
+   only the blurred fill behind it shows, until the good art fades in. */
+.watch-backdrop.is-blur-hold {
+  background-color: transparent;
+  background-image: none;
+  animation: none;
+}
 @keyframes watch-backdrop-zoom {
   from { transform: scale(1.02); }
   to   { transform: scale(1.12); }

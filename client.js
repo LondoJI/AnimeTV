@@ -6606,9 +6606,20 @@ function applyWatchBackdrop(show, season) {
     show.landscapeImage, show.jikanBackground, season?.highQualityBackground,
     season?.banner, season?.backdrop
   ].map((value) => hqImage(String(value || "").trim())).filter(Boolean));
+  // The genuinely high-resolution "final" art — the TMDB backdrop (show or season)
+  // and any explicitly-high-quality background. Used to decide whether the current
+  // art is good enough to show sharp, or whether to hold on the blurred fill until
+  // TMDB resolves (an AniList banner is wide but NOT in here, so it's "low-res").
+  const seasonNum = getBackdropSeasonNumber(season);
+  const highResSources = new Set([
+    show.tmdbBackdrop, season?.tmdbBackdrop,
+    seasonNum && show.tmdbSeasonBackdropsBySeason ? show.tmdbSeasonBackdropsBySeason[seasonNum] : "",
+    show.highQualityBackground, season?.highQualityBackground
+  ].map((value) => hqImage(String(value || "").trim())).filter(Boolean));
   // Set the sharp backdrop image + classes (no crossfade — used for the first
   // paint and the fallback/poster cases).
   const setBackdropArt = (url, optimized, posterFit) => {
+    backdrop.classList.remove("is-blur-hold"); // leaving the blurred-hold state
     if (posterFit) {
       // If it's a vertical poster, don't show the sharp version on the backdrop layer;
       // let it show only as a blurred ambient background fill to avoid double-poster.
@@ -6634,24 +6645,71 @@ function applyWatchBackdrop(show, season) {
     overlay?.classList.toggle("has-backdrop-art", Boolean(url));
   };
 
+  // Safety net for the blurred-hold below: if TMDB resolution never flips
+  // _tmdbResolved (e.g. the search request threw), don't sit on the blur forever —
+  // after a few seconds force the best-available sharp art for this show/season.
+  const scheduleHighResFallback = () => {
+    if (backdrop.dataset.backdropFallbackKey === key) return; // already armed for this key
+    backdrop.dataset.backdropFallbackKey = key;
+    window.setTimeout(() => {
+      if (backdrop.dataset.backdropKey === key
+          && backdrop.classList.contains("is-blur-hold")
+          && state.activeShow?.id === show.id) {
+        show._backdropForceSharp = true;
+        applyWatchBackdrop(show, season);
+      }
+    }, 4000);
+  };
+
   const paint = (url) => {
     const posterFit = Boolean(url) && !wideSources.has(url);
+    const artIsHighRes = Boolean(url) && highResSources.has(url);
     const optimized = url ? imageDeliveryUrl(url, 1920, 92) : "";
+    const sameTarget = backdrop.dataset.backdropKey === key;
+    const reduceMotion = document.body.classList.contains("reduce-motion");
+
+    // HOLD FOR HIGH-RES (user preference): while TMDB is still resolving and the
+    // only wide art we have is lower-res (e.g. an AniList banner), DON'T show that
+    // sharp — display just the blurred fill and fade the high-res TMDB backdrop in
+    // when it lands, instead of popping low→high. _tmdbResolved flips true on every
+    // resolve outcome (match / no-match / reject), so a show that truly has no TMDB
+    // art falls through to its AniList sharp; scheduleHighResFallback covers the
+    // rare case where resolution threw and never set the flag.
+    const tmdbPending = !show._tmdbResolved && !show._backdropForceSharp;
+    const blurHold = Boolean(url) && !posterFit && !artIsHighRes && tmdbPending;
+
+    if (blurHold) {
+      // Dedupe across the enrichment render-burst (same show + same held url).
+      if (backdrop.classList.contains("is-blur-hold")
+          && backdrop.dataset.backdropKey === key
+          && backdrop.dataset.backdropHeldUrl === url) return;
+      backdrop.style.backgroundImage = "none";
+      backdrop.style.transition = "";
+      backdrop.style.opacity = "";
+      backdrop.classList.remove("has-art", "has-fallback-art", "is-poster-fit");
+      backdrop.classList.add("is-blur-hold"); // makes the sharp layer transparent → blur shows
+      backdrop.dataset.backdropKey = key;
+      backdrop.dataset.backdropUrl = "";        // no committed sharp art yet
+      backdrop.dataset.backdropHeldUrl = url;
+      if (blur) { blur.style.backgroundImage = `url("${url}")`; blur.classList.add("is-visible"); }
+      overlay?.classList.add("cinematic");
+      overlay?.classList.add("has-backdrop-art");
+      scheduleHighResFallback();
+      return;
+    }
+
     const prevUrl = backdrop.dataset.backdropUrl || "";
     const prevHadArt = backdrop.classList.contains("has-art");
-    // An UPGRADE is when a real wide backdrop is already showing FOR THE SAME SHOW/
-    // SEASON and we're swapping to a different wide image — the AniList-banner→TMDB-
-    // backdrop handoff the user saw "pop" from low to high quality. ONLY those get
-    // the crossfade. Critically, a SHOW SWITCH (different key) must NOT crossfade:
-    // prevUrl there is the *previous* show's backdrop, so fading from it showed the
-    // wrong anime for a beat ("different image → animation → low → good"). First
-    // paints, show switches, poster fallbacks and reduce-motion take the immediate
-    // path (overlay open is never delayed → no LCP hit).
-    const sameTarget = backdrop.dataset.backdropKey === key;
-    const isUpgrade = Boolean(url) && !posterFit && sameTarget && prevHadArt && prevUrl && prevUrl !== url
-      && typeof Image !== "undefined" && !document.body.classList.contains("reduce-motion");
+    const fromBlurHold = backdrop.classList.contains("is-blur-hold");
+    // FADE the sharp art in when, for the SAME show/season, we're either revealing
+    // the high-res art after a blurred hold, OR upgrading one already-shown wide
+    // image to a different one. A SHOW SWITCH (different key) must NOT fade — prevUrl
+    // there is the previous show's backdrop. First paints, poster fallbacks and
+    // reduce-motion take the immediate path (overlay open is never delayed).
+    const wantFade = Boolean(url) && !posterFit && sameTarget && typeof Image !== "undefined" && !reduceMotion
+      && (fromBlurHold || (prevHadArt && prevUrl && prevUrl !== url));
 
-    if (!isUpgrade) {
+    if (!wantFade) {
       setBackdropArt(url, optimized, posterFit);
       commitBackdropMeta(url);
       return;
