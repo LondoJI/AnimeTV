@@ -6596,10 +6596,9 @@ function applyWatchBackdrop(show, season) {
     show.landscapeImage, show.jikanBackground, season?.highQualityBackground,
     season?.banner, season?.backdrop
   ].map((value) => hqImage(String(value || "").trim())).filter(Boolean));
-  const paint = (url) => {
-    const posterFit = Boolean(url) && !wideSources.has(url);
-    const optimized = url ? imageDeliveryUrl(url, 1920, 92) : "";
-    
+  // Set the sharp backdrop image + classes (no crossfade — used for the first
+  // paint and the fallback/poster cases).
+  const setBackdropArt = (url, optimized, posterFit) => {
     if (posterFit) {
       // If it's a vertical poster, don't show the sharp version on the backdrop layer;
       // let it show only as a blurred ambient background fill to avoid double-poster.
@@ -6611,10 +6610,11 @@ function applyWatchBackdrop(show, season) {
       backdrop.classList.toggle("has-art", Boolean(url));
       backdrop.classList.toggle("has-fallback-art", !url);
     }
-    
+    backdrop.classList.toggle("is-poster-fit", posterFit);
+  };
+  const commitBackdropMeta = (url) => {
     backdrop.dataset.backdropKey = key;
     backdrop.dataset.backdropUrl = url || "";
-    backdrop.classList.toggle("is-poster-fit", posterFit);
     if (blur) {
       blur.style.backgroundImage = url ? `url("${url}")` : "";
       blur.classList.toggle("is-visible", Boolean(url));
@@ -6622,6 +6622,68 @@ function applyWatchBackdrop(show, season) {
     // Always cinematic; .has-art only switches image-backdrop vs gradient fallback.
     overlay?.classList.add("cinematic");
     overlay?.classList.toggle("has-backdrop-art", Boolean(url));
+  };
+
+  const paint = (url) => {
+    const posterFit = Boolean(url) && !wideSources.has(url);
+    const optimized = url ? imageDeliveryUrl(url, 1920, 92) : "";
+    const prevUrl = backdrop.dataset.backdropUrl || "";
+    const prevHadArt = backdrop.classList.contains("has-art");
+    // An UPGRADE is when a real wide backdrop is already showing and we're swapping
+    // to a different wide image — the AniList-banner→TMDB-backdrop handoff the user
+    // saw "pop" from low to high quality. Crossfade those instead of swapping the
+    // background-image instantly. First paints, poster fallbacks, and reduce-motion
+    // keep the immediate path (so the overlay's open is never delayed → no LCP hit).
+    const isUpgrade = Boolean(url) && !posterFit && prevHadArt && prevUrl && prevUrl !== url
+      && typeof Image !== "undefined" && !document.body.classList.contains("reduce-motion");
+
+    if (!isUpgrade) {
+      setBackdropArt(url, optimized, posterFit);
+      commitBackdropMeta(url);
+      return;
+    }
+
+    // Decode the incoming image off-screen, then dip the sharp layer's opacity to
+    // reveal the (re-blurred) fill behind it — never a flash to black — swap the
+    // image while hidden, and fade it back in. Idempotent + self-healing: a safety
+    // timer guarantees the new art is committed at opacity 1 even if transitionend
+    // never fires, so the worst case degrades to today's instant swap, never to a
+    // stuck/blank backdrop.
+    let done = false;
+    const commitSwap = () => {
+      if (done) return;
+      done = true;
+      // Bail if the overlay moved on to a different show/season in the meantime.
+      if (backdrop.dataset.backdropKey !== key && state.activeShow?.id !== show.id) {
+        backdrop.style.transition = "";
+        backdrop.style.opacity = "";
+        return;
+      }
+      setBackdropArt(url, optimized, false);
+      commitBackdropMeta(url);
+      void backdrop.offsetWidth; // flush before fading back in
+      backdrop.style.opacity = "1";
+      setTimeout(() => { backdrop.style.transition = ""; backdrop.style.opacity = ""; }, 280);
+    };
+    const beginDip = () => {
+      // Match the incoming image on the blurred fill first so the dip shows the
+      // NEW art (blurred), not the old one.
+      if (blur) blur.style.backgroundImage = `url("${url}")`;
+      backdrop.style.transition = "opacity 220ms ease";
+      backdrop.style.opacity = "0";
+      backdrop.addEventListener("transitionend", commitSwap, { once: true });
+      setTimeout(commitSwap, 300); // safety net if transitionend is missed
+    };
+    const probe = new Image();
+    probe.referrerPolicy = "no-referrer";
+    if (typeof probe.decode === "function") {
+      probe.src = optimized || url;
+      probe.decode().then(beginDip).catch(beginDip);
+    } else {
+      probe.onload = beginDip;
+      probe.onerror = beginDip;
+      probe.src = optimized || url;
+    }
   };
 
   let art = getWatchBackdropArtwork(show, season);
