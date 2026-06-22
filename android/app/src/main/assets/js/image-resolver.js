@@ -20,7 +20,7 @@ const ImageResolver = (function () {
   "use strict";
 
   const TMDB_IMG_BASE = "https://image.tmdb.org/t/p";
-  const MATCH_CACHE_PREFIX = "zenkaitv:tmdb-match:v14:";
+  const MATCH_CACHE_PREFIX = "zenkaitv:tmdb-match:v15:";
   const MATCH_CACHE_TTL_MS = 1000 * 60 * 60 * 24; // Refresh airing episode stills daily.
   const FAILED_CACHE_KEY = "zenkaitv:img-failed:v1";
   const FAILED_CACHE_MAX = 400;
@@ -255,6 +255,14 @@ const ImageResolver = (function () {
       const tybwSeason = real.find((s) => s.name.toLowerCase().includes("thousand-year blood war"));
       if (tybwSeason) return { season: tybwSeason, reason: "Bleach Thousand-Year Blood War mapping" };
     }
+    // Ascendance of a Bookworm Part 3 (Honzuki no Gekokujou: Ryoushu no Youjo) is
+    // TMDB Season 2 "Adopted Daughter of an Archduke". Its title also contains the
+    // S1 name ("Ascendance of a Bookworm"), which would otherwise win the generic
+    // name match below — so map it explicitly to the S2 stills.
+    if (lowerTitle.includes("ryoushu no youjo") || lowerTitle.includes("adopted daughter of an archduke")) {
+      const s = real.find((x) => x.name.toLowerCase().includes("adopted daughter of an archduke"));
+      if (s) return { season: s, reason: "Honzuki Ryoushu no Youjo mapping" };
+    }
 
     const animeTitles = [
       anime.title?.english, anime.title?.romaji, anime.title?.native,
@@ -384,12 +392,27 @@ const ImageResolver = (function () {
     // pin to the same TMDB show (#30984) that already carries seasons 1-16 plus TYBW.
     // Multi-season stills logic then maps global episode numbers across all TMDB seasons.
     { tmdb: 30984, names: ["Bleach"] },
-    // NARUTO: Shippuuden — TMDB title is "Naruto: Shippuden" (21 seasons, 500 eps).
+    // Honzuki no Gekokujou Part 3 (Ryoushu no Youjo) — TMDB stores it as Season 2
+    // "Adopted Daughter of an Archduke" under the main Ascendance of a Bookworm
+    // entry (#91768). The 2026 sequel year is far from the 2019 base, so the fuzzy
+    // match was rejected and every episode showed "Preview pending". Pin it; the
+    // pickTmdbSeason special-case maps it to the 2026 Season 2 stills.
+    { tmdb: 91768, names: [
+      "Honzuki no Gekokujou: Ryoushu no Youjo",
+      "Honzuki no Gekokujou Ryoushu no Youjo",
+      "Honzuki no Gekokujou: Shisho ni Naru Tame ni wa Shudan wo Erandeiraremasen - Ryoushu no Youjo",
+      "Ascendance of a Bookworm: Adopted Daughter of an Archduke",
+      "Ascendance of a Bookworm Part 3"
+    ] },
+    // NARUTO: Shippuuden — TMDB #31910 "Naruto Shippūden" (2007, 20 seasons, 500 eps).
     // Without a pin the fuzzy search sometimes attaches the wrong Naruto entry.
-    { tmdb: 46261, names: ["NARUTO: Shippuuden", "Naruto: Shippuuden", "Naruto Shippuden", "Naruto Shippuuden", "Naruto: Shippuden"] },
+    // (Was wrongly pinned to #46261, which is "Fairy Tail" (2009) — that forced
+    //  Naruto Shippuden to display Fairy Tail's poster/backdrop/stills.)
+    { tmdb: 31910, names: ["NARUTO: Shippuuden", "Naruto: Shippuuden", "Naruto Shippuden", "Naruto Shippuuden", "Naruto: Shippuden"] },
     // [Oshi no Ko] 2nd Season — brackets confuse the TMDB fuzzy search; pin to the
-    // main entry (#130392) whose Season 2 carries 2024 episode stills.
-    { tmdb: 130392, names: ["[Oshi no Ko] 2nd Season", "Oshi no Ko 2nd Season", "[Oshi no Ko] Season 2", "Oshi no Ko Season 2", "[Oshi no Ko]", "Oshi no Ko"] },
+    // main entry (#203737) whose Season 2 carries 2024 episode stills.
+    // (Was wrongly pinned to #130392, which is "The D'Amelio Show".)
+    { tmdb: 203737, names: ["[Oshi no Ko] 2nd Season", "Oshi no Ko 2nd Season", "[Oshi no Ko] Season 2", "Oshi no Ko Season 2", "[Oshi no Ko]", "Oshi no Ko"] },
     // Tsue to Tsurugi no Wistoria — TMDB #245842 carries both S1 (2024) and S2 (2026).
     // The romaji title is long and the fuzzy search sometimes rejects it; pin so
     // pickTmdbSeason() can correctly map "2nd Season" to TMDB Season 2 stills.
@@ -602,7 +625,20 @@ const ImageResolver = (function () {
 
       // Cached winning match? (reuse only when it doesn't contradict the override)
       const cached = readMatchCache(anilistId);
-      if (cached && (!overrideId || Number(cached.tmdbId) === Number(overrideId))) {
+      // A cached match with NO episode stills is stale for any TV show: at resolve
+      // time the /api/tmdb/season fetch failed/timed out — common when a
+      // cache-version bump re-resolves everything at once and overwhelms TMDB, and
+      // for airing shows TMDB also hadn't published the stills yet. Serving that
+      // 0-stills entry freezes every episode on "Preview pending" for the full 24h
+      // TTL (hit Shingeki Final Season Part 2, Ookii Onnanoko, Honzuki, etc.).
+      // Treat it as a miss so we re-resolve and pick up the stills. BOUNDED:
+      // _tmdbResolved makes this at most once per session per show, and the TMDB
+      // endpoints are server-cached. Movies have no episode stills by nature, so
+      // skip them (no pointless re-fetch churn).
+      const isMovie = String(anime.format || "").toUpperCase() === "MOVIE";
+      const cachedStillCount = cached && cached.episodeStills ? Object.keys(cached.episodeStills).length : 0;
+      const cachedStale = cached && !isMovie && cachedStillCount === 0;
+      if (cached && !cachedStale && (!overrideId || Number(cached.tmdbId) === Number(overrideId))) {
         applyResolvedMatch(anime, cached);
         anime._tmdbResolved = true;
         debug(`cache hit for ${anilistId} → TMDB ${cached.tmdbId} (confidence ${cached.confidence})`);
@@ -759,11 +795,15 @@ const ImageResolver = (function () {
     const previousDistance = previous ? num - previous : Infinity;
     const nextDistance = next ? next - num : Infinity;
 
-    // Borrow only for tiny gaps, which usually means a newly aired episode has
-    // metadata but no dedicated still yet. Longer gaps keep the branded fallback
-    // so the app does not repeat one picture across a whole arc.
-    if (previous && previousDistance <= 2) return pool[previous] || "";
-    if (next && nextDistance <= 1) return pool[next] || "";
+    // Borrow ONLY for a genuine internal single gap — a real still exists on BOTH
+    // sides nearby — which is a true TMDB omission for one episode. A TRAILING run
+    // of just-aired episodes (the newest ones) has a previous still but NO next
+    // still, so borrowing there would repeat the last image across every new
+    // episode; keep the branded placeholder for those instead (accurate, no
+    // repeat) until TMDB publishes their real stills.
+    if (previous && next && previousDistance <= 2 && nextDistance <= 2) {
+      return pool[previous] || pool[next] || "";
+    }
     return "";
   }
 
@@ -784,16 +824,12 @@ const ImageResolver = (function () {
   function getSeasonBackdrop(anime, appSeasonNumber, appSeasonMeta) {
     if (!anime) return "";
     const sNum = Number(appSeasonNumber || appSeasonMeta?.season || 0);
-    const scopedStills = sNum && anime.tmdbStillsBySeason && anime.tmdbStillsBySeason[sNum]
-      ? anime.tmdbStillsBySeason[sNum]
-      : null;
     return firstValidImage([
       appSeasonMeta?.tmdbBackdrop,
       appSeasonMeta?.highQualityBackground,
       appSeasonMeta?.banner,
       appSeasonMeta?.backdrop,
       sNum && anime.tmdbSeasonBackdropsBySeason ? anime.tmdbSeasonBackdropsBySeason[sNum] : "",
-      firstSeasonStillFromMap(scopedStills),
       sNum && anime.tmdbSeasonPostersBySeason ? anime.tmdbSeasonPostersBySeason[sNum] : ""
     ]);
   }
@@ -819,9 +855,9 @@ const ImageResolver = (function () {
       anime.heroImage,
       anime.wideImage,
       anime.landscapeImage,
-      anime.coverImageLarge,
       tmdbData.seasonPoster || anime.tmdbSeasonPoster,
-      episode && (episode.thumbnail || episode.image),
+      anime.tmdbPoster,
+      anime.coverImageLarge,
       anime.coverImage || anime.image
     ]) || "";
   }
@@ -962,11 +998,13 @@ const ImageResolver = (function () {
       const offset = minEp > 0 ? minEp - 1 : 0;
       const stills = {};
       const metas = {};
+      const stillPaths = [];
       for (const ep of eps) {
         const local = Number(ep.episode_number) - offset;
         if (local <= 0) continue;
         const still = tmdbStillUrl(ep.still_path);
         if (still) stills[local] = still;
+        if (ep.still_path) stillPaths.push(ep.still_path);
         metas[local] = {
           episode: local,
           title: ep.name || "",
@@ -982,13 +1020,28 @@ const ImageResolver = (function () {
       anime.tmdbStillsBySeason[sNum] = stills;
       anime.tmdbEpisodesBySeasonNum[sNum] = metas;
       const seasonPoster = tmdbPosterUrl(payload?.season?.poster_path);
-      const seasonBackdrop = firstSeasonStillFromMap(stills);
-      if (seasonBackdrop) anime.tmdbSeasonBackdropsBySeason[sNum] = seasonBackdrop;
       if (seasonPoster) anime.tmdbSeasonPostersBySeason[sNum] = seasonPoster;
+      // TMDB seasons carry no backdrop of their own, so give each season its OWN
+      // wide hero art from a representative high-res episode still — otherwise
+      // every season of a multi-season show shares the single show backdrop. The
+      // pick is biased by APP-season position (frac grows with sNum) for two
+      // reasons: (1) shows TMDB stores as ONE continuous season (e.g. Re:Zero =
+      // 85 eps under TMDB S1) still get a DIFFERENT, era-appropriate still per app
+      // season instead of all sharing one; (2) for true multi-TMDB-season shows it
+      // just varies WHERE in that season's own pool the still comes from — still
+      // season-matched. Avoids ep1 title cards / finale spoilers.
+      if (stillPaths.length) {
+        const frac = Math.min(0.85, 0.2 + Math.max(0, sNum - 1) * 0.18);
+        const pick = stillPaths[Math.min(stillPaths.length - 1, Math.floor(stillPaths.length * frac))];
+        const seasonBackdrop = tmdbBackdropUrl(pick); // "original" — proxy downsizes on delivery
+        if (seasonBackdrop) anime.tmdbSeasonBackdropsBySeason[sNum] = seasonBackdrop;
+      }
       debug(`season-aware: app S${sNum} -> TMDB S${tmdbSeasonNumber} (${Object.keys(stills).length} stills)`);
       if (typeof renderEpisodeList === "function" && typeof state !== "undefined" &&
           state.activeShow && state.activeShow.id === anime.id) {
         renderEpisodeList(state.activeShow);
+        // Season art just landed → swap the hero to this season's own backdrop.
+        if (typeof refreshActiveWatchBackdrop === "function") refreshActiveWatchBackdrop();
       }
     } catch (err) {
       debug(`season-aware fetch failed: ${err && err.message}`);

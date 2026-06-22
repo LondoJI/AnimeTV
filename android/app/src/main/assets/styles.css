@@ -1018,16 +1018,69 @@ body:not([data-route="home"]) .stremio-search {
 }
 
 .library-search {
+  width: 100%;
   max-width: min(52rem, 100%);
   margin: 1rem 0;
 }
 
 .library-search input {
-  min-height: 3.7rem;
-  border-radius: var(--radius-lg);
-  background: rgba(7, 9, 19, 0.56);
-  backdrop-filter: blur(18px);
-  box-shadow: inset 0 0 0 0.08rem rgba(255, 255, 255, 0.07), 0 0.8rem 1.8rem rgba(0, 0, 0, 0.16);
+  min-height: 2.85rem;
+  border-radius: 9rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: none;
+  font-size: 0.82rem;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.library-search input:focus {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(138, 85, 255, 0.6);
+  box-shadow: 0 0 0.8rem rgba(138, 85, 255, 0.18);
+}
+
+.library-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.95rem;
+  border-radius: 9rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(229, 233, 255, 0.9);
+  font-size: 0.78rem;
+  font-weight: 900;
+  cursor: pointer;
+  margin-left: 1.2rem;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.library-filter-toggle:is(:hover, :focus-visible, .is-tv-focused) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.16);
+  outline: none;
+}
+
+.library-filter-toggle.is-active {
+  background: rgba(138, 85, 255, 0.18);
+  border-color: rgba(138, 85, 255, 0.5);
+  color: #fff;
+}
+
+@media (min-width: 761px) {
+  #library .library-filter-panel {
+    margin-left: 3.7rem !important;
+    margin-right: 3.7rem !important;
+    width: auto !important;
+    max-width: none !important;
+  }
+  .library-search {
+    margin-left: 3.7rem !important;
+    margin-right: 3.7rem !important;
+    width: auto !important;
+    max-width: none !important;
+  }
 }
 
 .source-status {
@@ -1332,6 +1385,12 @@ body:not([data-route="home"]) .section-heading h2 {
 .addon-band {
   min-height: auto;
   padding: 0 0 clamp(1rem, 2vw, 1.8rem);
+  /* Below-the-fold rails: let the browser skip layout/paint for the ones still
+     off-screen so the initial render only paints what's visible (Speed Index
+     win). `auto` remembers each rail's real rendered height, so scrolling to it
+     reserves the right space and CLS stays put. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 34rem;
 }
 
 .addon-more {
@@ -1420,11 +1479,11 @@ body:not([data-route="home"]) .section-heading h2 {
   grid-template-rows: repeat(2, auto);
   grid-auto-columns: calc((100% - (6 * var(--rail-gap))) / 7);
   overflow: hidden;
-  padding-bottom: 0.4rem;
+  padding-bottom: 1.25rem;
 }
 
 .poster-grid.is-skeleton-loading .show-card > span:not(.thumb-art) {
-  min-height: 2.2rem;
+  min-height: 2.5rem;
 }
 
 .rail-arrow {
@@ -1584,6 +1643,44 @@ body:not([data-route="home"]) .section-heading h2 {
 
 .thumb-art::before {
   transition: opacity 220ms ease, transform 320ms ease;
+}
+
+/* ── Image loading: brand-gradient sheen sweep + fade-in ──────────────────────
+   Posters (.thumb-art) and episode thumbnails (.ep-thumb) FADE IN when their
+   image loads instead of popping; while loading, a soft purple→cyan sheen sweeps
+   the placeholder. The sweep is a GPU transform (same `skeleton-sheen` keyframe
+   used during catalog load) so it adds no repaint/TBT cost, and it stops the
+   instant the image is ready. `img-ready` is added by a delegated load listener
+   in client.js; prefers-reduced-motion users get the static placeholder (the
+   global `body.reduce-motion` rule already disables the animation). */
+.art-sheen {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(100deg,
+    transparent 28%,
+    rgba(138, 92, 255, 0.16) 46%,
+    rgba(0, 210, 255, 0.22) 54%,
+    transparent 72%);
+  transform: translateX(-100%);
+  animation: skeleton-sheen 1300ms ease-in-out infinite;
+  will-change: transform;
+  transition: opacity 0.3s ease;
+}
+.thumb-art.img-ready .art-sheen,
+.ep-thumb.img-ready .art-sheen {
+  opacity: 0;
+  animation: none;
+}
+.thumb-poster,
+.ep-thumb-img {
+  opacity: 0;
+  transition: opacity 0.45s ease;
+}
+.thumb-poster.img-ready,
+.ep-thumb-img.img-ready {
+  opacity: 1;
 }
 
 .thumb-art::after {
@@ -1816,7 +1913,7 @@ body:not([data-route="home"]) .section-heading h2 {
   aspect-ratio: 16 / 7.5;
   overflow: hidden;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.07);
+  background: linear-gradient(135deg, rgba(138, 85, 255, 0.28), rgba(0, 210, 255, 0.16)), rgba(255, 255, 255, 0.07);
   box-shadow: 0 0.85rem 1.4rem rgba(0, 0, 0, 0.22);
 }
 
@@ -6104,9 +6201,9 @@ body.player-cinema-open .close-button {
   background-size: cover;
   background-repeat: no-repeat;
   opacity: 1;
-  filter: saturate(1.12) contrast(1.06) brightness(0.82);
-  transform: scale(1.002);
-  transition: opacity 280ms ease, transform 420ms ease, filter 420ms ease;
+  filter: none;
+  transform: none;
+  transition: opacity 220ms ease;
 }
 
 .carousel-backdrop-image {
@@ -6181,7 +6278,7 @@ body.player-cinema-open .close-button {
 }
 
 .carousel-poster-wrap {
-  display: none;
+  display: none !important;
 }
 
 .carousel-poster-wrap::before {
@@ -6270,7 +6367,7 @@ body.player-cinema-open .close-button {
 .carousel-stage.is-loading .carousel-info {
   align-self: center;
   justify-self: start;
-  max-width: min(27rem, 58vw);
+  max-width: min(46rem, 62vw);
   padding-left: 0;
   transform: translateY(0);
 }
@@ -6280,7 +6377,7 @@ body.player-cinema-open .close-button {
 }
 
 .carousel-stage.is-loading .carousel-info p:not(.eyebrow) {
-  max-width: 30rem;
+  max-width: 40rem;
 }
 
 .carousel-stage.is-loading .carousel-meta-line {
@@ -6883,11 +6980,11 @@ body.reduce-motion .watch-overlay.is-closing .watch-panel {
   display: grid;
   gap: 1rem;
   max-width: min(74rem, calc(100vw - 10rem));
-  margin: 0.15rem 0 1.45rem;
-  padding: 1.1rem 1.2rem;
-  border-radius: 1.1rem;
-  background: linear-gradient(180deg, rgba(20, 25, 42, 0.82), rgba(13, 17, 30, 0.82));
-  box-shadow: inset 0 0 0 0.06rem rgba(255, 255, 255, 0.06), 0 1rem 2.4rem rgba(4, 7, 18, 0.45);
+  margin: 0.15rem 0 1.2rem;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .library-letter-row {
@@ -6899,30 +6996,30 @@ body.reduce-motion .watch-overlay.is-closing .watch-panel {
 }
 
 .library-letter {
-  min-width: 2.18rem;
+  min-width: 2rem;
   height: 2rem;
-  border-radius: 0.5rem;
+  border-radius: 50%;
   border: 0;
-  color: rgba(229, 233, 255, 0.82);
-  background: rgba(91, 105, 158, 0.26);
-  font-size: 0.78rem;
-  font-weight: 900;
+  color: rgba(229, 233, 255, 0.65);
+  background: transparent;
+  font-size: 0.82rem;
+  font-weight: 700;
   cursor: pointer;
-  box-shadow: inset 0 0 0 0.06rem rgba(255, 255, 255, 0.06);
+  box-shadow: none;
   transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
 }
 
 .library-letter:is(:hover, :focus-visible, .is-tv-focused) {
   color: #fff;
-  background: rgba(138, 85, 255, 0.42);
+  background: rgba(255, 255, 255, 0.08);
   outline: none;
   transform: translateY(-0.05rem);
 }
 
 .library-letter.is-selected {
-  color: #06121a;
+  color: #fff;
   background: linear-gradient(135deg, var(--cyan), #6b8bff);
-  box-shadow: 0 0.4rem 1rem rgba(0, 210, 255, 0.28);
+  box-shadow: 0 0.3rem 0.8rem rgba(0, 210, 255, 0.28);
   outline: none;
 }
 
@@ -6939,18 +7036,27 @@ body.reduce-motion .watch-overlay.is-closing .watch-panel {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  min-height: 2.55rem;
-  padding: 0 0.85rem;
-  border-radius: 0.6rem;
-  color: rgba(174, 184, 226, 0.9);
-  background: rgba(43, 48, 72, 0.6);
-  box-shadow: inset 0 0 0 0.06rem rgba(255, 255, 255, 0.05);
-  transition: box-shadow 0.15s ease, background 0.15s ease;
+  min-height: 2.3rem;
+  padding: 0 1rem;
+  border-radius: 9rem;
+  color: rgba(229, 233, 255, 0.78);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 
-.library-select-wrap:focus-within {
-  background: rgba(43, 48, 72, 0.85);
-  box-shadow: inset 0 0 0 0.09rem rgba(138, 85, 255, 0.55);
+.library-select-wrap:hover,
+.library-sort-wrap:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.library-select-wrap:focus-within,
+.library-sort-wrap:focus-within {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(138, 85, 255, 0.6);
+  box-shadow: 0 0 0.8rem rgba(138, 85, 255, 0.18);
 }
 
 /* Custom chevron — replaces the inconsistent native one across browsers/OS. */
@@ -6958,7 +7064,7 @@ body.reduce-motion .watch-overlay.is-closing .watch-panel {
 .library-sort-wrap::after {
   content: "";
   position: absolute;
-  right: 0.85rem;
+  right: 0.95rem;
   top: 50%;
   width: 0.5rem;
   height: 0.5rem;
@@ -6979,7 +7085,7 @@ body.reduce-motion .watch-overlay.is-closing .watch-panel {
 .library-sort-wrap select {
   flex: 1;
   min-width: 0;
-  height: 2.4rem;
+  height: 2.2rem;
   padding-right: 1.1rem;
   border: 0;
   color: #f6f3ff;
@@ -7005,12 +7111,12 @@ body.reduce-motion .watch-overlay.is-closing .watch-panel {
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  min-height: 2.55rem;
-  padding: 0 1.15rem;
-  border: 0.08rem solid rgba(255, 255, 255, 0.12);
-  border-radius: 0.6rem;
+  min-height: 2.3rem;
+  padding: 0 1.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9rem;
   color: rgba(229, 233, 255, 0.92);
-  background: rgba(91, 105, 158, 0.16);
+  background: rgba(255, 255, 255, 0.03);
   font-size: 0.82rem;
   font-weight: 900;
   cursor: pointer;
@@ -7024,8 +7130,8 @@ body.reduce-motion .watch-overlay.is-closing .watch-panel {
 
 .library-filter-reset:is(:hover, :focus-visible, .is-tv-focused) {
   color: #fff;
-  background: rgba(138, 85, 255, 0.24);
-  border-color: rgba(138, 85, 255, 0.6);
+  background: rgba(225, 29, 72, 0.16);
+  border-color: rgba(225, 29, 72, 0.45);
   transform: translateY(-0.05rem);
   outline: none;
 }
@@ -7500,11 +7606,10 @@ body.reduce-motion .watch-backdrop-blur { transform: scale(1.08); }
   background-size: cover;
   background-position: center;
 }
-/* Vertical poster/cover fallback: show it whole (contain) over the blurred
-   fill rather than cropping it like a wide backdrop. */
 .watch-backdrop.is-poster-fit {
-  background-size: contain;
+  background-size: min(42vw, 34rem) auto;
   background-position: center;
+  background-repeat: no-repeat;
   animation: none;
 }
 @keyframes watch-backdrop-zoom {
@@ -8268,36 +8373,22 @@ body.has-embedded-player .watch-side {
   transform: scale(1.02);
   opacity: 0.85;
 }
+/* Single, consistent loading animation: one brand-gradient sheen sweep matching
+   the poster/card .art-sheen and the skeleton loaders (was two competing
+   animations — a white sheen plus a spinning orbit circle). GPU transform only. */
 .ep-thumb.is-placeholder::before {
   content: "";
   position: absolute;
   inset: 0;
   z-index: -1;
-  background:
-    linear-gradient(115deg, transparent 0 34%, rgba(255,255,255,0.16) 42%, transparent 52% 100%),
-    linear-gradient(28deg, transparent 0 56%, rgba(255,255,255,0.07) 58% 62%, transparent 64%),
-    radial-gradient(circle at 50% 115%, rgba(0, 210, 255, 0.16), transparent 42%);
-  opacity: 0.72;
-  transform: translateX(-42%);
-  animation: ep-thumb-sheen 3.8s ease-in-out infinite;
-}
-.ep-thumb.is-placeholder::after {
-  content: "";
-  position: absolute;
-  right: 0.48rem;
-  top: 0.42rem;
-  width: clamp(1rem, 26%, 1.55rem);
-  aspect-ratio: 1;
-  border-radius: 999rem;
-  border: 0.08rem solid rgba(255,255,255,0.14);
-  background:
-    linear-gradient(135deg, rgba(255,255,255,0.14), transparent 54%),
-    radial-gradient(circle at 50% 50%, hsla(var(--episode-hue), 92%, 62%, 0.22), transparent 72%),
-    rgba(8, 10, 22, 0.42);
-  box-shadow:
-    0 0 1.15rem hsla(var(--episode-hue), 92%, 62%, 0.2),
-    inset 0 0 1.2rem rgba(255,255,255,0.06);
-  animation: ep-thumb-orbit 4.2s ease-in-out infinite;
+  background: linear-gradient(100deg,
+    transparent 28%,
+    rgba(138, 92, 255, 0.16) 46%,
+    rgba(0, 210, 255, 0.22) 54%,
+    transparent 72%);
+  transform: translateX(-100%);
+  animation: skeleton-sheen 1300ms ease-in-out infinite;
+  will-change: transform;
 }
 .ep-thumb-empty {
   position: absolute;
@@ -8365,6 +8456,83 @@ body.has-embedded-player .watch-side {
   color: #fff;
   font-size: 0.74rem;
   font-weight: 800;
+}
+
+.poster-placeholder {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 1.5rem;
+  border-radius: 0.5rem;
+  box-shadow:
+    inset 0 0 0 0.06rem rgba(255, 255, 255, 0.08),
+    inset 0 -4rem 6rem rgba(0, 0, 0, 0.45);
+  background:
+    radial-gradient(circle at 82% 18%, hsla(280, 94%, 64%, 0.35), transparent 40%),
+    radial-gradient(circle at 18% 88%, hsla(190, 92%, 56%, 0.22), transparent 50%),
+    linear-gradient(145deg, hsl(280, 48%, 14%), #070912 85%);
+  overflow: hidden;
+}
+
+.poster-placeholder::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    linear-gradient(115deg, transparent 0 34%, rgba(255,255,255,0.14) 42%, transparent 52% 100%),
+    linear-gradient(28deg, transparent 0 56%, rgba(255,255,255,0.06) 58% 62%, transparent 64%),
+    radial-gradient(circle at 50% 115%, rgba(0, 210, 255, 0.12), transparent 50%);
+  opacity: 0.72;
+  transform: translateX(-42%);
+  animation: ep-thumb-sheen 3.8s ease-in-out infinite;
+}
+
+.poster-placeholder::after {
+  content: "";
+  position: absolute;
+  right: 1.2rem;
+  top: 1.2rem;
+  width: 2.2rem;
+  aspect-ratio: 1;
+  border-radius: 999rem;
+  border: 0.08rem solid rgba(255,255,255,0.14);
+  background:
+    linear-gradient(135deg, rgba(255,255,255,0.14), transparent 54%),
+    radial-gradient(circle at 50% 50%, hsla(280, 92%, 62%, 0.18), transparent 72%),
+    rgba(8, 10, 22, 0.42);
+  box-shadow:
+    0 0 1.5rem hsla(280, 92%, 62%, 0.25),
+    inset 0 0 1.5rem rgba(255,255,255,0.06);
+  animation: ep-thumb-orbit 4.2s ease-in-out infinite;
+}
+
+.poster-placeholder-mark {
+  color: rgba(255, 255, 255, 0.92);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 3.5rem;
+  font-weight: 950;
+  line-height: 1;
+  text-shadow: 0 0 1.5rem hsla(280, 90%, 62%, 0.6);
+  margin-bottom: auto;
+  margin-top: 4rem;
+  z-index: 2;
+}
+
+.poster-placeholder-copy {
+  color: rgba(255, 255, 255, 0.6);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.75rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  z-index: 2;
+  text-align: center;
+  text-shadow: 0 0.1rem 0.5rem rgba(0, 0, 0, 0.5);
 }
 .ep-thumb-play {
   position: relative;
@@ -9633,7 +9801,7 @@ body.is-tv .topbar-auth {
 /* Compact "filter sources" dropdown inside the narrow side-panel topbar. */
 .side-source-filter.language-select {
   flex: 0 0 auto;
-  max-width: 8.5rem;
+  max-width: 11.5rem;
   min-height: 2rem;
   margin-right: 0;
   font-size: 0.75rem;

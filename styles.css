@@ -8373,36 +8373,22 @@ body.has-embedded-player .watch-side {
   transform: scale(1.02);
   opacity: 0.85;
 }
+/* Single, consistent loading animation: one brand-gradient sheen sweep matching
+   the poster/card .art-sheen and the skeleton loaders (was two competing
+   animations — a white sheen plus a spinning orbit circle). GPU transform only. */
 .ep-thumb.is-placeholder::before {
   content: "";
   position: absolute;
   inset: 0;
   z-index: -1;
-  background:
-    linear-gradient(115deg, transparent 0 34%, rgba(255,255,255,0.16) 42%, transparent 52% 100%),
-    linear-gradient(28deg, transparent 0 56%, rgba(255,255,255,0.07) 58% 62%, transparent 64%),
-    radial-gradient(circle at 50% 115%, rgba(0, 210, 255, 0.16), transparent 42%);
-  opacity: 0.72;
-  transform: translateX(-42%);
-  animation: ep-thumb-sheen 3.8s ease-in-out infinite;
-}
-.ep-thumb.is-placeholder::after {
-  content: "";
-  position: absolute;
-  right: 0.48rem;
-  top: 0.42rem;
-  width: clamp(1rem, 26%, 1.55rem);
-  aspect-ratio: 1;
-  border-radius: 999rem;
-  border: 0.08rem solid rgba(255,255,255,0.14);
-  background:
-    linear-gradient(135deg, rgba(255,255,255,0.14), transparent 54%),
-    radial-gradient(circle at 50% 50%, hsla(var(--episode-hue), 92%, 62%, 0.22), transparent 72%),
-    rgba(8, 10, 22, 0.42);
-  box-shadow:
-    0 0 1.15rem hsla(var(--episode-hue), 92%, 62%, 0.2),
-    inset 0 0 1.2rem rgba(255,255,255,0.06);
-  animation: ep-thumb-orbit 4.2s ease-in-out infinite;
+  background: linear-gradient(100deg,
+    transparent 28%,
+    rgba(138, 92, 255, 0.16) 46%,
+    rgba(0, 210, 255, 0.22) 54%,
+    transparent 72%);
+  transform: translateX(-100%);
+  animation: skeleton-sheen 1300ms ease-in-out infinite;
+  will-change: transform;
 }
 .ep-thumb-empty {
   position: absolute;
@@ -8470,6 +8456,83 @@ body.has-embedded-player .watch-side {
   color: #fff;
   font-size: 0.74rem;
   font-weight: 800;
+}
+
+.poster-placeholder {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 1.5rem;
+  border-radius: 0.5rem;
+  box-shadow:
+    inset 0 0 0 0.06rem rgba(255, 255, 255, 0.08),
+    inset 0 -4rem 6rem rgba(0, 0, 0, 0.45);
+  background:
+    radial-gradient(circle at 82% 18%, hsla(280, 94%, 64%, 0.35), transparent 40%),
+    radial-gradient(circle at 18% 88%, hsla(190, 92%, 56%, 0.22), transparent 50%),
+    linear-gradient(145deg, hsl(280, 48%, 14%), #070912 85%);
+  overflow: hidden;
+}
+
+.poster-placeholder::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    linear-gradient(115deg, transparent 0 34%, rgba(255,255,255,0.14) 42%, transparent 52% 100%),
+    linear-gradient(28deg, transparent 0 56%, rgba(255,255,255,0.06) 58% 62%, transparent 64%),
+    radial-gradient(circle at 50% 115%, rgba(0, 210, 255, 0.12), transparent 50%);
+  opacity: 0.72;
+  transform: translateX(-42%);
+  animation: ep-thumb-sheen 3.8s ease-in-out infinite;
+}
+
+.poster-placeholder::after {
+  content: "";
+  position: absolute;
+  right: 1.2rem;
+  top: 1.2rem;
+  width: 2.2rem;
+  aspect-ratio: 1;
+  border-radius: 999rem;
+  border: 0.08rem solid rgba(255,255,255,0.14);
+  background:
+    linear-gradient(135deg, rgba(255,255,255,0.14), transparent 54%),
+    radial-gradient(circle at 50% 50%, hsla(280, 92%, 62%, 0.18), transparent 72%),
+    rgba(8, 10, 22, 0.42);
+  box-shadow:
+    0 0 1.5rem hsla(280, 92%, 62%, 0.25),
+    inset 0 0 1.5rem rgba(255,255,255,0.06);
+  animation: ep-thumb-orbit 4.2s ease-in-out infinite;
+}
+
+.poster-placeholder-mark {
+  color: rgba(255, 255, 255, 0.92);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 3.5rem;
+  font-weight: 950;
+  line-height: 1;
+  text-shadow: 0 0 1.5rem hsla(280, 90%, 62%, 0.6);
+  margin-bottom: auto;
+  margin-top: 4rem;
+  z-index: 2;
+}
+
+.poster-placeholder-copy {
+  color: rgba(255, 255, 255, 0.6);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.75rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  z-index: 2;
+  text-align: center;
+  text-shadow: 0 0.1rem 0.5rem rgba(0, 0, 0, 0.5);
 }
 .ep-thumb-play {
   position: relative;
