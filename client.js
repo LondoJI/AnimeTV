@@ -2505,17 +2505,32 @@ function renderCarousel() {
       }
     }).catch(() => {});
   }
+  // Warm the next few slides' TMDB backdrops in the background so auto-advance
+  // lands on an already-resolved (instant) hero instead of waiting each time.
+  // Deduped/cheap: the resolver no-ops on already-resolved shows.
+  if (typeof enrichTmdbImages === "function" && items.length > 1) {
+    for (let off = 1; off <= 3; off++) {
+      const next = items[(state.carouselIndex + off) % items.length];
+      if (next && String(next.id) !== String(show.id) && !next._tmdbResolved) enrichTmdbImages(next).catch(() => {});
+    }
+  }
   const art = hiResArt || (resolving ? "" : carouselArtworkOrPoster(show));
-  // Full-bleed hero. srcset spans small→large so the browser fetches a right-sized
-  // file per viewport/DPR: phones still get ~640-960 (fast LCP), while large and
-  // retina desktops get a crisp 1600/1920 — "best quality" where the screen can
-  // show it, without bloating the common case.
-  const HERO_WIDTHS = [640, 960, 1280, 1600, 1920];
+  // The hero shows the WHOLE backdrop (object-fit: contain) so a 16:9 image is
+  // never cropped to the wide hero. 1280 is plenty for the contained size and
+  // loads faster than 1600/1920; the TMDB source is sharp so it still looks crisp.
+  const HERO_WIDTHS = [640, 960, 1280];
   const HERO_QUALITY = 90;
-  const deliveredArt = art ? imageDeliveryUrl(art, 1600, HERO_QUALITY) : "";
+  const deliveredArt = art ? imageDeliveryUrl(art, 1280, HERO_QUALITY) : "";
   const heroSrcSet = art ? imageDeliverySrcSet(art, HERO_WIDTHS, HERO_QUALITY) : "";
+  // A tiny version of the SAME image (loads almost instantly) fills the letterbox
+  // behind the sharp contain'd backdrop, blurred — full picture, no crop, and it
+  // gives immediate ambiance while the sharp file loads. Same image = not "a
+  // second picture".
+  const blurFill = art ? imageDeliveryUrl(art, 320, 55) : "";
   carouselBackdrop.classList.toggle("has-banner", Boolean(art));
-  carouselBackdrop.style.backgroundImage = "linear-gradient(135deg, #121733 0%, #1b1a3b 38%, #0b2637 100%)";
+  carouselBackdrop.style.backgroundImage = blurFill
+    ? `url("${blurFill}")`
+    : "linear-gradient(135deg, #121733 0%, #1b1a3b 38%, #0b2637 100%)";
   if (carouselBackdropImage) {
     carouselBackdropImage.classList.toggle("has-banner", Boolean(art));
     if (art && carouselBackdropImage.getAttribute("src") !== deliveredArt) {
